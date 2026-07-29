@@ -8,49 +8,13 @@ Market data is live from Delta Exchange India's *public* API. There is no API
 key anywhere in this project and no signed endpoint is ever called, so the app
 is structurally incapable of placing a real trade.
 
----
+## Documentation
 
-## Setup
-
-### 1. Create a Supabase project
-
-1. Go to [supabase.com](https://supabase.com) and sign in.
-2. **New project** → give it a name, set a database password, pick a region near you.
-3. Wait for provisioning (~2 minutes).
-
-### 2. Run the schema
-
-1. In your project, open **SQL Editor** → **New query**.
-2. Paste the entire contents of [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql) and **Run**.
-
-This creates four tables — `accounts`, `orders`, `fills`, `positions` — all with
-Row Level Security scoped to `auth.uid()`, plus two functions: `execute_fill`
-(atomic fill + position netting) and `reset_account`.
-
-### 3. Wire up credentials
-
-**Project Settings → API**, then copy the values into a new `.env.local` in the
-project root:
-
-```
-VITE_SUPABASE_URL=https://your-project-ref.supabase.co
-VITE_SUPABASE_ANON_KEY=eyJhbGciOi...
-```
-
-The anon key belongs in the browser bundle — RLS is what protects the data.
-
-### 4. Optional: skip email confirmation
-
-For local use, **Authentication → Sign In / Providers → Email** and turn off
-*Confirm email*. You can then sign up and land straight in the dashboard.
-
-### 5. Run
-
-```bash
-npm install && npm run dev
-```
-
-Open http://localhost:5173, create an account, and you're trading.
+| Document | Contents |
+| --- | --- |
+| [docs/HLD.md](docs/HLD.md) | High-level design — system context, architecture, data flow, trust boundaries, technology decisions |
+| [docs/LLD.md](docs/LLD.md) | Low-level design — schema ERD, sequence diagrams, order state machine, netting algorithm, module contracts |
+| [docs/SETUP.md](docs/SETUP.md) | Supabase provisioning, environment variables, running locally |
 
 ---
 
@@ -176,6 +140,7 @@ src/
   hooks/useTrading.ts   Positions/orders/fills, order placement, fill engine
   components/           Login, TopBar, OptionChain, OrderTicket, BottomPanel
 supabase/migrations/    Schema, RLS, execute_fill, reset_account
+docs/                   HLD, LLD, setup
 ```
 
 ## Verification status

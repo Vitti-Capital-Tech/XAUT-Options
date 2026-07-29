@@ -236,8 +236,8 @@ function ConfigNotice() {
           {`VITE_SUPABASE_URL=https://xxxx.supabase.co\nVITE_SUPABASE_ANON_KEY=eyJ...`}
         </pre>
         <p className="mt-3 text-xs text-zinc-500">
-          See <code className="rounded bg-zinc-800 px-1">README.md</code> for the full setup,
-          including the SQL migration to run.
+          See <code className="rounded bg-zinc-800 px-1">docs/SETUP.md</code> for the full
+          setup, including the SQL migration to run.
         </p>
       </div>
     </div>

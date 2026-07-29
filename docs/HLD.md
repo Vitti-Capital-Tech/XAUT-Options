@@ -1,0 +1,361 @@
+# High-Level Design
+
+**XAUT Options — Paper Trading Terminal**
+
+| | |
+| --- | --- |
+| Purpose | Simulate options trading on XAUT against live Delta Exchange prices |
+| Users | Internal — traders and analysts practising or evaluating strategies |
+| Scope | Option chain, order entry, position and P&L tracking, trade history |
+| Explicitly out of scope | Real order placement, custody, settlement, advice |
+| Status | Functional; expiry settlement and server-side fills deferred |
+
+---
+
+## 1. Problem and goals
+
+Evaluating an options strategy on XAUT requires live prices, but rehearsing it on
+the real venue requires real capital. This system provides the former without the
+latter: a terminal that looks and behaves like Delta Exchange's own, priced off
+the same book, where every order is simulated.
+
+| Goal | Why | How it is met |
+| --- | --- | --- |
+| Realistic prices | A simulator priced off stale or synthetic data teaches the wrong lessons | Live WebSocket feed from Delta's public API |
+| Honest P&L | Marking at mid flatters every position by half the spread | Positions marked at the price you would actually exit at |
+| Cannot trade for real | The blast radius of a bug must be zero | No API key, no signed endpoint — structurally incapable |
+| Familiar interface | Muscle memory should transfer to the real terminal | Delta's chain layout and click-to-trade semantics |
+| Parallel strategies | Comparing approaches needs isolated books | Multiple independent paper accounts |
+
+### Non-goals
+
+Real trading, custody of funds, market making, backtesting over history, and any
+form of financial advice. This is a rehearsal environment.
+
+---
+
+## 2. System context
+
+```mermaid
+graph TB
+    subgraph client["Browser — the entire application"]
+        UI["React SPA<br/>chain · ticket · positions"]
+        ENGINE["Paper trading engine<br/>fees · margin · P&L · fills"]
+        UI <--> ENGINE
+    end
+
+    subgraph delta["Delta Exchange India — public, read-only"]
+        REST["REST /v2/products<br/>/v2/tickers"]
+        WS["WebSocket<br/>v2/ticker · spot_price"]
+    end
+
+    subgraph supabase["Supabase — private, per-user"]
+        AUTH["Auth<br/>email + password"]
+        PG["Postgres<br/>accounts · orders<br/>fills · positions"]
+    end
+
+    REST -- "bootstrap snapshot" --> ENGINE
+    WS -- "live bid/ask, greeks, spot" --> ENGINE
+    UI <-- "session" --> AUTH
+    ENGINE <-- "reads/writes, RLS-scoped" --> PG
+
+    classDef ext fill:#1f2937,stroke:#6b7280,color:#e5e7eb
+    classDef own fill:#78350f,stroke:#f59e0b,color:#fef3c7
+    class REST,WS,AUTH,PG ext
+    class UI,ENGINE own
+```
+
+**The critical asymmetry:** the Delta connection is *read-only and unauthenticated*.
+No credential exists that could place a real order. Writes go only to our own
+Postgres.
+
+### External dependencies
+
+| Dependency | Used for | Auth | Failure impact |
+| --- | --- | --- | --- |
+| `api.india.delta.exchange` REST | Contract list, opening price snapshot | None | App cannot start — shows retry |
+| `socket.india.delta.exchange` WS | Live quotes, greeks, spot | None | Prices freeze; status turns red; auto-reconnects |
+| Supabase Auth | Sign-in, session | — | Cannot sign in |
+| Supabase Postgres | All persistence | Anon key + RLS | Cannot trade; chain still renders |
+
+> XAUT options are listed **only on the India host**. The global
+> `api.delta.exchange` carries BTC and ETH options exclusively — a fact confirmed
+> by inspection during design, and the reason the host is not configurable.
+
+---
+
+## 3. Architecture
+
+There is no application server. The browser is the compute tier; Supabase is the
+data tier; Delta is a read-only feed.
+
+```mermaid
+graph LR
+    subgraph pres["Presentation"]
+        A[App shell]
+        B[OptionChain]
+        C[OrderTicket]
+        D[BottomPanel]
+        E[TopBar]
+    end
+
+    subgraph state["State & hooks"]
+        F[useAuth]
+        G[useAccounts]
+        H[useTrading]
+        I[marketStore]
+    end
+
+    subgraph domain["Domain — pure functions"]
+        J["engine/paper.ts<br/>fees · margin · P&L<br/>validation · crossing"]
+    end
+
+    subgraph infra["Infrastructure"]
+        K["lib/delta.ts<br/>REST + MarketStream"]
+        L["lib/supabase.ts"]
+    end
+
+    A --> B & C & D & E
+    B & C & D & E --> I
+    C & D --> H
+    E --> G
+    A --> F
+    H --> J & L
+    G --> L
+    I --> K
+    C --> J
+
+    classDef pure fill:#064e3b,stroke:#10b981,color:#d1fae5
+    class J pure
+```
+
+### Layer responsibilities
+
+| Layer | Holds | Must not |
+| --- | --- | --- |
+| Presentation | Rendering, local form state | Contain money maths or call Supabase directly |
+| State & hooks | Server data, subscriptions, orchestration | Contain pricing rules |
+| Domain (`engine/paper.ts`) | Every money rule, as pure functions | Import React, Supabase, or perform I/O |
+| Infrastructure | Network transports | Interpret business meaning |
+
+The domain layer being pure and I/O-free is deliberate: it is the part where a
+mistake costs the most, and purity is what makes it directly testable. It is
+covered by 30 assertions run against a real ticker payload.
+
+---
+
+## 4. Data flow
+
+### Startup
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as User
+    participant App
+    participant SB as Supabase
+    participant R as Delta REST
+    participant WS as Delta WS
+
+    U->>App: open dashboard
+    App->>SB: getSession()
+    SB-->>App: session
+    App->>SB: select accounts (RLS-scoped)
+    SB-->>App: accounts (auto-creates "Primary" if none)
+    App->>SB: select positions, orders, fills
+    par Snapshot then stream
+        App->>R: GET /v2/products + /v2/tickers
+        R-->>App: contracts grouped by expiry, price snapshot
+    and
+        App->>WS: subscribe v2/ticker + spot_price
+        WS-->>App: continuous ticks
+    end
+    Note over App: Chain paints from the snapshot,<br/>then updates live
+```
+
+The REST snapshot exists so the chain is populated immediately rather than filling
+in strike by strike as ticks arrive.
+
+### Placing an order
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as User
+    participant T as OrderTicket
+    participant E as engine/paper
+    participant H as useTrading
+    participant PG as Postgres
+
+    U->>T: click ask → set quantity
+    T->>E: previewOrder(...)
+    E-->>T: fill price, premium, fee, margin, blocking errors
+    Note over T: Submit disabled while an error stands
+    U->>T: Submit
+    T->>H: placeOrder(...)
+    H->>E: resolve fill price from the live book
+    alt Book empty on the needed side
+        E-->>H: null
+        H-->>U: rejected — nothing written
+    else Price available
+        H->>PG: insert order
+        H->>PG: rpc execute_fill(...)
+        Note over PG: One transaction, order row locked:<br/>fill + position netting + balance
+        PG-->>H: fill row
+        H->>PG: refetch positions, orders, fills
+        H-->>U: position and history update
+    end
+```
+
+Resolving the price *before* writing anything is what prevents a stranded order
+row when the book is empty.
+
+### Resting limit orders
+
+```mermaid
+graph LR
+    A["WS tick"] --> B["marketStore.upsert"]
+    B --> C{"250 ms<br/>throttle"}
+    C -->|"notify"| D["useTrading effect"]
+    D --> E{"Any open limit<br/>order crossed?"}
+    E -->|no| F["idle"]
+    E -->|yes| G["execute_fill"]
+    G --> H["refetch + repaint"]
+```
+
+**This engine runs in the browser.** Resting orders fill only while a dashboard tab
+is open — the single most important operational caveat in the system, accepted
+deliberately to avoid standing server infrastructure.
+
+---
+
+## 5. Key design decisions
+
+| # | Decision | Alternatives considered | Rationale |
+| --- | --- | --- | --- |
+| 1 | No application server | Node/Express + REST API | Nothing needs to run server-side except transactional writes, and Postgres functions cover those. Removes a deployment target and an auth hop. |
+| 2 | Mark P&L at bid/ask, not mid | Mid, or mark price | Mid understates cost by half the spread on every position. Marking at the exit price makes the spread visible the moment you cross it. |
+| 3 | Fill logic inside a Postgres function | Sequential client writes | A fill spans four tables. Client-side, a refresh mid-sequence leaves a fill with no position. One transaction with the order row locked makes that impossible. |
+| 4 | Browser-side limit fill engine | Edge Function on cron | The browser already holds the live feed; the server would need its own. Cost: tab must stay open. Revisitable without schema change. |
+| 5 | Per-expiry WS subscription | Subscribe to all strikes | One expiry is ~40 symbols instead of ~150. Held and resting symbols are pinned in so P&L and fills keep working elsewhere. |
+| 6 | Throttle repaints to 4/sec | Render every tick | Ticks arrive far faster than perception. Writes land synchronously in a Map; only notification is throttled, so no data is dropped. |
+| 7 | Balance excludes open positions | Debit premium on entry | `balance = start + realized − fees`, `equity = balance + unrealized`. Matches how Delta presents it and keeps realized and unrealized separable. |
+| 8 | Fee rates read from the product | Hardcode 0.01% / 3.5% | The venue owns those numbers; reading them means the app tracks changes for free. |
+
+---
+
+## 6. Security and trust boundaries
+
+```mermaid
+graph TB
+    subgraph untrusted["Untrusted — treated as data"]
+        DELTA["Delta market data<br/>read-only, unauthenticated"]
+    end
+    subgraph browser["Browser — user-controlled"]
+        CLIENT["SPA + anon key<br/>fully inspectable"]
+    end
+    subgraph enforced["Server-enforced"]
+        RLS["RLS: user_id = auth.uid()"]
+        FN["execute_fill<br/>status + quantity checks"]
+        DB[("Postgres")]
+    end
+
+    DELTA -->|prices only| CLIENT
+    CLIENT -->|"JWT-bearing writes"| RLS
+    RLS --> FN --> DB
+
+    classDef bad fill:#7f1d1d,stroke:#f87171,color:#fee2e2
+    classDef good fill:#064e3b,stroke:#10b981,color:#d1fae5
+    class DELTA,CLIENT bad
+    class RLS,FN,DB good
+```
+
+| Control | Enforced where | Guarantees |
+| --- | --- | --- |
+| Row Level Security | Postgres, all four tables | A user reads and writes only rows where `user_id = auth.uid()` |
+| `WITH CHECK` on insert | Postgres | A row cannot be attributed to another user |
+| Order lock in `execute_fill` | Postgres, `SELECT … FOR UPDATE` | Two tabs cannot fill one order twice |
+| Status guard | `execute_fill` | Only an `open` order can fill |
+| Public-endpoint-only design | Absence of credentials | No real order is possible |
+
+### What the client is *not* trusted for
+
+Client-side validation in `previewOrder` — margin sufficiency, tick alignment,
+whole-lot quantities — is **UX, not security**. A user editing their own paper
+balance harms only their own simulation, so this is accepted rather than
+mitigated. The controls that do matter are the ones above, all server-side.
+
+Verified during implementation: an anonymous insert is rejected with
+`42501 violates row-level security policy`.
+
+### Secrets
+
+| Value | Location | Exposure |
+| --- | --- | --- |
+| Supabase anon key | `.env.local`, inlined at build | Public by design; RLS is the control |
+| Supabase service key | Not used anywhere | — |
+| Delta API key | Does not exist | — |
+| User password | Supabase Auth only | Never touches app code |
+
+---
+
+## 7. Technology choices
+
+| Concern | Choice | Why this one |
+| --- | --- | --- |
+| UI | React 19 + TypeScript | Types matter where money maths does |
+| Build | Vite 7 | Fast HMR; static output deploys anywhere |
+| Styling | Tailwind 4 | Dense terminal layouts without a parallel CSS vocabulary |
+| High-frequency state | `useSyncExternalStore` | Throttled external store; avoids context re-rendering the whole tree per tick |
+| Backend | Supabase | Postgres, auth and RLS without operating a server |
+| Transactions | PL/pgSQL function | Multi-table atomicity the client cannot provide |
+
+Deliberately absent: no state-management library (one store and hooks suffice), no
+component library (the layout is too specific), no data-fetching library
+(refetch-after-mutation is adequate at this scale).
+
+---
+
+## 8. Quality attributes
+
+| Attribute | Target | Approach | Status |
+| --- | --- | --- | --- |
+| Correctness of money maths | Exact | Pure domain layer, 30 assertions on real data | Verified |
+| Price latency | Sub-second | WebSocket, 250 ms repaint throttle | Verified live |
+| Transactional integrity | No torn fills | Single Postgres function, row lock | Function deploys and runs; write path pending first trade |
+| Isolation between users | Total | RLS on every table | Verified — anon writes rejected |
+| Reconnect resilience | Automatic | Exponential backoff to 15 s, 45 s heartbeat watchdog | Implemented |
+| Graceful degradation | No silent wrong numbers | Absent quotes render `—`, never `0` | Implemented |
+
+### Failure modes
+
+| Failure | Behaviour | Rationale |
+| --- | --- | --- |
+| WS drops | Status → red, backoff reconnect, last prices held | Stale-but-labelled beats blank |
+| One side of book empty | Market order blocked; P&L shows `—` | Never invent a price |
+| Postgres unreachable | Order rejected with the error | Chain stays usable |
+| Market order fill fails after insert | Order cancelled with a reason | A market order must never rest |
+| Illiquid strike, absurd quote | Marked honestly at that quote | Real consequence of bid/ask marking |
+
+---
+
+## 9. Known limitations
+
+| Limitation | Impact | Path forward |
+| --- | --- | --- |
+| Short-option margin approximated as `10% × spot + premium` | Margin differs from the venue's risk model | Delta does not expose the model publicly; long options are exact |
+| No expiry settlement | Expired positions linger; must be closed manually | Read settlement price after expiry, realize intrinsic value |
+| Limit fills need an open tab | Resting orders miss overnight moves | Edge Function on `pg_cron` |
+| Fills ignore quoted size | Oversized orders fill at the touch | Walk the book against `bid_size`/`ask_size` |
+| Taker fee assumed for maker fills | None today — both rates are 0.01% for XAUT | Branch on resting vs crossing |
+| Refetch after mutation, no realtime | Second tab is briefly stale | Supabase Realtime on the four tables |
+
+---
+
+## 10. Related documents
+
+| Document | Contents |
+| --- | --- |
+| [LLD.md](LLD.md) | Schema ERD, sequence diagrams, order state machine, netting algorithm, module contracts, formulas |
+| [SETUP.md](SETUP.md) | Provisioning, environment, scripts, troubleshooting |
+| [../README.md](../README.md) | Overview and feature summary |
