@@ -70,29 +70,29 @@ export function TopBar({
   }
 
   return (
-    <header className="flex shrink-0 items-center gap-4 border-b border-zinc-800 bg-zinc-900/60 px-3 py-2">
+    <header className="flex shrink-0 items-center gap-4 border-b border-line bg-raised px-3 py-2">
       <div className="flex items-center gap-2">
-        <span className="text-sm font-bold tracking-tight text-amber-400">XAUT</span>
-        <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold tracking-wider text-amber-500 uppercase">
+        <span className="text-sm font-bold tracking-tight text-warn">XAUT</span>
+        <span className="rounded bg-warn-muted px-1.5 py-0.5 text-[10px] font-bold tracking-wider text-warn uppercase">
           Paper
         </span>
       </div>
 
       <div className="flex items-baseline gap-1.5">
-        <span className="num text-base font-semibold text-zinc-100">{price(market.spot)}</span>
-        <span className="text-[10px] text-zinc-500">SPOT</span>
+        <span className="num text-base font-semibold text-ink">{price(market.spot)}</span>
+        <span className="text-[10px] text-ink-3">SPOT</span>
       </div>
 
       <div className="flex items-center gap-1.5" title={`Market data: ${status}`}>
         <span
           className={`h-1.5 w-1.5 rounded-full ${
-            status === 'live' ? 'bg-emerald-500' : status === 'connecting' ? 'bg-amber-500' : 'bg-rose-500 animate-pulse'
+            status === 'live' ? 'bg-pos-solid' : status === 'connecting' ? 'bg-warn' : 'bg-neg-solid animate-pulse'
           }`}
         />
-        <span className="text-[10px] text-zinc-500 capitalize">{status}</span>
+        <span className="text-[10px] text-ink-3 capitalize">{status}</span>
       </div>
 
-      <div className="ml-auto flex items-center gap-5 text-[11px]">
+      <div className="ml-auto flex items-center gap-5 text-[12px]">
         <Stat label="Balance" value={usd(summary.balance)} />
         <Stat
           label="Unrealized"
@@ -104,22 +104,22 @@ export function TopBar({
         <Stat
           label="Available"
           value={usd(summary.available)}
-          className={summary.available < 0 ? 'text-rose-400' : undefined}
+          className={summary.available < 0 ? 'text-neg' : undefined}
         />
       </div>
 
       <div className="relative" ref={menuRef}>
         <button
           onClick={() => setMenuOpen((v) => !v)}
-          className="flex items-center gap-2 rounded border border-zinc-700 px-2.5 py-1.5 text-xs text-zinc-200 hover:border-zinc-500"
+          className="flex items-center gap-2 rounded border border-raised-3 px-2.5 py-1.5 text-xs text-ink hover:border-ink-3"
         >
           <span className="font-medium">{selected?.name ?? 'No account'}</span>
-          <span className="text-zinc-500">▾</span>
+          <span className="text-ink-3">▾</span>
         </button>
 
         {menuOpen && (
-          <div className="absolute right-0 z-50 mt-1 w-72 overflow-hidden rounded-lg border border-zinc-700 bg-zinc-900 shadow-2xl">
-            <div className="border-b border-zinc-800 px-3 py-2 text-[10px] tracking-wider text-zinc-500 uppercase">
+          <div className="absolute right-0 z-50 mt-1 w-72 overflow-hidden rounded-lg border border-raised-3 bg-raised shadow-2xl">
+            <div className="border-b border-line px-3 py-2 text-[10px] tracking-wider text-ink-3 uppercase">
               Paper accounts
             </div>
 
@@ -130,7 +130,7 @@ export function TopBar({
                 return (
                   <div
                     key={a.id}
-                    className={`flex items-center gap-2 px-3 py-2 ${isActive ? 'bg-zinc-800/60' : 'hover:bg-zinc-800/30'}`}
+                    className={`flex items-center gap-2 px-3 py-2 ${isActive ? 'bg-sub' : 'hover:bg-raised-2'}`}
                   >
                     <button
                       onClick={() => {
@@ -140,11 +140,11 @@ export function TopBar({
                       className="min-w-0 flex-1 text-left"
                     >
                       <div className="flex items-center gap-1.5">
-                        {isActive && <span className="text-[9px] text-amber-500">●</span>}
-                        <span className="truncate text-xs font-medium text-zinc-200">{a.name}</span>
+                        {isActive && <span className="text-[10px] text-warn">●</span>}
+                        <span className="truncate text-xs font-medium text-ink">{a.name}</span>
                       </div>
                       <div className="num mt-0.5 flex gap-2 text-[10px]">
-                        <span className="text-zinc-400">{usd(Number(a.cash_balance))}</span>
+                        <span className="text-ink-2">{usd(Number(a.cash_balance))}</span>
                         <span className={pnlClass(pnl)}>{signedUsd(pnl)}</span>
                       </div>
                     </button>
@@ -160,7 +160,7 @@ export function TopBar({
                       }}
                       disabled={busy}
                       title="Reset to starting balance"
-                      className="rounded p-1 text-[10px] text-zinc-500 hover:bg-zinc-700 hover:text-amber-400 disabled:opacity-40"
+                      className="rounded p-1 text-[10px] text-ink-3 hover:bg-raised-3 hover:text-warn disabled:opacity-40"
                     >
                       ↺
                     </button>
@@ -177,7 +177,7 @@ export function TopBar({
                         }}
                         disabled={busy}
                         title="Archive account"
-                        className="rounded p-1 text-[10px] text-zinc-500 hover:bg-zinc-700 hover:text-rose-400 disabled:opacity-40"
+                        className="rounded p-1 text-[10px] text-ink-3 hover:bg-raised-3 hover:text-neg disabled:opacity-40"
                       >
                         ✕
                       </button>
@@ -188,29 +188,29 @@ export function TopBar({
             </div>
 
             {creating ? (
-              <div className="space-y-2 border-t border-zinc-800 p-3">
+              <div className="space-y-2 border-t border-line p-3">
                 <input
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   placeholder="Account name"
                   autoFocus
-                  className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 focus:border-zinc-500 focus:outline-none"
+                  className="w-full rounded border border-raised-3 bg-surface px-2 py-1 text-xs text-ink focus:border-ink-3 focus:outline-none"
                 />
                 <div>
-                  <label className="mb-1 block text-[10px] text-zinc-500">Starting balance (USD)</label>
+                  <label className="mb-1 block text-[10px] text-ink-3">Starting balance (USD)</label>
                   <input
                     type="number"
                     value={newBalance}
                     onChange={(e) => setNewBalance(e.target.value)}
-                    className="num w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-right text-xs text-zinc-100 focus:border-zinc-500 focus:outline-none"
+                    className="num w-full rounded border border-raised-3 bg-surface px-2 py-1 text-right text-xs text-ink focus:border-ink-3 focus:outline-none"
                   />
                 </div>
-                {error && <p className="text-[10px] text-rose-400">{error}</p>}
+                {error && <p className="text-[10px] text-neg">{error}</p>}
                 <div className="flex gap-2">
                   <button
                     onClick={submitCreate}
                     disabled={busy}
-                    className="flex-1 rounded bg-amber-600 py-1 text-xs font-medium text-white hover:bg-amber-500 disabled:opacity-40"
+                    className="flex-1 rounded bg-gold py-1 text-xs font-medium text-white hover:bg-gold-hover disabled:opacity-40"
                   >
                     Create
                   </button>
@@ -219,7 +219,7 @@ export function TopBar({
                       setCreating(false)
                       setError(null)
                     }}
-                    className="rounded border border-zinc-700 px-3 py-1 text-xs text-zinc-400 hover:border-zinc-500"
+                    className="rounded border border-raised-3 px-3 py-1 text-xs text-ink-2 hover:border-ink-3"
                   >
                     Cancel
                   </button>
@@ -228,17 +228,17 @@ export function TopBar({
             ) : (
               <button
                 onClick={() => setCreating(true)}
-                className="w-full border-t border-zinc-800 px-3 py-2 text-left text-xs text-amber-400 hover:bg-zinc-800/40"
+                className="w-full border-t border-line px-3 py-2 text-left text-xs text-warn hover:bg-raised-2"
               >
                 + New paper account
               </button>
             )}
 
-            <div className="flex items-center justify-between border-t border-zinc-800 bg-zinc-950/60 px-3 py-2">
-              <span className="truncate text-[10px] text-zinc-500">{email}</span>
+            <div className="flex items-center justify-between border-t border-line bg-sub px-3 py-2">
+              <span className="truncate text-[10px] text-ink-3">{email}</span>
               <button
                 onClick={() => void supabase.auth.signOut()}
-                className="text-[10px] text-zinc-400 hover:text-rose-400"
+                className="text-[10px] text-ink-2 hover:text-neg"
               >
                 Sign out
               </button>
@@ -263,9 +263,9 @@ function Stat({
 }) {
   return (
     <div className="text-right">
-      <div className="text-[9px] tracking-wider text-zinc-500 uppercase">{label}</div>
+      <div className="text-[10px] tracking-wider text-ink-3 uppercase">{label}</div>
       <div
-        className={`num font-semibold ${className ?? (emphasis ? 'text-zinc-100' : 'text-zinc-300')}`}
+        className={`num font-semibold ${className ?? (emphasis ? 'text-ink' : 'text-ink')}`}
       >
         {value}
       </div>

@@ -114,48 +114,48 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
       onClick={onClose}
     >
       <div
-        className="w-full max-w-sm overflow-hidden rounded-lg border border-zinc-700 bg-zinc-900 shadow-2xl"
+        className="w-full max-w-sm overflow-hidden rounded-lg border border-raised-3 bg-raised shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-start justify-between border-b border-zinc-800 px-4 py-3">
+        <div className="flex items-start justify-between border-b border-line px-4 py-3">
           <div>
             <div className="flex items-center gap-2">
-              <span className="num text-sm font-semibold text-zinc-100">
+              <span className="num text-sm font-semibold text-ink">
                 {parsed?.strike.toLocaleString()}
               </span>
               <span
                 className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${
-                  isCall ? 'bg-emerald-500/15 text-emerald-400' : 'bg-rose-500/15 text-rose-400'
+                  isCall ? 'bg-pos-muted text-pos' : 'bg-neg-muted text-neg'
                 }`}
               >
                 {isCall ? 'CALL' : 'PUT'}
               </span>
             </div>
-            <div className="mt-0.5 text-[11px] text-zinc-500">
+            <div className="mt-0.5 text-[12px] text-ink-3">
               XAUT · {parsed ? formatExpiry(parsed.expiry) : ''}
             </div>
           </div>
           <button
             onClick={onClose}
-            className="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
+            className="rounded p-1 text-ink-3 hover:bg-raised-2 hover:text-ink"
             aria-label="Close"
           >
             ✕
           </button>
         </div>
 
-        <div className="flex divide-x divide-zinc-800 border-b border-zinc-800 bg-zinc-950/40 text-center text-[11px]">
+        <div className="flex divide-x divide-line border-b border-line bg-sub text-center text-[12px]">
           <div className="flex-1 py-2">
-            <div className="text-zinc-600">Bid</div>
-            <div className="num font-semibold text-emerald-400">{price(bid)}</div>
+            <div className="text-ink-4">Bid</div>
+            <div className="num font-semibold text-pos">{price(bid)}</div>
           </div>
           <div className="flex-1 py-2">
-            <div className="text-zinc-600">Ask</div>
-            <div className="num font-semibold text-rose-400">{price(ask)}</div>
+            <div className="text-ink-4">Ask</div>
+            <div className="num font-semibold text-neg">{price(ask)}</div>
           </div>
           <div className="flex-1 py-2">
-            <div className="text-zinc-600">Spot</div>
-            <div className="num font-semibold text-amber-400">{price(spot)}</div>
+            <div className="text-ink-4">Spot</div>
+            <div className="num font-semibold text-warn">{price(spot)}</div>
           </div>
         </div>
 
@@ -165,8 +165,8 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
               onClick={() => setSide('buy')}
               className={`rounded py-2 text-sm font-semibold transition-colors ${
                 side === 'buy'
-                  ? 'bg-emerald-600 text-white'
-                  : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-750 hover:text-zinc-200'
+                  ? 'bg-pos-solid text-white'
+                  : 'bg-raised-2 text-ink-2 hover:bg-raised-3 hover:text-ink'
               }`}
             >
               Buy / Long
@@ -175,21 +175,21 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
               onClick={() => setSide('sell')}
               className={`rounded py-2 text-sm font-semibold transition-colors ${
                 side === 'sell'
-                  ? 'bg-rose-600 text-white'
-                  : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-750 hover:text-zinc-200'
+                  ? 'bg-neg-solid text-white'
+                  : 'bg-raised-2 text-ink-2 hover:bg-raised-3 hover:text-ink'
               }`}
             >
               Sell / Short
             </button>
           </div>
 
-          <div className="flex gap-1 rounded bg-zinc-800/60 p-0.5">
+          <div className="flex gap-1 rounded bg-sub p-0.5">
             {(['market', 'limit'] as const).map((t) => (
               <button
                 key={t}
                 onClick={() => setOrderType(t)}
                 className={`flex-1 rounded py-1 text-xs font-medium capitalize transition-colors ${
-                  orderType === t ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'
+                  orderType === t ? 'bg-raised-3 text-ink' : 'text-ink-3 hover:text-ink'
                 }`}
               >
                 {t}
@@ -204,7 +204,7 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
                 step={product.tick_size}
                 value={limitText}
                 onChange={(e) => setLimitText(e.target.value)}
-                className="num w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-right text-sm text-zinc-100 focus:border-zinc-500 focus:outline-none"
+                className="num w-full rounded border border-raised-3 bg-surface px-2 py-1.5 text-right text-sm text-ink focus:border-ink-3 focus:outline-none"
               />
             </Field>
           )}
@@ -218,7 +218,7 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
               onChange={(e) => setQtyText(e.target.value)}
               onFocus={(e) => e.target.select()}
               autoFocus
-              className="num w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-right text-sm text-zinc-100 focus:border-zinc-500 focus:outline-none"
+              className="num w-full rounded border border-raised-3 bg-surface px-2 py-1.5 text-right text-sm text-ink focus:border-ink-3 focus:outline-none"
             />
           </Field>
 
@@ -227,7 +227,7 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
               <button
                 key={n}
                 onClick={() => setQtyText(String(n))}
-                className="num flex-1 rounded border border-zinc-700 py-1 text-[11px] text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"
+                className="num flex-1 rounded border border-raised-3 py-1 text-[12px] text-ink-2 hover:border-ink-3 hover:text-ink"
               >
                 {n}
               </button>
@@ -238,7 +238,7 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
                   setQtyText(String(Math.abs(netQty)))
                   setSide(netQty > 0 ? 'sell' : 'buy')
                 }}
-                className="flex-1 rounded border border-amber-700/60 py-1 text-[11px] text-amber-400 hover:border-amber-500"
+                className="flex-1 rounded border border-gold py-1 text-[12px] text-warn hover:border-warn"
                 title={`Flatten ${Math.abs(netQty)} lots`}
               >
                 Close
@@ -246,32 +246,32 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
             )}
           </div>
 
-          <dl className="space-y-1 rounded bg-zinc-950/60 p-2.5 text-[11px]">
+          <dl className="space-y-1 rounded bg-sub p-2.5 text-[12px]">
             <Row label={orderType === 'market' ? 'Est. fill' : 'Fills at'}>
-              <span className="num text-zinc-200">
+              <span className="num text-ink">
                 {preview.fillPrice !== null ? price(preview.fillPrice) : 'Resting'}
               </span>
             </Row>
             <Row label="Premium">
-              <span className="num text-zinc-200">{usd(preview.premium, 4)}</span>
+              <span className="num text-ink">{usd(preview.premium, 4)}</span>
             </Row>
             <Row label="Notional">
-              <span className="num text-zinc-400">{usd(preview.notional)}</span>
+              <span className="num text-ink-2">{usd(preview.notional)}</span>
             </Row>
             <Row label="Est. fee">
-              <span className="num text-zinc-400">{usd(preview.fee, 4)}</span>
+              <span className="num text-ink-2">{usd(preview.fee, 4)}</span>
             </Row>
             <Row label={reduces ? 'Margin released' : 'Margin required'}>
-              <span className="num text-zinc-200">
+              <span className="num text-ink">
                 {reduces ? '—' : usd(preview.marginRequired, 4)}
               </span>
             </Row>
             <Row label="Available">
-              <span className="num text-zinc-400">{usd(available)}</span>
+              <span className="num text-ink-2">{usd(available)}</span>
             </Row>
             {netQty !== 0 && (
               <Row label="Current position">
-                <span className={`num ${netQty > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                <span className={`num ${netQty > 0 ? 'text-pos' : 'text-neg'}`}>
                   {netQty > 0 ? '+' : ''}
                   {netQty} lots @ {price(position!.avg_entry_price)}
                 </span>
@@ -280,12 +280,12 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
           </dl>
 
           {preview.warning && !preview.error && (
-            <p className="rounded bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-400">
+            <p className="rounded bg-warn-muted px-2 py-1.5 text-[12px] text-warn">
               {preview.warning}
             </p>
           )}
           {(preview.error || submitError) && (
-            <p className="rounded bg-rose-500/10 px-2 py-1.5 text-[11px] text-rose-400">
+            <p className="rounded bg-neg-muted px-2 py-1.5 text-[12px] text-neg">
               {submitError ?? preview.error}
             </p>
           )}
@@ -295,8 +295,8 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
             disabled={!canSubmit}
             className={`w-full rounded py-2.5 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
               side === 'buy'
-                ? 'bg-emerald-600 text-white hover:bg-emerald-500'
-                : 'bg-rose-600 text-white hover:bg-rose-500'
+                ? 'bg-pos-solid text-white hover:bg-pos-hover'
+                : 'bg-neg-solid text-white hover:bg-neg-hover'
             }`}
           >
             {submitting
@@ -306,7 +306,7 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
                 }`.trim()}
           </button>
 
-          <p className="text-center text-[10px] text-zinc-600">
+          <p className="text-center text-[10px] text-ink-4">
             Paper trade — no real order is sent to Delta Exchange
           </p>
         </div>
@@ -327,8 +327,8 @@ function Field({
   return (
     <label className="block">
       <div className="mb-1 flex items-baseline justify-between">
-        <span className="text-[11px] font-medium text-zinc-400">{label}</span>
-        {hint && <span className="text-[10px] text-zinc-600">{hint}</span>}
+        <span className="text-[12px] font-medium text-ink-2">{label}</span>
+        {hint && <span className="text-[10px] text-ink-4">{hint}</span>}
       </div>
       {children}
     </label>
@@ -338,7 +338,7 @@ function Field({
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-baseline justify-between">
-      <dt className="text-zinc-500">{label}</dt>
+      <dt className="text-ink-3">{label}</dt>
       <dd>{children}</dd>
     </div>
   )

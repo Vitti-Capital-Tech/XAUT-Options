@@ -306,6 +306,8 @@ Verified during implementation: an anonymous insert is rejected with
 | UI | React 19 + TypeScript | Types matter where money maths does |
 | Build | Vite 7 | Fast HMR; static output deploys anywhere |
 | Styling | Tailwind 4 | Dense terminal layouts without a parallel CSS vocabulary |
+| Theme | Delta's own design tokens | Read off their running application; see *Visual fidelity* below |
+| Typeface | Aileron via `@fontsource/aileron` | The typeface Delta uses; CC0, self-hosted |
 | High-frequency state | `useSyncExternalStore` | Throttled external store; avoids context re-rendering the whole tree per tick |
 | Backend | Supabase | Postgres, auth and RLS without operating a server |
 | Transactions | PL/pgSQL function | Multi-table atomicity the client cannot provide |
@@ -313,6 +315,40 @@ Verified during implementation: an anonymous insert is rejected with
 Deliberately absent: no state-management library (one store and hooks suffice), no
 component library (the layout is too specific), no data-fetching library
 (refetch-after-mutation is adequate at this scale).
+
+### Visual fidelity
+
+The palette is not an approximation of Delta's look — it is their token set, read
+directly from their running application and transcribed into
+[`src/index.css`](../src/index.css) under their own token names, so the mapping
+stays auditable.
+
+| Delta token | Value | Used for |
+| --- | --- | --- |
+| `main-bg-surface` | `#18191e` | Page background |
+| `main-bg-sub-surface` | `#111114` | Recessed areas, in-the-money rows |
+| `main-bg-primary` | `#22242c` | Header, panels, modals |
+| `main-bg-secondary` / `tertiary` | `#2d303a` / `#353845` | Controls, hover, borders |
+| `main-text-primary` → `quaternary` | `#e1e1e2` → `#44464a` | Four-step text hierarchy |
+| `positive-text` / `positive-bg` | `#33b991` / `#00a876` | Bids, longs, gains, buy actions |
+| `negative-text` / `negative-bg` | `#ff5c5c` / `#eb5454` | Asks, shorts, losses, sell actions |
+| `warning` | `#ffd033` | Spot, ATM strike, active expiry |
+| `accent-brown` | `#a28467` | Brand accent — suits XAUT |
+
+The typeface is **Aileron**, which is what Delta serves. It is public domain
+(CC0 1.0) and bundled via Fontsource rather than hotlinked from their asset
+server. Aileron derives from Helvetica, so its digits are uniform width — measured
+identically at 23.19px across `0`–`9` — which is why Delta can leave
+`font-variant-numeric: normal` and still get non-jittering price columns. The
+`.num` helper sets `tabular-nums` anyway, as a no-op that only matters if the
+webfont fails to load.
+
+Verified by enumerating every colour the running app renders: all opaque values
+resolve to a token in the table above, with no strays.
+
+> One deviation: Delta's own in-the-money row tint could not be observed — their
+> chain view redirects to a trade panel that renders no grid. `main-bg-sub-surface`
+> is used instead, which is a genuine token but our choice, not theirs.
 
 ---
 

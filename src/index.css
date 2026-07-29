@@ -1,7 +1,72 @@
 @import 'tailwindcss';
 
+/* Aileron — the typeface Delta Exchange uses. Public domain (CC0 1.0),
+   self-hosted via Fontsource so nothing hotlinks their asset server.
+   Delta loads it as four separate families (Light/Regular/SemiBold/Bold);
+   Fontsource exposes one family with real weights, which renders the same. */
+@import '@fontsource/aileron/300.css';
+@import '@fontsource/aileron/400.css';
+@import '@fontsource/aileron/600.css';
+@import '@fontsource/aileron/700.css';
+
+/* ---------------------------------------------------------------------------
+   Delta Exchange dark theme, read directly off their running application.
+   Names mirror their own token names so the mapping stays traceable.
+   --------------------------------------------------------------------------- */
 @theme {
-  --font-mono: 'JetBrains Mono', 'SF Mono', 'Consolas', ui-monospace, monospace;
+  --font-sans: 'Aileron', -apple-system, BlinkMacSystemFont, 'Open Sans', Arial, sans-serif;
+
+  /* Surfaces, darkest to lightest */
+  --color-sub: #111114; /* main-bg-sub-surface */
+  --color-surface: #18191e; /* main-bg-surface — the page */
+  --color-raised: #22242c; /* main-bg-primary — panels, inputs */
+  --color-raised-2: #2d303a; /* main-bg-secondary — hover, controls */
+  --color-raised-3: #353845; /* main-bg-tertiary */
+  --color-black-shade: #0c0c0f; /* shade-black */
+
+  /* Text, most to least prominent */
+  --color-ink: #e1e1e2; /* main-text-primary */
+  --color-ink-2: #8e9298; /* main-text-secondary */
+  --color-ink-3: #71747a; /* main-text-tertiary */
+  --color-ink-4: #44464a; /* main-text-quaternary */
+
+  /* Positive / bid / long */
+  --color-pos: #33b991; /* positive-text-primary */
+  --color-pos-solid: #00a876; /* positive-bg-primary */
+  --color-pos-hover: #00996b; /* positive-bg-hover */
+  --color-pos-muted: #003224; /* positive-bg-muted */
+  --color-pos-on-muted: #004732; /* positive-bg-on-muted */
+
+  /* Negative / ask / short */
+  --color-neg: #ff5c5c; /* negative-text-primary */
+  --color-neg-solid: #eb5454; /* negative-bg-primary */
+  --color-neg-hover: #dc4e4e; /* negative-bg-hover */
+  --color-neg-muted: #411516; /* negative-bg-muted */
+  --color-neg-on-muted: #5b1d1f; /* negative-bg-on-muted */
+
+  /* Warning — Delta's highlight yellow, used here for ATM and spot */
+  --color-warn: #ffd033; /* warning-text-primary */
+  --color-warn-muted: #3a3304; /* warning-bg-muted */
+  --color-warn-on-muted: #ffe799; /* warning-text-on-muted */
+
+  /* Brand accent (India) — gold-brown, fits XAUT */
+  --color-gold: #a28467; /* accent-brown-bg-primary */
+  --color-gold-hover: #514132; /* accent-brown-bg-hover */
+  --color-gold-text: #b9a28d; /* accent-brown-text-primary */
+  --color-gold-muted: #2f261d; /* accent-brown-bg-muted */
+
+  --color-blue: #3895ed; /* accent-blue-bg-primary */
+
+  --color-line: #212126; /* the border colour their tables actually render */
+
+  /* Tints for in-the-money rows and P&L washes */
+  --color-tint-pos: #00a8760d; /* misc-chart-bg-positive */
+  --color-tint-neg: #d9464a12; /* misc-chart-bg-negative */
+  --color-tint-pos-20: #00a87633; /* misc-ui-items-twenty-positive */
+  --color-tint-neg-20: #d0535633; /* misc-ui-items-twenty-negative */
+
+  --shadow-delta-sm: 0 8px 32px 0 #0009; /* elevation-sm */
+  --shadow-delta-lg: -12px 18px 60px 0 #0009; /* elevation-lg */
 }
 
 html,
@@ -11,13 +76,23 @@ body,
 }
 
 body {
-  @apply bg-zinc-950 text-zinc-200 antialiased;
-  font-feature-settings: 'tnum' 1; /* tabular figures so price columns don't jitter */
+  background-color: var(--color-surface);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  /* Delta's own base size; tables step down to 12px and labels to 10px. */
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* Numeric cells: fixed-width digits keep the chain from shifting on every tick. */
+/* Aileron's digits are uniform width (it derives from Helvetica), so this is a
+   no-op there — it only matters while the webfont loads or if it fails. */
 .num {
   font-variant-numeric: tabular-nums;
+}
+
+/* Divider matching Delta's translucent-white rule. */
+.divider-b {
+  border-bottom: 1px solid #ffffff14;
 }
 
 ::-webkit-scrollbar {
@@ -25,19 +100,20 @@ body {
   height: 10px;
 }
 ::-webkit-scrollbar-track {
-  @apply bg-zinc-950;
+  background: var(--color-sub);
 }
 ::-webkit-scrollbar-thumb {
-  @apply bg-zinc-700 rounded;
+  background: var(--color-raised-2);
+  border-radius: 2px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  @apply bg-zinc-600;
+  background: var(--color-raised-3);
 }
 
-/* Brief highlight when a quote changes, like the real terminal. */
+/* Brief tint when a quote moves, as the real terminal does. */
 @keyframes flash-up {
   from {
-    background-color: rgb(16 185 129 / 0.25);
+    background-color: var(--color-tint-pos-20);
   }
   to {
     background-color: transparent;
@@ -45,7 +121,7 @@ body {
 }
 @keyframes flash-down {
   from {
-    background-color: rgb(244 63 94 / 0.25);
+    background-color: var(--color-tint-neg-20);
   }
   to {
     background-color: transparent;

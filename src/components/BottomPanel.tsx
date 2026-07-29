@@ -36,23 +36,23 @@ export function BottomPanel({
   ]
 
   return (
-    <div className="flex min-h-0 flex-col border-t border-zinc-800 bg-zinc-950">
-      <div className="flex shrink-0 items-center gap-1 border-b border-zinc-800 px-2">
+    <div className="flex min-h-0 flex-col border-t border-line bg-surface">
+      <div className="flex shrink-0 items-center gap-1 border-b border-line px-2">
         {tabs.map((t) => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
             className={`relative px-3 py-2 text-xs font-medium transition-colors ${
-              tab === t.key ? 'text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'
+              tab === t.key ? 'text-ink' : 'text-ink-3 hover:text-ink'
             }`}
           >
             {t.label}
             {t.count > 0 && (
-              <span className="num ml-1.5 rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">
+              <span className="num ml-1.5 rounded bg-raised-2 px-1.5 py-0.5 text-[10px] text-ink-2">
                 {t.count}
               </span>
             )}
-            {tab === t.key && <span className="absolute inset-x-0 -bottom-px h-0.5 bg-amber-500" />}
+            {tab === t.key && <span className="absolute inset-x-0 -bottom-px h-0.5 bg-warn" />}
           </button>
         ))}
       </div>
@@ -82,13 +82,13 @@ export function BottomPanel({
 // ---------------------------------------------------------------------------
 
 function Empty({ children }: { children: React.ReactNode }) {
-  return <div className="px-4 py-8 text-center text-xs text-zinc-600">{children}</div>
+  return <div className="px-4 py-8 text-center text-xs text-ink-4">{children}</div>
 }
 
 function Th({ children, align = 'right' }: { children: React.ReactNode; align?: 'left' | 'right' }) {
   return (
     <th
-      className={`sticky top-0 z-10 bg-zinc-900/95 px-2.5 py-1.5 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase ${
+      className={`sticky top-0 z-10 bg-raised px-2.5 py-1.5 text-[10px] font-semibold tracking-wider text-ink-3 uppercase ${
         align === 'left' ? 'text-left' : 'text-right'
       }`}
     >
@@ -141,15 +141,15 @@ function Instrument({
       title={symbol}
       className="flex items-center gap-1.5 text-left enabled:hover:underline"
     >
-      <span className="num font-medium text-zinc-200">{Number(strike).toLocaleString()}</span>
+      <span className="num font-medium text-ink">{Number(strike).toLocaleString()}</span>
       <span
-        className={`rounded px-1 py-px text-[9px] font-bold ${
-          isCall ? 'bg-emerald-500/15 text-emerald-400' : 'bg-rose-500/15 text-rose-400'
+        className={`rounded px-1 py-px text-[10px] font-bold ${
+          isCall ? 'bg-pos-muted text-pos' : 'bg-neg-muted text-neg'
         }`}
       >
         {isCall ? 'C' : 'P'}
       </span>
-      <span className="text-[10px] text-zinc-500">{formatExpiry(expiryLabel)}</span>
+      <span className="text-[10px] text-ink-3">{formatExpiry(expiryLabel)}</span>
     </button>
   )
 }
@@ -179,7 +179,7 @@ function PositionsTable({
   )
 
   return (
-    <table className="w-full text-[11px]">
+    <table className="w-full text-[12px]">
       <thead>
         <tr>
           <Th align="left">Instrument</Th>
@@ -206,7 +206,7 @@ function PositionsTable({
             : null
 
           return (
-            <tr key={pos.id} className="border-b border-zinc-900 hover:bg-zinc-900/40">
+            <tr key={pos.id} className="border-b border-line hover:bg-raised">
               <Td align="left">
                 <Instrument
                   symbol={pos.symbol}
@@ -216,25 +216,25 @@ function PositionsTable({
                   onClick={product ? () => onPickSymbol(product) : undefined}
                 />
               </Td>
-              <Td className={isLong ? 'text-emerald-400' : 'text-rose-400'}>
+              <Td className={isLong ? 'text-pos' : 'text-neg'}>
                 {isLong ? '+' : ''}
                 {pos.net_qty}
               </Td>
-              <Td className="text-zinc-300">{price(pos.avg_entry_price)}</Td>
-              <Td className="text-zinc-300" >
+              <Td className="text-ink">{price(pos.avg_entry_price)}</Td>
+              <Td className="text-ink" >
                 {v.mark !== null ? (
                   <span title={isLong ? 'Marked at best bid (your exit)' : 'Marked at best ask (your exit)'}>
                     {price(v.mark)}
                   </span>
                 ) : (
-                  <span className="text-zinc-600" title="No quote on the exit side">—</span>
+                  <span className="text-ink-4" title="No quote on the exit side">—</span>
                 )}
               </Td>
-              <Td className="text-zinc-400">{usd(v.currentValue, 4)}</Td>
+              <Td className="text-ink-2">{usd(v.currentValue, 4)}</Td>
               <Td className={`font-semibold ${pnlClass(v.unrealized)}`}>{signedUsd(v.unrealized, 4)}</Td>
               <Td className={pnlClass(v.unrealized)}>{pct(v.unrealizedPct)}</Td>
-              <Td className="text-zinc-400">{usd(v.marginBlocked, 4)}</Td>
-              <Td className="text-zinc-400">{posDelta === null ? '—' : posDelta.toFixed(4)}</Td>
+              <Td className="text-ink-2">{usd(v.marginBlocked, 4)}</Td>
+              <Td className="text-ink-2">{posDelta === null ? '—' : posDelta.toFixed(4)}</Td>
               <Td align="right">
                 <button
                   disabled={!product || closing === pos.id}
@@ -248,7 +248,7 @@ function PositionsTable({
                     }
                   }}
                   title={product ? 'Close at market' : 'Contract not in the loaded chain'}
-                  className="rounded border border-zinc-700 px-2 py-0.5 text-[10px] text-zinc-300 hover:border-rose-600 hover:text-rose-400 disabled:opacity-40"
+                  className="rounded border border-raised-3 px-2 py-0.5 text-[10px] text-ink hover:border-neg hover:text-neg disabled:opacity-40"
                 >
                   {closing === pos.id ? '…' : 'Close'}
                 </button>
@@ -258,8 +258,8 @@ function PositionsTable({
         })}
       </tbody>
       <tfoot>
-        <tr className="border-t border-zinc-800 bg-zinc-900/40">
-          <Td align="left" className="text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
+        <tr className="border-t border-line bg-raised">
+          <Td align="left" className="text-[10px] font-semibold tracking-wider text-ink-3 uppercase">
             Total
           </Td>
           <Td colSpan={4} />
@@ -292,7 +292,7 @@ function OrdersTable({
   }
 
   return (
-    <table className="w-full text-[11px]">
+    <table className="w-full text-[12px]">
       <thead>
         <tr>
           <Th align="left">Time</Th>
@@ -315,8 +315,8 @@ function OrdersTable({
           const gap = reference ? (o.side === 'buy' ? Number(reference) - limit : limit - Number(reference)) : null
 
           return (
-            <tr key={o.id} className="border-b border-zinc-900 hover:bg-zinc-900/40">
-              <Td align="left" className="text-zinc-500">{timeOfDay(o.created_at)}</Td>
+            <tr key={o.id} className="border-b border-line hover:bg-raised">
+              <Td align="left" className="text-ink-3">{timeOfDay(o.created_at)}</Td>
               <Td align="left">
                 <Instrument
                   symbol={o.symbol}
@@ -325,16 +325,16 @@ function OrdersTable({
                   expiryLabel={o.expiry_label}
                 />
               </Td>
-              <Td align="left" className={o.side === 'buy' ? 'text-emerald-400' : 'text-rose-400'}>
+              <Td align="left" className={o.side === 'buy' ? 'text-pos' : 'text-neg'}>
                 {o.side.toUpperCase()}
               </Td>
-              <Td align="left" className="text-zinc-400 capitalize">
+              <Td align="left" className="text-ink-2 capitalize">
                 {o.order_type}
-                {o.reduce_only && <span className="ml-1 text-[9px] text-amber-500">RO</span>}
+                {o.reduce_only && <span className="ml-1 text-[10px] text-warn">RO</span>}
               </Td>
-              <Td className="text-zinc-300">{o.qty}</Td>
-              <Td className="text-zinc-300">{price(o.limit_price)}</Td>
-              <Td className={gap !== null && gap <= 0 ? 'text-emerald-400' : 'text-zinc-500'}>
+              <Td className="text-ink">{o.qty}</Td>
+              <Td className="text-ink">{price(o.limit_price)}</Td>
+              <Td className={gap !== null && gap <= 0 ? 'text-pos' : 'text-ink-3'}>
                 {gap === null ? '—' : gap <= 0 ? 'crossing' : price(gap)}
               </Td>
               <Td align="right">
@@ -348,7 +348,7 @@ function OrdersTable({
                       setCancelling(null)
                     }
                   }}
-                  className="rounded border border-zinc-700 px-2 py-0.5 text-[10px] text-zinc-300 hover:border-rose-600 hover:text-rose-400 disabled:opacity-40"
+                  className="rounded border border-raised-3 px-2 py-0.5 text-[10px] text-ink hover:border-neg hover:text-neg disabled:opacity-40"
                 >
                   {cancelling === o.id ? '…' : 'Cancel'}
                 </button>
@@ -367,7 +367,7 @@ function HistoryTable({ fills }: { fills: FillRow[] }) {
   if (fills.length === 0) return <Empty>No trades yet.</Empty>
 
   return (
-    <table className="w-full text-[11px]">
+    <table className="w-full text-[12px]">
       <thead>
         <tr>
           <Th align="left">Time</Th>
@@ -386,32 +386,32 @@ function HistoryTable({ fills }: { fills: FillRow[] }) {
         {fills.map((f) => {
           const realized = Number(f.realized_pnl)
           return (
-            <tr key={f.id} className="border-b border-zinc-900 hover:bg-zinc-900/40">
-              <Td align="left" className="text-zinc-500">{dateTime(f.created_at)}</Td>
+            <tr key={f.id} className="border-b border-line hover:bg-raised">
+              <Td align="left" className="text-ink-3">{dateTime(f.created_at)}</Td>
               <Td align="left">
-                <span className="num font-medium text-zinc-200">
+                <span className="num font-medium text-ink">
                   {Number(f.strike_price).toLocaleString()}
                 </span>
                 <span
-                  className={`ml-1.5 rounded px-1 py-px text-[9px] font-bold ${
+                  className={`ml-1.5 rounded px-1 py-px text-[10px] font-bold ${
                     f.contract_type === 'call_options'
-                      ? 'bg-emerald-500/15 text-emerald-400'
-                      : 'bg-rose-500/15 text-rose-400'
+                      ? 'bg-pos-muted text-pos'
+                      : 'bg-neg-muted text-neg'
                   }`}
                 >
                   {f.contract_type === 'call_options' ? 'C' : 'P'}
                 </span>
               </Td>
-              <Td align="left" className={f.side === 'buy' ? 'text-emerald-400' : 'text-rose-400'}>
+              <Td align="left" className={f.side === 'buy' ? 'text-pos' : 'text-neg'}>
                 {f.side.toUpperCase()}
               </Td>
-              <Td align="left" className="text-zinc-500 capitalize">{f.order_type}</Td>
-              <Td className="text-zinc-300">{compact(f.qty)}</Td>
-              <Td className="text-zinc-300">{price(f.price)}</Td>
-              <Td className="text-zinc-400">{usd(Number(f.premium), 4)}</Td>
-              <Td className="text-zinc-500">{usd(Number(f.notional))}</Td>
-              <Td className="text-zinc-500">{usd(Number(f.fee), 4)}</Td>
-              <Td className={realized === 0 ? 'text-zinc-600' : pnlClass(realized)}>
+              <Td align="left" className="text-ink-3 capitalize">{f.order_type}</Td>
+              <Td className="text-ink">{compact(f.qty)}</Td>
+              <Td className="text-ink">{price(f.price)}</Td>
+              <Td className="text-ink-2">{usd(Number(f.premium), 4)}</Td>
+              <Td className="text-ink-3">{usd(Number(f.notional))}</Td>
+              <Td className="text-ink-3">{usd(Number(f.fee), 4)}</Td>
+              <Td className={realized === 0 ? 'text-ink-4' : pnlClass(realized)}>
                 {realized === 0 ? '—' : signedUsd(realized, 4)}
               </Td>
             </tr>

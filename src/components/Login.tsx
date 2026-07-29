@@ -34,15 +34,15 @@ export function Login() {
     <div className="flex min-h-full items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <div className="mb-6 text-center">
-          <div className="text-2xl font-bold tracking-tight text-amber-400">XAUT Options</div>
-          <div className="mt-1 text-xs text-zinc-500">Paper trading terminal · Delta Exchange data</div>
+          <div className="text-2xl font-bold tracking-tight text-warn">XAUT Options</div>
+          <div className="mt-1 text-xs text-ink-3">Paper trading terminal · Delta Exchange data</div>
         </div>
 
         <form
           onSubmit={submit}
-          className="space-y-3 rounded-lg border border-zinc-800 bg-zinc-900/60 p-5"
+          className="space-y-3 rounded-lg border border-line bg-raised p-5"
         >
-          <div className="mb-4 flex gap-1 rounded bg-zinc-800/60 p-0.5">
+          <div className="mb-4 flex gap-1 rounded bg-sub p-0.5">
             {(['signin', 'signup'] as const).map((m) => (
               <button
                 key={m}
@@ -52,7 +52,7 @@ export function Login() {
                   setError(null)
                 }}
                 className={`flex-1 rounded py-1.5 text-xs font-medium transition-colors ${
-                  mode === m ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'
+                  mode === m ? 'bg-raised-3 text-ink' : 'text-ink-3 hover:text-ink'
                 }`}
               >
                 {m === 'signin' ? 'Sign in' : 'Create account'}
@@ -61,19 +61,19 @@ export function Login() {
           </div>
 
           <label className="block">
-            <span className="mb-1 block text-[11px] text-zinc-400">Email</span>
+            <span className="mb-1 block text-[12px] text-ink-2">Email</span>
             <input
               type="email"
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               autoComplete="email"
-              className="w-full rounded border border-zinc-700 bg-zinc-950 px-2.5 py-2 text-sm text-zinc-100 focus:border-zinc-500 focus:outline-none"
+              className="w-full rounded border border-raised-3 bg-surface px-2.5 py-2 text-sm text-ink focus:border-ink-3 focus:outline-none"
             />
           </label>
 
           <label className="block">
-            <span className="mb-1 block text-[11px] text-zinc-400">Password</span>
+            <span className="mb-1 block text-[12px] text-ink-2">Password</span>
             <input
               type="password"
               required
@@ -81,15 +81,15 @@ export function Login() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
-              className="w-full rounded border border-zinc-700 bg-zinc-950 px-2.5 py-2 text-sm text-zinc-100 focus:border-zinc-500 focus:outline-none"
+              className="w-full rounded border border-raised-3 bg-surface px-2.5 py-2 text-sm text-ink focus:border-ink-3 focus:outline-none"
             />
           </label>
 
           {error && (
-            <p className="rounded bg-rose-500/10 px-2 py-1.5 text-[11px] text-rose-400">{error}</p>
+            <p className="rounded bg-neg-muted px-2 py-1.5 text-[12px] text-neg">{error}</p>
           )}
           {notice && (
-            <p className="rounded bg-emerald-500/10 px-2 py-1.5 text-[11px] text-emerald-400">
+            <p className="rounded bg-pos-muted px-2 py-1.5 text-[12px] text-pos">
               {notice}
             </p>
           )}
@@ -97,13 +97,13 @@ export function Login() {
           <button
             type="submit"
             disabled={busy}
-            className="w-full rounded bg-amber-600 py-2.5 text-sm font-semibold text-white hover:bg-amber-500 disabled:opacity-40"
+            className="w-full rounded bg-gold py-2.5 text-sm font-semibold text-white hover:bg-gold-hover disabled:opacity-40"
           >
             {busy ? 'Working…' : mode === 'signin' ? 'Sign in' : 'Create account'}
           </button>
         </form>
 
-        <p className="mt-4 text-center text-[10px] leading-relaxed text-zinc-600">
+        <p className="mt-4 text-center text-[10px] leading-relaxed text-ink-4">
           Simulated trading only. Prices are live from Delta Exchange's public API,
           <br />
           but no order ever reaches the exchange.

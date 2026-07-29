@@ -129,10 +129,10 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
   if (marketError) {
     return (
       <Splash>
-        <p className="text-rose-400">{marketError}</p>
+        <p className="text-neg">{marketError}</p>
         <button
           onClick={() => location.reload()}
-          className="mt-3 rounded border border-zinc-700 px-3 py-1 text-xs hover:border-zinc-500"
+          className="mt-3 rounded border border-raised-3 px-3 py-1 text-xs hover:border-ink-3"
         >
           Retry
         </button>
@@ -158,18 +158,18 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
         onArchive={accounts.archiveAccount}
       />
 
-      <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-zinc-800 bg-zinc-950 px-2 py-1.5">
-        <span className="mr-1 shrink-0 text-[10px] tracking-wider text-zinc-600 uppercase">
+      <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-line bg-surface px-2 py-1.5">
+        <span className="mr-1 shrink-0 text-[10px] tracking-wider text-ink-4 uppercase">
           Expiry
         </span>
         {expiries.map((e) => (
           <button
             key={e.label}
             onClick={() => setActiveExpiry(e.label)}
-            className={`shrink-0 rounded px-2.5 py-1 text-[11px] font-medium whitespace-nowrap transition-colors ${
+            className={`shrink-0 rounded px-2.5 py-1 text-[12px] font-medium whitespace-nowrap transition-colors ${
               e.label === activeExpiry
-                ? 'bg-amber-500/15 text-amber-400'
-                : 'text-zinc-500 hover:bg-zinc-800/60 hover:text-zinc-300'
+                ? 'bg-warn-muted text-warn'
+                : 'text-ink-3 hover:bg-sub hover:text-ink'
             }`}
           >
             {formatExpiry(e.label)}
@@ -217,7 +217,7 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
 
 function Splash({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-zinc-500">
+    <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-ink-3">
       {children}
     </div>
   )
@@ -226,17 +226,17 @@ function Splash({ children }: { children: React.ReactNode }) {
 function ConfigNotice() {
   return (
     <div className="flex h-full items-center justify-center p-6">
-      <div className="max-w-lg rounded-lg border border-amber-700/50 bg-amber-500/5 p-5 text-sm">
-        <h1 className="font-semibold text-amber-400">Supabase is not configured</h1>
-        <p className="mt-2 text-zinc-400">
-          Create <code className="rounded bg-zinc-800 px-1 text-xs">.env.local</code> in the project
+      <div className="max-w-lg rounded-lg border border-gold bg-warn/5 p-5 text-sm">
+        <h1 className="font-semibold text-warn">Supabase is not configured</h1>
+        <p className="mt-2 text-ink-2">
+          Create <code className="rounded bg-raised-2 px-1 text-xs">.env.local</code> in the project
           root with your project credentials, then restart the dev server:
         </p>
-        <pre className="mt-3 overflow-x-auto rounded bg-zinc-950 p-3 text-[11px] text-zinc-300">
+        <pre className="mt-3 overflow-x-auto rounded bg-surface p-3 text-[12px] text-ink">
           {`VITE_SUPABASE_URL=https://xxxx.supabase.co\nVITE_SUPABASE_ANON_KEY=eyJ...`}
         </pre>
-        <p className="mt-3 text-xs text-zinc-500">
-          See <code className="rounded bg-zinc-800 px-1">docs/SETUP.md</code> for the full
+        <p className="mt-3 text-xs text-ink-3">
+          See <code className="rounded bg-raised-2 px-1">docs/SETUP.md</code> for the full
           setup, including the SQL migration to run.
         </p>
       </div>
