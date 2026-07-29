@@ -357,8 +357,8 @@ Measured against their rendered chain rather than inferred:
 
 | Property | Delta | Ours |
 | --- | --- | --- |
-| Column order (calls) | Vega · Gamma · Delta · Bid · Mark · Ask | same |
-| Column order (puts) | mirrored | same |
+| Columns per side | 18 | same |
+| Column widths | 80px, 83 (OI, Volume), 91 (6H OI Chg.), 85 (24hr Chg.) | same |
 | Bid / Mark / Ask cell | price above, IV beneath | same |
 | Price format | `$128.10` | same |
 | Price / IV size | 12px / 10px | same |
@@ -373,11 +373,32 @@ The last two are worth stating explicitly: all 970 cells on their rendered chain
 have transparent backgrounds. An earlier version of this app tinted in-the-money
 rows and highlighted the ATM strike — both were inventions and have been removed.
 
-Two intentional departures: a small brand-orange dot beside a strike where a
-position is held, since Delta surfaces that only in the positions table and the
-information is worth having on the chain; and Vega/Gamma replacing the OI/Volume
-columns this app previously showed, matching Delta's default view. Delta offers
-OI and Volume as optional columns behind a column picker, which is not built.
+#### Column order
+
+Delta's two sides are **not** a clean mirror, so both orders are written out
+literally in `OptionChain.tsx` rather than derived:
+
+| Side | Order, left to right |
+| --- | --- |
+| Calls | Low · High · Open · Last · 24hr Chg. · Theta · Vega · Gamma · POS · 6H OI Chg. · Volume · Delta · Bid Qty · Bid · Mark · Ask · Ask Qty · OI |
+| | **Strike** |
+| Puts | OI · Bid Qty · Bid · Mark · Ask · Ask Qty · Delta · Volume · 6H OI Chg. · POS · Gamma · Vega · Theta · 24hr Chg. · Last · Open · High · Low |
+
+Two asymmetries fall out of that. `OI` sits against the strike on both sides, and
+the quote block reads Bid Qty → Bid → Mark → Ask → Ask Qty left-to-right on both
+sides. Only the outer block — Delta, Volume, OI change, POS, greeks, OHLC — is
+actually mirrored. A naive `reverse()` produces the wrong layout.
+
+Column sources: OI, 6H OI change and Volume are USD figures (`oi_value_usd`,
+`oi_change_usd_6h`, `turnover_usd`); Bid/Ask Qty and POS are expressed in the
+underlying (contracts × `contract_value`); 24hr Chg. uses `ltp_change_24h`.
+
+At 37 columns the chain is ~3,030px wide and scrolls horizontally, opening
+centred on the strike gutter.
+
+One intentional departure: a small brand-orange dot beside a strike where a
+position is held. Delta surfaces that only in its positions table, but it is
+worth having on the chain you are clicking through.
 
 ---
 

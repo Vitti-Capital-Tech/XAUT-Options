@@ -47,11 +47,21 @@ export interface Ticker {
   quotes: Quotes | null
   greeks: Greeks | null
   mark_iv?: string | null
+  /** Open interest in the underlying, and its USD value — the chain shows the USD one. */
   oi: string | null
   oi_contracts: string | null
+  oi_value_usd: string | null
+  oi_change_usd_6h: string | null
   volume: number | null
+  /** 24h traded value in USD — what the chain's Volume column shows. */
   turnover_usd: number | null
+  /** Last traded price, plus the session's open/high/low. */
   close: number | null
+  open: number | null
+  high: number | null
+  low: number | null
+  /** Percentage change in last traded price over 24h. */
+  ltp_change_24h: string | null
   mark_change_24h: string | null
 }
 
