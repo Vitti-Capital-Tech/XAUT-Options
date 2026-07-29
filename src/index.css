@@ -1,0 +1,59 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Consolas', ui-monospace, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-zinc-950 text-zinc-200 antialiased;
+  font-feature-settings: 'tnum' 1; /* tabular figures so price columns don't jitter */
+}
+
+/* Numeric cells: fixed-width digits keep the chain from shifting on every tick. */
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  @apply bg-zinc-950;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-zinc-700 rounded;
+}
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-zinc-600;
+}
+
+/* Brief highlight when a quote changes, like the real terminal. */
+@keyframes flash-up {
+  from {
+    background-color: rgb(16 185 129 / 0.25);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+@keyframes flash-down {
+  from {
+    background-color: rgb(244 63 94 / 0.25);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+.flash-up {
+  animation: flash-up 0.6s ease-out;
+}
+.flash-down {
+  animation: flash-down 0.6s ease-out;
+}

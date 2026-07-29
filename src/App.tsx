@@ -1,0 +1,245 @@
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Login } from './components/Login'
+import { TopBar } from './components/TopBar'
+import { OptionChain } from './components/OptionChain'
+import { OrderTicket, type TicketRequest } from './components/OrderTicket'
+import { BottomPanel } from './components/BottomPanel'
+import { useAuth } from './hooks/useAuth'
+import { useAccounts } from './hooks/useAccounts'
+import { useTrading } from './hooks/useTrading'
+import { market, useMarketTick } from './lib/marketStore'
+import {
+  MarketStream,
+  fetchExpiries,
+  fetchTickers,
+  formatExpiry,
+  type Expiry,
+  type Product,
+} from './lib/delta'
+import { summarizeAccount, type Side } from './engine/paper'
+import { supabaseConfigured } from './lib/supabase'
+
+export default function App() {
+  const { session, user, loading: authLoading } = useAuth()
+
+  if (!supabaseConfigured) return <ConfigNotice />
+  if (authLoading) return <Splash>Loading…</Splash>
+  if (!session) return <Login />
+  return <Terminal userId={user!.id} email={user!.email} />
+}
+
+// ---------------------------------------------------------------------------
+
+function Terminal({ userId, email }: { userId: string; email: string | undefined }) {
+  const accounts = useAccounts(userId)
+  const trading = useTrading(accounts.selectedId, accounts.reload)
+
+  const [expiries, setExpiries] = useState<Expiry[]>([])
+  const [activeExpiry, setActiveExpiry] = useState<string | null>(null)
+  const [marketError, setMarketError] = useState<string | null>(null)
+  const [ticket, setTicket] = useState<TicketRequest | null>(null)
+
+  useMarketTick()
+
+  // ---- Market data bootstrap -----------------------------------------------
+  useEffect(() => {
+    let active = true
+
+    void (async () => {
+      try {
+        const [exps, tickers] = await Promise.all([fetchExpiries(), fetchTickers()])
+        if (!active) return
+        if (exps.length === 0) {
+          setMarketError('No live XAUT option contracts are listed right now.')
+          return
+        }
+        market.upsertMany(tickers)
+        setExpiries(exps)
+        setActiveExpiry((current) => current ?? exps[0].label)
+      } catch (err) {
+        if (active) setMarketError(err instanceof Error ? err.message : 'Could not load market data')
+      }
+    })()
+
+    return () => {
+      active = false
+    }
+  }, [])
+
+  // Every product across every expiry, for position/order lookups.
+  const productsBySymbol = useMemo(() => {
+    const m = new Map<string, Product>()
+    for (const exp of expiries) {
+      for (const p of exp.calls.values()) m.set(p.symbol, p)
+      for (const p of exp.puts.values()) m.set(p.symbol, p)
+    }
+    return m
+  }, [expiries])
+
+  // The fill engine needs product metadata (contract value, fee rates) by symbol.
+  useEffect(() => {
+    trading.registerProducts([...productsBySymbol.values()])
+  }, [productsBySymbol, trading])
+
+  const expiry = expiries.find((e) => e.label === activeExpiry) ?? null
+
+  // ---- Live stream ---------------------------------------------------------
+  const [stream] = useState(() => new MarketStream())
+
+  useEffect(() => {
+    stream
+      .on('ticker', (t) => market.upsert(t))
+      .on('spot', (p) => market.setSpot(p))
+      .on('status', (s) => market.setStatus(s))
+      .connect()
+    return () => stream.close()
+  }, [stream])
+
+  // Subscribe to the visible expiry plus anything we hold or have resting, so
+  // P&L and limit fills keep working while browsing a different expiry.
+  useEffect(() => {
+    const symbols = new Set<string>()
+    if (expiry) {
+      for (const p of expiry.calls.values()) symbols.add(p.symbol)
+      for (const p of expiry.puts.values()) symbols.add(p.symbol)
+    }
+    for (const p of trading.positions) symbols.add(p.symbol)
+    for (const o of trading.openOrders) symbols.add(o.symbol)
+    stream.setSymbols([...symbols])
+  }, [stream, expiry, trading.positions, trading.openOrders])
+
+  // ---- Account summary ----------------------------------------------------
+  const tickerFor = useCallback((symbol: string) => market.get(symbol), [])
+  const summary = useMemo(
+    () =>
+      summarizeAccount(
+        Number(accounts.selected?.cash_balance ?? 0),
+        trading.positions,
+        tickerFor,
+        market.spot,
+      ),
+    // Recomputed on each throttled tick via the useMarketTick subscription above.
+    [accounts.selected?.cash_balance, trading.positions, tickerFor],
+  )
+
+  const openTicket = useCallback((product: Product, side: Side, presetPrice: number | null) => {
+    setTicket({ product, side, presetPrice })
+  }, [])
+
+  if (marketError) {
+    return (
+      <Splash>
+        <p className="text-rose-400">{marketError}</p>
+        <button
+          onClick={() => location.reload()}
+          className="mt-3 rounded border border-zinc-700 px-3 py-1 text-xs hover:border-zinc-500"
+        >
+          Retry
+        </button>
+      </Splash>
+    )
+  }
+
+  if (accounts.loading || expiries.length === 0) return <Splash>Loading market…</Splash>
+
+  return (
+    <div className="flex h-full flex-col">
+      <TopBar
+        accounts={accounts.accounts}
+        selected={accounts.selected}
+        summary={summary}
+        email={email}
+        onSelect={accounts.setSelectedId}
+        onCreate={accounts.createAccount}
+        onReset={async (id) => {
+          await accounts.resetAccount(id)
+          await trading.reload()
+        }}
+        onArchive={accounts.archiveAccount}
+      />
+
+      <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-zinc-800 bg-zinc-950 px-2 py-1.5">
+        <span className="mr-1 shrink-0 text-[10px] tracking-wider text-zinc-600 uppercase">
+          Expiry
+        </span>
+        {expiries.map((e) => (
+          <button
+            key={e.label}
+            onClick={() => setActiveExpiry(e.label)}
+            className={`shrink-0 rounded px-2.5 py-1 text-[11px] font-medium whitespace-nowrap transition-colors ${
+              e.label === activeExpiry
+                ? 'bg-amber-500/15 text-amber-400'
+                : 'text-zinc-500 hover:bg-zinc-800/60 hover:text-zinc-300'
+            }`}
+          >
+            {formatExpiry(e.label)}
+          </button>
+        ))}
+      </div>
+
+      {/* Chain takes the space it needs; the panel is a fixed-height footer. */}
+      <div className="flex min-h-0 flex-1 flex-col">
+        {expiry && (
+          <OptionChain expiry={expiry} positions={trading.positions} onPick={openTicket} />
+        )}
+      </div>
+
+      <div className="h-72 shrink-0">
+        <div className="flex h-full flex-col">
+          <BottomPanel
+            positions={trading.positions}
+            openOrders={trading.openOrders}
+            fills={trading.fills}
+            productsBySymbol={productsBySymbol}
+            onClosePosition={(pos, product) => trading.closePosition(pos, product)}
+            onCancelOrder={trading.cancelOrder}
+            onPickSymbol={(product) => openTicket(product, 'buy', null)}
+          />
+        </div>
+      </div>
+
+      {ticket && (
+        <OrderTicket
+          request={ticket}
+          position={trading.positions.find((p) => p.symbol === ticket.product.symbol)}
+          available={summary.available}
+          onClose={() => setTicket(null)}
+          onSubmit={async (args) => {
+            await trading.placeOrder(args)
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+
+function Splash({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-zinc-500">
+      {children}
+    </div>
+  )
+}
+
+function ConfigNotice() {
+  return (
+    <div className="flex h-full items-center justify-center p-6">
+      <div className="max-w-lg rounded-lg border border-amber-700/50 bg-amber-500/5 p-5 text-sm">
+        <h1 className="font-semibold text-amber-400">Supabase is not configured</h1>
+        <p className="mt-2 text-zinc-400">
+          Create <code className="rounded bg-zinc-800 px-1 text-xs">.env.local</code> in the project
+          root with your project credentials, then restart the dev server:
+        </p>
+        <pre className="mt-3 overflow-x-auto rounded bg-zinc-950 p-3 text-[11px] text-zinc-300">
+          {`VITE_SUPABASE_URL=https://xxxx.supabase.co\nVITE_SUPABASE_ANON_KEY=eyJ...`}
+        </pre>
+        <p className="mt-3 text-xs text-zinc-500">
+          See <code className="rounded bg-zinc-800 px-1">README.md</code> for the full setup,
+          including the SQL migration to run.
+        </p>
+      </div>
+    </div>
+  )
+}
