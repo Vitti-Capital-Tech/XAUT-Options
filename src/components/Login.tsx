@@ -34,7 +34,7 @@ export function Login() {
     <div className="flex min-h-full items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <div className="mb-6 text-center">
-          <div className="text-2xl font-bold tracking-tight text-warn">XAUT Options</div>
+          <div className="text-2xl font-bold tracking-tight text-brand-text">XAUT Options</div>
           <div className="mt-1 text-xs text-ink-3">Paper trading terminal · Delta Exchange data</div>
         </div>
 
@@ -97,7 +97,7 @@ export function Login() {
           <button
             type="submit"
             disabled={busy}
-            className="w-full rounded bg-gold py-2.5 text-sm font-semibold text-white hover:bg-gold-hover disabled:opacity-40"
+            className="w-full rounded bg-brand py-2.5 text-sm font-semibold text-white hover:bg-brand-hover disabled:opacity-40"
           >
             {busy ? 'Working…' : mode === 'signin' ? 'Sign in' : 'Create account'}
           </button>

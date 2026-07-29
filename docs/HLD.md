@@ -332,8 +332,13 @@ stays auditable.
 | `main-text-primary` → `quaternary` | `#e1e1e2` → `#44464a` | Four-step text hierarchy |
 | `positive-text` / `positive-bg` | `#33b991` / `#00a876` | Bids, longs, gains, buy actions |
 | `negative-text` / `negative-bg` | `#ff5c5c` / `#eb5454` | Asks, shorts, losses, sell actions |
-| `warning` | `#ffd033` | Spot, ATM strike, active expiry |
-| `accent-brown` | `#a28467` | Brand accent — suits XAUT |
+| `brand-india-bg-primary` | `#fe6c02` | Primary buttons |
+| `brand-india-text-primary` | `#fe8935` | ATM row rule, active expiry pill, countdown |
+| `misc-chart-bg-brand-india` | `#2f231b` | Muted brand backgrounds |
+
+XAUT options are an India-only listing, so the accent is Delta **India's** orange.
+The global site's brown `accent-brown` and yellow `warning` are the wrong brand
+and are not used for accents here.
 
 The typeface is **Aileron**, which is what Delta serves. It is public domain
 (CC0 1.0) and bundled via Fontsource rather than hotlinked from their asset
@@ -346,9 +351,33 @@ webfont fails to load.
 Verified by enumerating every colour the running app renders: all opaque values
 resolve to a token in the table above, with no strays.
 
-> One deviation: Delta's own in-the-money row tint could not be observed — their
-> chain view redirects to a trade panel that renders no grid. `main-bg-sub-surface`
-> is used instead, which is a genuine token but our choice, not theirs.
+### Chain layout
+
+Measured against their rendered chain rather than inferred:
+
+| Property | Delta | Ours |
+| --- | --- | --- |
+| Column order (calls) | Vega · Gamma · Delta · Bid · Mark · Ask | same |
+| Column order (puts) | mirrored | same |
+| Bid / Mark / Ask cell | price above, IV beneath | same |
+| Price format | `$128.10` | same |
+| Price / IV size | 12px / 10px | same |
+| IV colour | `#8e9298` | same |
+| Row height | 43px | same |
+| Strike gutter | 102px, centred, `#e1e1e2` | same |
+| ATM marker | `#fe8935` rule above and below the row | same |
+| In-the-money tint | **none** | none |
+| Strike highlight | **none** | none |
+
+The last two are worth stating explicitly: all 970 cells on their rendered chain
+have transparent backgrounds. An earlier version of this app tinted in-the-money
+rows and highlighted the ATM strike — both were inventions and have been removed.
+
+Two intentional departures: a small brand-orange dot beside a strike where a
+position is held, since Delta surfaces that only in the positions table and the
+information is worth having on the chain; and Vega/Gamma replacing the OI/Volume
+columns this app previously showed, matching Delta's default view. Delta offers
+OI and Volume as optional columns behind a column picker, which is not built.
 
 ---
 

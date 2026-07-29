@@ -155,7 +155,7 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
           </div>
           <div className="flex-1 py-2">
             <div className="text-ink-4">Spot</div>
-            <div className="num font-semibold text-warn">{price(spot)}</div>
+            <div className="num font-semibold text-brand-text">{price(spot)}</div>
           </div>
         </div>
 
@@ -238,7 +238,7 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
                   setQtyText(String(Math.abs(netQty)))
                   setSide(netQty > 0 ? 'sell' : 'buy')
                 }}
-                className="flex-1 rounded border border-gold py-1 text-[12px] text-warn hover:border-warn"
+                className="flex-1 rounded border border-brand-text py-1 text-[12px] text-brand-text hover:border-brand"
                 title={`Flatten ${Math.abs(netQty)} lots`}
               >
                 Close
@@ -280,7 +280,7 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
           </dl>
 
           {preview.warning && !preview.error && (
-            <p className="rounded bg-warn-muted px-2 py-1.5 text-[12px] text-warn">
+            <p className="rounded bg-brand-muted px-2 py-1.5 text-[12px] text-brand-text">
               {preview.warning}
             </p>
           )}

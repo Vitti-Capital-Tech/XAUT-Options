@@ -52,7 +52,7 @@ export function BottomPanel({
                 {t.count}
               </span>
             )}
-            {tab === t.key && <span className="absolute inset-x-0 -bottom-px h-0.5 bg-warn" />}
+            {tab === t.key && <span className="absolute inset-x-0 -bottom-px h-0.5 bg-brand" />}
           </button>
         ))}
       </div>
@@ -330,7 +330,7 @@ function OrdersTable({
               </Td>
               <Td align="left" className="text-ink-2 capitalize">
                 {o.order_type}
-                {o.reduce_only && <span className="ml-1 text-[10px] text-warn">RO</span>}
+                {o.reduce_only && <span className="ml-1 text-[10px] text-brand-text">RO</span>}
               </Td>
               <Td className="text-ink">{o.qty}</Td>
               <Td className="text-ink">{price(o.limit_price)}</Td>

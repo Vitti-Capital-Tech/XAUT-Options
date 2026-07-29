@@ -24,11 +24,32 @@ export function price(v: number | string | null | undefined, dp = 2): string {
   return n.toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp })
 }
 
-/** Fractional IV (0.3459) -> '34.59%'. */
-export function iv(v: string | number | null | undefined): string {
+/**
+ * Price with a leading `$`, as Delta renders every price in the chain.
+ * Missing values become a bare dash, which inherits the column's colour there.
+ */
+export function usdPrice(v: number | string | null | undefined, dp = 2): string {
   const n = typeof v === 'string' ? Number(v) : v
-  if (n === null || n === undefined || !Number.isFinite(n)) return '—'
-  return `${(n * 100).toFixed(2)}%`
+  if (n === null || n === undefined || !Number.isFinite(n)) return '-'
+  return `$${n.toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp })}`
+}
+
+/** Fractional IV (0.3459) -> '34.6%' — one decimal, matching Delta's chain. */
+export function ivShort(v: string | number | null | undefined): string {
+  const n = typeof v === 'string' ? Number(v) : v
+  if (n === null || n === undefined || !Number.isFinite(n)) return '-'
+  return `${(n * 100).toFixed(1)}%`
+}
+
+/** Delta's countdown format, e.g. '0d:20h:33m'. */
+export function timeToExpiry(settlementTime: string): string {
+  const ms = new Date(settlementTime).getTime() - Date.now()
+  if (!Number.isFinite(ms)) return '—'
+  if (ms <= 0) return 'Expired'
+  const d = Math.floor(ms / 86_400_000)
+  const h = Math.floor((ms % 86_400_000) / 3_600_000)
+  const m = Math.floor((ms % 3_600_000) / 60_000)
+  return `${d}d:${String(h).padStart(2, '0')}h:${String(m).padStart(2, '0')}m`
 }
 
 export function greek(v: string | number | null | undefined, dp = 3): string {

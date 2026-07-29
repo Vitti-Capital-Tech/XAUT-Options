@@ -44,16 +44,23 @@
   --color-neg-muted: #411516; /* negative-bg-muted */
   --color-neg-on-muted: #5b1d1f; /* negative-bg-on-muted */
 
-  /* Warning — Delta's highlight yellow, used here for ATM and spot */
+  /* Warning yellow. Part of Delta's set; kept for future use — the ATM marker
+     and expiry pills use the brand orange below, as theirs do. */
   --color-warn: #ffd033; /* warning-text-primary */
   --color-warn-muted: #3a3304; /* warning-bg-muted */
   --color-warn-on-muted: #ffe799; /* warning-text-on-muted */
 
-  /* Brand accent (India) — gold-brown, fits XAUT */
-  --color-gold: #a28467; /* accent-brown-bg-primary */
-  --color-gold-hover: #514132; /* accent-brown-bg-hover */
-  --color-gold-text: #b9a28d; /* accent-brown-text-primary */
-  --color-gold-muted: #2f261d; /* accent-brown-bg-muted */
+  /* Delta India's brand accent — orange. Used for the ATM row marker, the
+     active expiry pill, the expiry countdown and primary buttons. */
+  --color-brand: #fe6c02; /* brand-india-bg-primary */
+  --color-brand-hover: #e76202; /* brand-india-bg-hover */
+  --color-brand-text: #fe8935; /* brand-india-text-primary, and the ATM border */
+  --color-brand-on-muted: #fe9d55; /* brand-india-text-on-muted */
+  --color-brand-muted: #2f231b; /* misc-chart-bg-brand-india */
+
+  /* The green Delta uses for the underlying's price in the chain header —
+     measured at #00bd84, distinct from positive-bg-primary. */
+  --color-spot: #00bd84;
 
   --color-blue: #3895ed; /* accent-blue-bg-primary */
 

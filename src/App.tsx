@@ -168,7 +168,7 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
             onClick={() => setActiveExpiry(e.label)}
             className={`shrink-0 rounded px-2.5 py-1 text-[12px] font-medium whitespace-nowrap transition-colors ${
               e.label === activeExpiry
-                ? 'bg-warn-muted text-warn'
+                ? 'border-[0.8px] border-brand-text text-brand-text'
                 : 'text-ink-3 hover:bg-sub hover:text-ink'
             }`}
           >
@@ -226,8 +226,8 @@ function Splash({ children }: { children: React.ReactNode }) {
 function ConfigNotice() {
   return (
     <div className="flex h-full items-center justify-center p-6">
-      <div className="max-w-lg rounded-lg border border-gold bg-warn/5 p-5 text-sm">
-        <h1 className="font-semibold text-warn">Supabase is not configured</h1>
+      <div className="max-w-lg rounded-lg border border-brand-text bg-brand/5 p-5 text-sm">
+        <h1 className="font-semibold text-brand-text">Supabase is not configured</h1>
         <p className="mt-2 text-ink-2">
           Create <code className="rounded bg-raised-2 px-1 text-xs">.env.local</code> in the project
           root with your project credentials, then restart the dev server:

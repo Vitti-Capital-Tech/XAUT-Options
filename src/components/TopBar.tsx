@@ -72,8 +72,8 @@ export function TopBar({
   return (
     <header className="flex shrink-0 items-center gap-4 border-b border-line bg-raised px-3 py-2">
       <div className="flex items-center gap-2">
-        <span className="text-sm font-bold tracking-tight text-warn">XAUT</span>
-        <span className="rounded bg-warn-muted px-1.5 py-0.5 text-[10px] font-bold tracking-wider text-warn uppercase">
+        <span className="text-sm font-bold tracking-tight text-brand-text">XAUT</span>
+        <span className="rounded bg-brand-muted px-1.5 py-0.5 text-[10px] font-bold tracking-wider text-brand-text uppercase">
           Paper
         </span>
       </div>
@@ -86,7 +86,7 @@ export function TopBar({
       <div className="flex items-center gap-1.5" title={`Market data: ${status}`}>
         <span
           className={`h-1.5 w-1.5 rounded-full ${
-            status === 'live' ? 'bg-pos-solid' : status === 'connecting' ? 'bg-warn' : 'bg-neg-solid animate-pulse'
+            status === 'live' ? 'bg-pos-solid' : status === 'connecting' ? 'bg-brand' : 'bg-neg-solid animate-pulse'
           }`}
         />
         <span className="text-[10px] text-ink-3 capitalize">{status}</span>
@@ -140,7 +140,7 @@ export function TopBar({
                       className="min-w-0 flex-1 text-left"
                     >
                       <div className="flex items-center gap-1.5">
-                        {isActive && <span className="text-[10px] text-warn">●</span>}
+                        {isActive && <span className="text-[10px] text-brand-text">●</span>}
                         <span className="truncate text-xs font-medium text-ink">{a.name}</span>
                       </div>
                       <div className="num mt-0.5 flex gap-2 text-[10px]">
@@ -160,7 +160,7 @@ export function TopBar({
                       }}
                       disabled={busy}
                       title="Reset to starting balance"
-                      className="rounded p-1 text-[10px] text-ink-3 hover:bg-raised-3 hover:text-warn disabled:opacity-40"
+                      className="rounded p-1 text-[10px] text-ink-3 hover:bg-raised-3 hover:text-brand-text disabled:opacity-40"
                     >
                       ↺
                     </button>
@@ -210,7 +210,7 @@ export function TopBar({
                   <button
                     onClick={submitCreate}
                     disabled={busy}
-                    className="flex-1 rounded bg-gold py-1 text-xs font-medium text-white hover:bg-gold-hover disabled:opacity-40"
+                    className="flex-1 rounded bg-brand py-1 text-xs font-medium text-white hover:bg-brand-hover disabled:opacity-40"
                   >
                     Create
                   </button>
@@ -228,7 +228,7 @@ export function TopBar({
             ) : (
               <button
                 onClick={() => setCreating(true)}
-                className="w-full border-t border-line px-3 py-2 text-left text-xs text-warn hover:bg-raised-2"
+                className="w-full border-t border-line px-3 py-2 text-left text-xs text-brand-text hover:bg-raised-2"
               >
                 + New paper account
               </button>
