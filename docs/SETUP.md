@@ -60,6 +60,20 @@ VITE_SUPABASE_ANON_KEY=eyJhbGciOi...
 
 Vite reads `.env.local` at startup only. **Restart the dev server after editing it.**
 
+### Optional: the admin keyword
+
+Typing a word anywhere in the terminal opens the admin panel, where paper
+accounts are created and managed. It defaults to `trade`; set another with:
+
+```
+VITE_ADMIN_KEYWORD=your-word
+```
+
+> This is a shortcut, not a lock. The comparison runs in browser code that
+> anyone can read, and the panel only ever touches the signed-in user's own
+> accounts. Auth and row-level security are what protect the data. The same
+> panel is reachable from **Manage accounts** in the account switcher.
+
 ## 4. Optional — skip email confirmation
 
 For local use, go to **Authentication → Sign In / Providers → Email** and turn

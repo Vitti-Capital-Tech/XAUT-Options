@@ -103,9 +103,29 @@ row locked, so a fill can't half-apply and two tabs can't fill one order twice.
 ### Multiple accounts
 
 The switcher (top right) holds any number of independent paper accounts, each
-with its own starting balance, positions, orders and history. Per account you
-can **reset** (restore starting balance, wipe history) or **archive** (hide but
-keep history). The selected account is remembered across reloads.
+with its own starting balance, positions, orders and history. The selected
+account is remembered across reloads.
+
+### Admin panel
+
+Type **`trade`** anywhere in the terminal — or pick **Manage accounts** in the
+switcher — to open the account manager. It lists every paper account with its
+starting balance, current balance, realized P&L, and open position, order and
+trade counts, and lets you:
+
+| Action | Effect |
+| --- | --- |
+| Create | New account with a name and starting balance |
+| Use | Make it the active account |
+| Edit | Rename, or rebase the starting balance keeping realized P&L |
+| Reset | Restore the starting balance, clear positions/orders/history |
+| Archive / Restore | Hide from the switcher without losing history |
+| Delete | Remove the account and all its records — no undo, so it confirms twice |
+
+The keyword is configurable via `VITE_ADMIN_KEYWORD`. It is a convenience
+shortcut, not a security boundary: the check runs in browser code, and the panel
+only ever touches your own accounts. Auth and row-level security do the
+protecting.
 
 ---
 

@@ -4,9 +4,11 @@ import { TopBar } from './components/TopBar'
 import { OptionChain } from './components/OptionChain'
 import { OrderTicket, type TicketRequest } from './components/OrderTicket'
 import { BottomPanel } from './components/BottomPanel'
+import { AdminPanel } from './components/AdminPanel'
 import { useAuth } from './hooks/useAuth'
 import { useAccounts } from './hooks/useAccounts'
 import { useTrading } from './hooks/useTrading'
+import { useKeywordTrigger } from './hooks/useKeywordTrigger'
 import { market, useMarketTick } from './lib/marketStore'
 import {
   MarketStream,
@@ -18,6 +20,15 @@ import {
 } from './lib/delta'
 import { summarizeAccount, type Side } from './engine/paper'
 import { supabaseConfigured } from './lib/supabase'
+
+/**
+ * Typing this anywhere in the terminal opens the admin panel. Overridable via
+ * VITE_ADMIN_KEYWORD so the real word need not sit in the repository.
+ *
+ * It is a shortcut, not a lock — the check runs in browser code. What actually
+ * protects the accounts is Supabase auth plus row-level security.
+ */
+const ADMIN_KEYWORD = import.meta.env.VITE_ADMIN_KEYWORD || 'trade'
 
 export default function App() {
   const { session, user, loading: authLoading } = useAuth()
@@ -38,8 +49,13 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
   const [activeExpiry, setActiveExpiry] = useState<string | null>(null)
   const [marketError, setMarketError] = useState<string | null>(null)
   const [ticket, setTicket] = useState<TicketRequest | null>(null)
+  const [adminOpen, setAdminOpen] = useState(false)
 
   useMarketTick()
+
+  // Typing the admin keyword anywhere opens the account manager. Disabled while
+  // the order ticket is up so the ticket's own inputs keep focus behaviour.
+  useKeywordTrigger(ADMIN_KEYWORD, () => setAdminOpen(true), !ticket)
 
   // ---- Market data bootstrap -----------------------------------------------
   useEffect(() => {
@@ -155,7 +171,9 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
           await accounts.resetAccount(id)
           await trading.reload()
         }}
-        onArchive={accounts.archiveAccount}
+        onArchive={(id) => accounts.setArchived(id, true)}
+        onOpenAdmin={() => setAdminOpen(true)}
+        adminKeyword={ADMIN_KEYWORD}
       />
 
       <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-line bg-surface px-2 py-1.5">
@@ -206,6 +224,29 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
           onClose={() => setTicket(null)}
           onSubmit={async (args) => {
             await trading.placeOrder(args)
+          }}
+        />
+      )}
+
+      {adminOpen && (
+        <AdminPanel
+          // Archived accounts included — the panel is where they get restored.
+          accounts={accounts.allAccounts}
+          selectedId={accounts.selectedId}
+          email={email}
+          onClose={() => setAdminOpen(false)}
+          onSelect={accounts.setSelectedId}
+          onCreate={accounts.createAccount}
+          onRename={accounts.renameAccount}
+          onSetStartingBalance={accounts.setStartingBalance}
+          onReset={async (id) => {
+            await accounts.resetAccount(id)
+            await trading.reload()
+          }}
+          onSetArchived={accounts.setArchived}
+          onDelete={async (id) => {
+            await accounts.deleteAccount(id)
+            await trading.reload()
           }}
         />
       )}

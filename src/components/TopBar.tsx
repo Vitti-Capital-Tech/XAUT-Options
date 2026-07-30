@@ -14,6 +14,9 @@ interface Props {
   onCreate: (name: string, startingBalance: number) => Promise<void>
   onReset: (id: string) => Promise<void>
   onArchive: (id: string) => Promise<void>
+  onOpenAdmin: () => void
+  /** Shown in the menu so the shortcut is discoverable rather than folklore. */
+  adminKeyword: string
 }
 
 export function TopBar({
@@ -25,6 +28,8 @@ export function TopBar({
   onCreate,
   onReset,
   onArchive,
+  onOpenAdmin,
+  adminKeyword,
 }: Props) {
   useMarketTick()
   const [menuOpen, setMenuOpen] = useState(false)
@@ -233,6 +238,19 @@ export function TopBar({
                 + New paper account
               </button>
             )}
+
+            <button
+              onClick={() => {
+                setMenuOpen(false)
+                onOpenAdmin()
+              }}
+              className="flex w-full items-center justify-between border-t border-line px-3 py-2 text-left text-xs text-ink-2 hover:bg-raised-2 hover:text-ink"
+            >
+              Manage accounts
+              <span className="rounded bg-raised-2 px-1.5 py-0.5 text-[10px] text-ink-3">
+                type {adminKeyword}
+              </span>
+            </button>
 
             <div className="flex items-center justify-between border-t border-line bg-sub px-3 py-2">
               <span className="truncate text-[10px] text-ink-3">{email}</span>

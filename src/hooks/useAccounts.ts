@@ -6,21 +6,26 @@ export interface Account {
   name: string
   starting_balance: string
   cash_balance: string
+  is_archived: boolean
   created_at: string
 }
 
+const COLS = 'id, name, starting_balance, cash_balance, is_archived, created_at'
 const SELECTED_KEY = 'delta-paper.selected-account'
 
 /**
  * The user's paper sub-accounts, plus which one is active.
  *
+ * Archived accounts are loaded too — the terminal filters them out, but the
+ * admin panel needs to see them in order to restore or delete them.
+ *
  * A first account is created automatically so a new user lands on a usable
  * dashboard instead of an empty-state dead end.
  */
 export function useAccounts(userId: string | undefined) {
-  const [accounts, setAccounts] = useState<Account[]>([])
-  const [selectedId, setSelectedId] = useState<string | null>(
-    () => localStorage.getItem(SELECTED_KEY),
+  const [allAccounts, setAllAccounts] = useState<Account[]>([])
+  const [selectedId, setSelectedId] = useState<string | null>(() =>
+    localStorage.getItem(SELECTED_KEY),
   )
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -29,8 +34,7 @@ export function useAccounts(userId: string | undefined) {
     if (!userId) return
     const { data, error: err } = await supabase
       .from('accounts')
-      .select('id, name, starting_balance, cash_balance, created_at')
-      .eq('is_archived', false)
+      .select(COLS)
       .order('created_at', { ascending: true })
 
     if (err) {
@@ -41,11 +45,12 @@ export function useAccounts(userId: string | undefined) {
 
     let rows = (data ?? []) as Account[]
 
+    // Only auto-create when there is genuinely nothing, archived included.
     if (rows.length === 0) {
       const { data: created, error: createErr } = await supabase
         .from('accounts')
         .insert({ user_id: userId, name: 'Primary', starting_balance: 10000, cash_balance: 10000 })
-        .select('id, name, starting_balance, cash_balance, created_at')
+        .select(COLS)
         .single()
       if (createErr) {
         setError(createErr.message)
@@ -55,12 +60,15 @@ export function useAccounts(userId: string | undefined) {
       rows = [created as Account]
     }
 
-    setAccounts(rows)
+    setAllAccounts(rows)
     setError(null)
     setLoading(false)
 
-    // Fall back to the first account if the remembered one is gone.
-    setSelectedId((current) => (current && rows.some((r) => r.id === current) ? current : rows[0].id))
+    // Keep the remembered selection if it is still active, else fall back.
+    const active = rows.filter((r) => !r.is_archived)
+    setSelectedId((current) =>
+      current && active.some((r) => r.id === current) ? current : (active[0]?.id ?? null),
+    )
   }, [userId])
 
   useEffect(() => {
@@ -73,7 +81,7 @@ export function useAccounts(userId: string | undefined) {
 
   const createAccount = useCallback(
     async (name: string, startingBalance: number) => {
-      if (!userId) return
+      if (!userId) throw new Error('Not signed in')
       const { data, error: err } = await supabase
         .from('accounts')
         .insert({
@@ -82,13 +90,62 @@ export function useAccounts(userId: string | undefined) {
           starting_balance: startingBalance,
           cash_balance: startingBalance,
         })
-        .select('id, name, starting_balance, cash_balance, created_at')
+        .select(COLS)
         .single()
       if (err) throw new Error(err.message)
-      setAccounts((prev) => [...prev, data as Account])
+      setAllAccounts((prev) => [...prev, data as Account])
       setSelectedId((data as Account).id)
     },
     [userId],
+  )
+
+  const renameAccount = useCallback(
+    async (accountId: string, name: string) => {
+      const trimmed = name.trim()
+      if (!trimmed) throw new Error('Name cannot be empty')
+      const { error: err } = await supabase
+        .from('accounts')
+        .update({ name: trimmed })
+        .eq('id', accountId)
+      if (err) throw new Error(err.message)
+      await load()
+    },
+    [load],
+  )
+
+  /**
+   * Rebase an account's starting balance, keeping whatever it has already made
+   * or lost. Realized P&L is `cash_balance - starting_balance`, so both columns
+   * move by the same delta and the P&L figure survives.
+   *
+   * The row is re-read immediately beforehand so a fill landing between the
+   * panel's last load and this write is not clobbered.
+   */
+  const setStartingBalance = useCallback(
+    async (accountId: string, newStartingBalance: number) => {
+      if (!Number.isFinite(newStartingBalance) || newStartingBalance <= 0) {
+        throw new Error('Starting balance must be a positive number')
+      }
+
+      const { data: fresh, error: readErr } = await supabase
+        .from('accounts')
+        .select('starting_balance, cash_balance')
+        .eq('id', accountId)
+        .single()
+      if (readErr) throw new Error(readErr.message)
+
+      const realized = Number(fresh.cash_balance) - Number(fresh.starting_balance)
+      const { error: err } = await supabase
+        .from('accounts')
+        .update({
+          starting_balance: newStartingBalance,
+          cash_balance: newStartingBalance + realized,
+        })
+        .eq('id', accountId)
+      if (err) throw new Error(err.message)
+      await load()
+    },
+    [load],
   )
 
   const resetAccount = useCallback(
@@ -100,11 +157,11 @@ export function useAccounts(userId: string | undefined) {
     [load],
   )
 
-  const archiveAccount = useCallback(
-    async (accountId: string) => {
+  const setArchived = useCallback(
+    async (accountId: string, archived: boolean) => {
       const { error: err } = await supabase
         .from('accounts')
-        .update({ is_archived: true })
+        .update({ is_archived: archived })
         .eq('id', accountId)
       if (err) throw new Error(err.message)
       await load()
@@ -112,10 +169,30 @@ export function useAccounts(userId: string | undefined) {
     [load],
   )
 
+  /**
+   * Permanently remove an account. Its orders, fills and positions go with it —
+   * every one of those tables declares `on delete cascade` against accounts.
+   * There is no undo, which is why the panel makes the caller confirm twice.
+   */
+  const deleteAccount = useCallback(
+    async (accountId: string) => {
+      const { error: err } = await supabase.from('accounts').delete().eq('id', accountId)
+      if (err) throw new Error(err.message)
+      // Drop the selection if it pointed here; load() picks a new one.
+      setSelectedId((current) => (current === accountId ? null : current))
+      await load()
+    },
+    [load],
+  )
+
+  const accounts = allAccounts.filter((a) => !a.is_archived)
   const selected = accounts.find((a) => a.id === selectedId) ?? null
 
   return {
+    /** Active accounts only — what the terminal shows. */
     accounts,
+    /** Active and archived, for the admin panel. */
+    allAccounts,
     selected,
     selectedId: selected?.id ?? null,
     setSelectedId,
@@ -123,7 +200,10 @@ export function useAccounts(userId: string | undefined) {
     error,
     reload: load,
     createAccount,
+    renameAccount,
+    setStartingBalance,
     resetAccount,
-    archiveAccount,
+    setArchived,
+    deleteAccount,
   }
 }
