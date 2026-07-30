@@ -99,6 +99,55 @@ export function useAccounts(userId: string | undefined) {
     [userId],
   )
 
+  const renameAccount = useCallback(
+    async (accountId: string, name: string) => {
+      const trimmed = name.trim()
+      if (!trimmed) throw new Error('Name cannot be empty')
+      const { error: err } = await supabase
+        .from('accounts')
+        .update({ name: trimmed })
+        .eq('id', accountId)
+      if (err) throw new Error(err.message)
+      await load()
+    },
+    [load],
+  )
+
+  /**
+   * Rebase an account's starting balance, keeping whatever it has already made
+   * or lost. Realized P&L is `cash_balance - starting_balance`, so both columns
+   * move by the same delta and the P&L figure survives.
+   *
+   * The row is re-read immediately beforehand so a fill landing between the
+   * panel's last load and this write is not clobbered.
+   */
+  const setStartingBalance = useCallback(
+    async (accountId: string, newStartingBalance: number) => {
+      if (!Number.isFinite(newStartingBalance) || newStartingBalance <= 0) {
+        throw new Error('Starting balance must be a positive number')
+      }
+
+      const { data: fresh, error: readErr } = await supabase
+        .from('accounts')
+        .select('starting_balance, cash_balance')
+        .eq('id', accountId)
+        .single()
+      if (readErr) throw new Error(readErr.message)
+
+      const realized = Number(fresh.cash_balance) - Number(fresh.starting_balance)
+      const { error: err } = await supabase
+        .from('accounts')
+        .update({
+          starting_balance: newStartingBalance,
+          cash_balance: newStartingBalance + realized,
+        })
+        .eq('id', accountId)
+      if (err) throw new Error(err.message)
+      await load()
+    },
+    [load],
+  )
+
   const resetAccount = useCallback(
     async (accountId: string) => {
       const { error: err } = await supabase.rpc('reset_account', { p_account_id: accountId })
@@ -120,6 +169,22 @@ export function useAccounts(userId: string | undefined) {
     [load],
   )
 
+  /**
+   * Permanently remove an account. Its orders, fills and positions go with it —
+   * every one of those tables declares `on delete cascade` against accounts.
+   * There is no undo, which is why the panel makes the caller confirm twice.
+   */
+  const deleteAccount = useCallback(
+    async (accountId: string) => {
+      const { error: err } = await supabase.from('accounts').delete().eq('id', accountId)
+      if (err) throw new Error(err.message)
+      // Drop the selection if it pointed here; load() picks a new one.
+      setSelectedId((current) => (current === accountId ? null : current))
+      await load()
+    },
+    [load],
+  )
+
   const accounts = allAccounts.filter((a) => !a.is_archived)
   const selected = accounts.find((a) => a.id === selectedId) ?? null
 
@@ -135,7 +200,10 @@ export function useAccounts(userId: string | undefined) {
     error,
     reload: load,
     createAccount,
+    renameAccount,
+    setStartingBalance,
     resetAccount,
     setArchived,
+    deleteAccount,
   }
 }

@@ -224,12 +224,24 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
 
       {adminOpen && (
         <AdminPanel
-          // Archived accounts included so the overview stays complete.
+          // Archived accounts included — the panel is where they get restored.
           accounts={accounts.allAccounts}
           selectedId={accounts.selectedId}
           email={email}
           onClose={() => setAdminOpen(false)}
+          onSelect={accounts.setSelectedId}
           onCreate={accounts.createAccount}
+          onRename={accounts.renameAccount}
+          onSetStartingBalance={accounts.setStartingBalance}
+          onReset={async (id) => {
+            await accounts.resetAccount(id)
+            await trading.reload()
+          }}
+          onSetArchived={accounts.setArchived}
+          onDelete={async (id) => {
+            await accounts.deleteAccount(id)
+            await trading.reload()
+          }}
         />
       )}
     </div>
