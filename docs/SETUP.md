@@ -87,13 +87,32 @@ VITE_ADMIN_PASSWORD=your-password
 **Sign up once with that email first** — the shortcut will not create the
 account, by design.
 
-> **This one is dev-only, and enforced.** Vite inlines `import.meta.env` values
-> into the output bundle, so a deployed production build carrying
+> **Dev server only by default, and enforced.** Vite inlines `import.meta.env`
+> values into the output bundle, so a production build carrying
 > `VITE_ADMIN_PASSWORD` would hand that password to every visitor. The shortcut
 > is gated on `import.meta.env.DEV`, which is false during `vite build`, and the
 > resulting dead-code elimination strips the credentials and their code paths
-> from the bundle entirely — verified by grepping `dist/`. Never set these two
-> on a deployed host.
+> out entirely — verified by grepping `dist/`.
+
+If you see **"This is a production build, where keyword sign-in is off by
+default"**, you are not on the dev server. Either run:
+
+```bash
+npm run dev
+```
+
+or, if you genuinely want the shortcut in a built copy — `npm run preview`, or a
+build you host on your own machine — opt in:
+
+```
+VITE_ALLOW_KEYWORD_LOGIN=true
+```
+
+> That override makes the branch reachable, so the password really is readable in
+> the shipped JavaScript. Confirmed by building both ways: without it the
+> credentials are absent from `dist/`, with it they are present. The login screen
+> shows a red warning whenever it is active, so it cannot be left on unnoticed.
+> Only for a machine nobody else can reach.
 
 None of this is a security boundary: the keyword comparison runs in browser code
 anyone can read. Auth and row-level security are what protect the data, and the

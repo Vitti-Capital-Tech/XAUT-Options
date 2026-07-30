@@ -11,6 +11,11 @@ interface ImportMetaEnv {
    */
   readonly VITE_ADMIN_EMAIL: string | undefined
   readonly VITE_ADMIN_PASSWORD: string | undefined
+  /**
+   * Set to 'true' to allow keyword sign-in outside the dev server. Doing so
+   * ships the admin password inside the bundle — see src/lib/admin.ts.
+   */
+  readonly VITE_ALLOW_KEYWORD_LOGIN: string | undefined
 }
 
 interface ImportMeta {

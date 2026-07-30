@@ -21,16 +21,31 @@ export const ADMIN_KEYWORD = import.meta.env.VITE_ADMIN_KEYWORD || 'trade'
 const QUICK_EMAIL = import.meta.env.VITE_ADMIN_EMAIL
 const QUICK_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD
 
-/** True only in a dev server, and only when both credentials are configured. */
-export const quickLoginAvailable = import.meta.env.DEV && Boolean(QUICK_EMAIL && QUICK_PASSWORD)
+/**
+ * Escape hatch for running the shortcut outside the dev server — `npm run
+ * preview`, a self-hosted build, a LAN box. Opt-in, because switching it on
+ * means the admin password really is inlined into the bundle: the branch
+ * becomes reachable, so dead-code elimination no longer strips it.
+ */
+const ALLOW_OUTSIDE_DEV = import.meta.env.VITE_ALLOW_KEYWORD_LOGIN === 'true'
+
+/** True when the shortcut is permitted here and both credentials are configured. */
+export const quickLoginAvailable =
+  (import.meta.env.DEV || ALLOW_OUTSIDE_DEV) && Boolean(QUICK_EMAIL && QUICK_PASSWORD)
+
+/**
+ * True when the shortcut is live in a build that ships the password. Drives a
+ * visible warning, so an override switched on for convenience is not forgotten.
+ */
+export const quickLoginExposesPassword = !import.meta.env.DEV && ALLOW_OUTSIDE_DEV
 
 /** Why the shortcut is unavailable, for a useful message instead of silence. */
 export function quickLoginUnavailableReason(): string | null {
-  if (!import.meta.env.DEV) {
-    return 'Keyword sign-in is disabled in production builds. Sign in with your email and password.'
+  if (!import.meta.env.DEV && !ALLOW_OUTSIDE_DEV) {
+    return `This is a production build, where keyword sign-in is off by default. Run "npm run dev" instead, or set VITE_ALLOW_KEYWORD_LOGIN=true to allow it here — be aware that publishes the admin password inside the bundle.`
   }
   if (!QUICK_EMAIL || !QUICK_PASSWORD) {
-    return `Set VITE_ADMIN_EMAIL and VITE_ADMIN_PASSWORD in .env.local to use "${ADMIN_KEYWORD}" as a password, then restart the dev server.`
+    return `Set VITE_ADMIN_EMAIL and VITE_ADMIN_PASSWORD in .env.local to use "${ADMIN_KEYWORD}" as a password, then restart the server.`
   }
   return null
 }

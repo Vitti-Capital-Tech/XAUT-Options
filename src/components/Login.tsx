@@ -5,6 +5,7 @@ import {
   clearAdminRequest,
   quickLogin,
   quickLoginAvailable,
+  quickLoginExposesPassword,
   quickLoginUnavailableReason,
   requestAdminPanel,
 } from '../lib/admin'
@@ -167,6 +168,14 @@ export function Login() {
             <p className="border-t border-line pt-3 text-center text-[10px] text-ink-4">
               Or type <code className="text-brand-text">{ADMIN_KEYWORD}</code> as the password to
               open the admin panel — no email needed.
+            </p>
+          )}
+
+          {quickLoginExposesPassword && (
+            <p className="rounded bg-neg-muted px-2 py-1.5 text-[10px] leading-relaxed text-neg">
+              Keyword sign-in is force-enabled in a production build, so the admin password is
+              readable inside this page's JavaScript. Fine on a machine only you reach; remove{' '}
+              <code>VITE_ALLOW_KEYWORD_LOGIN</code> before exposing this to anyone else.
             </p>
           )}
         </form>
