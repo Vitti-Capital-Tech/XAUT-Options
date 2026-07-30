@@ -69,30 +69,3 @@ export async function quickLogin(): Promise<void> {
     throw new Error(error.message)
   }
 }
-
-// ---------------------------------------------------------------------------
-// Handoff: the login screen asks for the panel, the terminal opens it.
-// sessionStorage rather than state because a sign-in remounts the tree.
-// ---------------------------------------------------------------------------
-
-const INTENT_KEY = 'delta-paper.open-admin'
-
-export function requestAdminPanel(): void {
-  sessionStorage.setItem(INTENT_KEY, '1')
-}
-
-/**
- * Drop a pending request. Needed when keyword sign-in fails: the flag is set
- * before the attempt, and leaving it behind would make the panel spring open
- * during an unrelated sign-in later in the session.
- */
-export function clearAdminRequest(): void {
-  sessionStorage.removeItem(INTENT_KEY)
-}
-
-/** Read the request and clear it, so it opens the panel exactly once. */
-export function consumeAdminRequest(): boolean {
-  const pending = sessionStorage.getItem(INTENT_KEY)
-  if (pending) sessionStorage.removeItem(INTENT_KEY)
-  return Boolean(pending)
-}

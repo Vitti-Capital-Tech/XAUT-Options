@@ -2,11 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import {
   ADMIN_KEYWORD,
-  clearAdminRequest,
   quickLogin,
   quickLoginAvailable,
   quickLoginUnavailableReason,
-  requestAdminPanel,
 } from '../lib/admin'
 
 export function Login() {
@@ -18,9 +16,13 @@ export function Login() {
   const [notice, setNotice] = useState<string | null>(null)
 
   /**
-   * Typing the admin keyword as the password signs in with the credentials from
-   * `.env.local` and opens the admin panel — no email needed. Fires as soon as
-   * the field matches, so there is nothing to submit.
+   * Typing the admin keyword as the password signs in with the configured
+   * credentials — no email needed. Fires as soon as the field matches, so there
+   * is nothing to submit.
+   *
+   * It lands on the terminal like any other sign-in. The admin panel is opened
+   * deliberately from there, by typing the keyword again or via the account
+   * switcher, rather than being forced in front of the chain.
    *
    * Guarded by a ref so a re-render cannot launch a second attempt.
    */
@@ -33,12 +35,8 @@ export function Login() {
     setError(null)
     setNotice(null)
     try {
-      // Set before signing in: the auth state change swaps this view out.
-      requestAdminPanel()
       await quickLogin()
     } catch (err) {
-      // Undo the request so it cannot surface during a later normal sign-in.
-      clearAdminRequest()
       setError(err instanceof Error ? err.message : 'Keyword sign-in failed')
       setBusy(false)
       attempted.current = false

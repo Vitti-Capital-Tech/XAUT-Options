@@ -20,7 +20,7 @@ import {
 } from './lib/delta'
 import { summarizeAccount, type Side } from './engine/paper'
 import { supabaseConfigured } from './lib/supabase'
-import { ADMIN_KEYWORD, consumeAdminRequest } from './lib/admin'
+import { ADMIN_KEYWORD } from './lib/admin'
 
 export default function App() {
   const { session, user, loading: authLoading } = useAuth()
@@ -41,8 +41,9 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
   const [activeExpiry, setActiveExpiry] = useState<string | null>(null)
   const [marketError, setMarketError] = useState<string | null>(null)
   const [ticket, setTicket] = useState<TicketRequest | null>(null)
-  // Opens straight away when we arrived here via the login screen's keyword.
-  const [adminOpen, setAdminOpen] = useState(() => consumeAdminRequest())
+  // Always starts closed: signing in lands on the chain, and the panel is
+  // opened deliberately from there.
+  const [adminOpen, setAdminOpen] = useState(false)
 
   useMarketTick()
 
@@ -223,24 +224,12 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
 
       {adminOpen && (
         <AdminPanel
-          // Archived accounts included — the panel is where they get restored.
+          // Archived accounts included so the overview stays complete.
           accounts={accounts.allAccounts}
           selectedId={accounts.selectedId}
           email={email}
           onClose={() => setAdminOpen(false)}
-          onSelect={accounts.setSelectedId}
           onCreate={accounts.createAccount}
-          onRename={accounts.renameAccount}
-          onSetStartingBalance={accounts.setStartingBalance}
-          onReset={async (id) => {
-            await accounts.resetAccount(id)
-            await trading.reload()
-          }}
-          onSetArchived={accounts.setArchived}
-          onDelete={async (id) => {
-            await accounts.deleteAccount(id)
-            await trading.reload()
-          }}
         />
       )}
     </div>
