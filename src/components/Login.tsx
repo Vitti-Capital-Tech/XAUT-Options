@@ -162,14 +162,6 @@ export function Login() {
           >
             {busy ? 'Working…' : mode === 'signin' ? 'Sign in' : 'Create account'}
           </button>
-
-          {quickLoginAvailable && (
-            <p className="border-t border-line pt-3 text-center text-[10px] text-ink-4">
-              Or type <code className="text-brand-text">{ADMIN_KEYWORD}</code> as the password to
-              open the admin panel — no email needed.
-            </p>
-          )}
-
         </form>
 
         <p className="mt-4 text-center text-[10px] leading-relaxed text-ink-4">
