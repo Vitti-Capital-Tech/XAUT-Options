@@ -108,8 +108,12 @@ account is remembered across reloads.
 
 ### Admin panel
 
-Type **`trade`** anywhere in the terminal — or pick **Manage accounts** in the
-switcher — to open the account manager. It lists every paper account with its
+Three ways in: type **`trade`** anywhere in the terminal, pick **Manage
+accounts** in the switcher, or type **`trade`** as the **password** on the login
+screen to skip the email box entirely — that last one needs `VITE_ADMIN_EMAIL`
+and `VITE_ADMIN_PASSWORD` set, and works on the dev server only.
+
+The panel lists every paper account with its
 starting balance, current balance, realized P&L, and open position, order and
 trade counts, and lets you:
 

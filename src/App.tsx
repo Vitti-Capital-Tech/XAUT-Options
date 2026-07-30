@@ -20,15 +20,7 @@ import {
 } from './lib/delta'
 import { summarizeAccount, type Side } from './engine/paper'
 import { supabaseConfigured } from './lib/supabase'
-
-/**
- * Typing this anywhere in the terminal opens the admin panel. Overridable via
- * VITE_ADMIN_KEYWORD so the real word need not sit in the repository.
- *
- * It is a shortcut, not a lock — the check runs in browser code. What actually
- * protects the accounts is Supabase auth plus row-level security.
- */
-const ADMIN_KEYWORD = import.meta.env.VITE_ADMIN_KEYWORD || 'trade'
+import { ADMIN_KEYWORD, consumeAdminRequest } from './lib/admin'
 
 export default function App() {
   const { session, user, loading: authLoading } = useAuth()
@@ -49,7 +41,8 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
   const [activeExpiry, setActiveExpiry] = useState<string | null>(null)
   const [marketError, setMarketError] = useState<string | null>(null)
   const [ticket, setTicket] = useState<TicketRequest | null>(null)
-  const [adminOpen, setAdminOpen] = useState(false)
+  // Opens straight away when we arrived here via the login screen's keyword.
+  const [adminOpen, setAdminOpen] = useState(() => consumeAdminRequest())
 
   useMarketTick()
 

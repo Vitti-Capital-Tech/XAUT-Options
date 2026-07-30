@@ -62,17 +62,42 @@ Vite reads `.env.local` at startup only. **Restart the dev server after editing 
 
 ### Optional: the admin keyword
 
-Typing a word anywhere in the terminal opens the admin panel, where paper
-accounts are created and managed. It defaults to `trade`; set another with:
+A keyword opens the admin panel, where paper accounts are created and managed.
+It defaults to `trade`:
 
 ```
 VITE_ADMIN_KEYWORD=your-word
 ```
 
-> This is a shortcut, not a lock. The comparison runs in browser code that
-> anyone can read, and the panel only ever touches the signed-in user's own
-> accounts. Auth and row-level security are what protect the data. The same
-> panel is reachable from **Manage accounts** in the account switcher.
+There are three ways in:
+
+| Route | Requires |
+| --- | --- |
+| **Manage accounts** in the account switcher | Being signed in |
+| Typing the keyword anywhere in the terminal | Being signed in |
+| Typing the keyword as the **password** on the login screen | The two variables below, dev server only |
+
+The third skips the email box entirely by signing in with stored credentials:
+
+```
+VITE_ADMIN_EMAIL=you@example.com
+VITE_ADMIN_PASSWORD=your-password
+```
+
+**Sign up once with that email first** — the shortcut will not create the
+account, by design.
+
+> **This one is dev-only, and enforced.** Vite inlines `import.meta.env` values
+> into the output bundle, so a deployed production build carrying
+> `VITE_ADMIN_PASSWORD` would hand that password to every visitor. The shortcut
+> is gated on `import.meta.env.DEV`, which is false during `vite build`, and the
+> resulting dead-code elimination strips the credentials and their code paths
+> from the bundle entirely — verified by grepping `dist/`. Never set these two
+> on a deployed host.
+
+None of this is a security boundary: the keyword comparison runs in browser code
+anyone can read. Auth and row-level security are what protect the data, and the
+panel only ever touches the signed-in user's own accounts.
 
 ## 4. Optional — skip email confirmation
 
