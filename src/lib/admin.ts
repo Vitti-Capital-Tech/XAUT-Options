@@ -33,12 +33,6 @@ const ALLOW_OUTSIDE_DEV = import.meta.env.VITE_ALLOW_KEYWORD_LOGIN === 'true'
 export const quickLoginAvailable =
   (import.meta.env.DEV || ALLOW_OUTSIDE_DEV) && Boolean(QUICK_EMAIL && QUICK_PASSWORD)
 
-/**
- * True when the shortcut is live in a build that ships the password. Drives a
- * visible warning, so an override switched on for convenience is not forgotten.
- */
-export const quickLoginExposesPassword = !import.meta.env.DEV && ALLOW_OUTSIDE_DEV
-
 /** Why the shortcut is unavailable, for a useful message instead of silence. */
 export function quickLoginUnavailableReason(): string | null {
   if (!import.meta.env.DEV && !ALLOW_OUTSIDE_DEV) {
