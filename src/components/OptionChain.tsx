@@ -187,7 +187,7 @@ export function OptionChain({ expiry, positions, onPick }: Props) {
           expiry={expiry}
           atmStrike={atmStrike}
           selectedStrike={selectedStrike}
-          onSelectStrike={(s) => setSelectedStrike((cur) => (cur === s ? null : s))}
+          onSelectStrike={setSelectedStrike}
           positionBySymbol={positionBySymbol}
           onPick={onPick}
           paneRef={callsRef}
@@ -204,7 +204,7 @@ export function OptionChain({ expiry, positions, onPick }: Props) {
           expiry={expiry}
           atmStrike={atmStrike}
           selectedStrike={selectedStrike}
-          onSelectStrike={(s) => setSelectedStrike((cur) => (cur === s ? null : s))}
+          onSelectStrike={setSelectedStrike}
           positionBySymbol={positionBySymbol}
           onPick={onPick}
           paneRef={putsRef}
@@ -273,10 +273,14 @@ function Book({
             <div
               key={strike}
               data-strike={strike}
+              // Clicking anywhere in either book rules that strike across both.
+              // It sits under the bid and ask buttons rather than around them,
+              // so lifting an ask both rules the row and opens the ticket.
+              onClick={() => onSelectStrike(strike)}
               // Delta rules a row top and bottom in brand orange and does
               // nothing else to it, both for the money and for a click. Row
               // height is theirs: 43px.
-              className={`grid h-[43px] items-center hover:bg-raised/50 ${
+              className={`grid h-[43px] cursor-pointer items-center hover:bg-raised/50 ${
                 strike === atmStrike || strike === selectedStrike
                   ? 'border-y-[0.8px] border-brand-text'
                   : 'border-b border-line'
@@ -284,12 +288,7 @@ function Book({
               style={{ gridTemplateColumns: template }}
             >
               {side === 'put' && (
-                <StrikeCell
-                  strike={strike}
-                  expiry={expiry}
-                  positionBySymbol={positionBySymbol}
-                  onSelect={() => onSelectStrike(strike)}
-                />
+                <StrikeCell strike={strike} expiry={expiry} positionBySymbol={positionBySymbol} />
               )}
               {cols.map((k) => (
                 <ChainCell
@@ -308,20 +307,15 @@ function Book({
   )
 }
 
-/**
- * The strike, on its own spine between the two books. Clicking it rules the
- * row across both of them; clicking it again clears the rule.
- */
+/** The strike, on its own spine between the two books. */
 function StrikeCell({
   strike,
   expiry,
   positionBySymbol,
-  onSelect,
 }: {
   strike: number
   expiry: Expiry
   positionBySymbol: Map<string, PositionRow>
-  onSelect: () => void
 }) {
   const call = expiry.calls.get(strike)
   const put = expiry.puts.get(strike)
@@ -329,15 +323,11 @@ function StrikeCell({
     (call && positionBySymbol.has(call.symbol)) || (put && positionBySymbol.has(put.symbol))
 
   return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className="strike-spine num flex cursor-pointer items-center justify-center gap-1 self-stretch border-x border-line text-[12px] font-bold text-ink"
-    >
+    <div className="strike-spine num flex items-center justify-center gap-1 self-stretch border-x border-line text-[12px] font-bold text-ink">
       {/* Not Delta's — a marker so held strikes stay findable. */}
       {held && <span className="text-[10px] text-brand-text">●</span>}
       {price(strike, 0)}
-    </button>
+    </div>
   )
 }
 
