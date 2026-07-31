@@ -117,6 +117,12 @@ body {
   background: var(--color-raised-3);
 }
 
+/* The option chain is two panes scrolling as one list, so only the left pane
+   shows a vertical scrollbar. The right pane keeps its horizontal one. */
+.no-vscrollbar::-webkit-scrollbar:vertical {
+  width: 0;
+}
+
 /* Brief tint when a quote moves, as the real terminal does. */
 @keyframes flash-up {
   from {
