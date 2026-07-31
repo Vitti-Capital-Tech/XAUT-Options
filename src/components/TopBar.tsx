@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Account } from '../hooks/useAccounts'
 import type { AccountSummary } from '../engine/paper'
-import { market, useMarketTick } from '../lib/marketStore'
-import { pnlClass, price, signedUsd, usd } from '../lib/format'
+import { pnlClass, signedUsd, usd } from '../lib/format'
 import { supabase } from '../lib/supabase'
+import { Logo } from './Logo'
 
 interface Props {
   accounts: Account[]
@@ -31,7 +31,6 @@ export function TopBar({
   onOpenAdmin,
   adminKeyword,
 }: Props) {
-  useMarketTick()
   const [menuOpen, setMenuOpen] = useState(false)
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
@@ -52,8 +51,6 @@ export function TopBar({
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [menuOpen])
-
-  const status = market.status
 
   const submitCreate = async () => {
     const balance = Number(newBalance)
@@ -76,25 +73,20 @@ export function TopBar({
 
   return (
     <header className="flex shrink-0 items-center gap-4 border-b border-line bg-raised px-3 py-2">
-      <div className="flex items-center gap-2">
-        <span className="text-sm font-bold tracking-tight text-brand-text">XAUT</span>
-        <span className="rounded bg-brand-muted px-1.5 py-0.5 text-[10px] font-bold tracking-wider text-brand-text uppercase">
+      {/* Mark, wordmark, and the one badge that matters: none of this is real
+          money. Spot lives in the chain header, where the strikes it is being
+          read against are. */}
+      <div className="flex items-center gap-2.5">
+        <Logo />
+        <div className="leading-none">
+          <div className="logo-word text-[15px] font-bold tracking-tight">XAUT</div>
+          <div className="mt-[3px] text-[9px] font-semibold tracking-[0.18em] text-ink-3 uppercase">
+            Options
+          </div>
+        </div>
+        <span className="self-start rounded-sm border border-brand-text/40 bg-brand-muted px-1.5 py-0.5 text-[9px] font-bold tracking-wider text-brand-text uppercase">
           Paper
         </span>
-      </div>
-
-      <div className="flex items-baseline gap-1.5">
-        <span className="num text-base font-semibold text-ink">{price(market.spot)}</span>
-        <span className="text-[10px] text-ink-3">SPOT</span>
-      </div>
-
-      <div className="flex items-center gap-1.5" title={`Market data: ${status}`}>
-        <span
-          className={`h-1.5 w-1.5 rounded-full ${
-            status === 'live' ? 'bg-pos-solid' : status === 'connecting' ? 'bg-brand' : 'bg-neg-solid animate-pulse'
-          }`}
-        />
-        <span className="text-[10px] text-ink-3 capitalize">{status}</span>
       </div>
 
       <div className="ml-auto flex items-center gap-5 text-[12px]">
@@ -103,6 +95,7 @@ export function TopBar({
           label="Unrealized"
           value={signedUsd(summary.unrealized, 4)}
           className={pnlClass(summary.unrealized)}
+          emphasis
         />
         <Stat label="Equity" value={usd(summary.equity)} emphasis />
         <Stat label="Margin" value={usd(summary.marginBlocked, 4)} />
@@ -283,7 +276,7 @@ function Stat({
     <div className="text-right">
       <div className="text-[10px] tracking-wider text-ink-3 uppercase">{label}</div>
       <div
-        className={`num font-semibold ${className ?? (emphasis ? 'text-ink' : 'text-ink')}`}
+        className={`num font-semibold ${emphasis ? 'text-[13px]' : ''} ${className ?? 'text-ink'}`}
       >
         {value}
       </div>

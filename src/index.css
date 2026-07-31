@@ -134,6 +134,58 @@ body {
   box-shadow: 6px 0 14px -6px #000000cc;
 }
 
+/* The mark and the wordmark both catch a slow highlight. Gold should look like
+   metal, and metal is the one thing in a terminal allowed to move for effect —
+   so it crosses once every four seconds and is still the rest of the time. */
+@keyframes logo-sheen {
+  0%,
+  62% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(54px);
+  }
+}
+.logo-sheen {
+  animation: logo-sheen 4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes logo-word-sheen {
+  0%,
+  62% {
+    background-position: 180% 0;
+  }
+  100% {
+    background-position: -40% 0;
+  }
+}
+.logo-word {
+  background-image: linear-gradient(
+    100deg,
+    #dc9a17 0%,
+    #f4c556 34%,
+    #fff4cf 50%,
+    #f4c556 66%,
+    #dc9a17 100%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: logo-word-sheen 4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+/* Someone who has asked for less motion has asked for none of this. */
+@media (prefers-reduced-motion: reduce) {
+  .logo-sheen {
+    display: none;
+  }
+  .logo-word {
+    animation: none;
+    background-position: 50% 0;
+  }
+}
+
 /* Brief tint when a quote moves, as the real terminal does. */
 @keyframes flash-up {
   from {

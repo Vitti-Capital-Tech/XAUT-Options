@@ -173,11 +173,8 @@ function PositionsTable({
 
   if (positions.length === 0) return <Empty>No open positions. Click a bid or ask on the chain to trade.</Empty>
 
-  const totalUnrealized = positions.reduce(
-    (sum, p) => sum + (valuePosition(p, market.get(p.symbol), spot).unrealized ?? 0),
-    0,
-  )
-
+  // No total row: the header carries unrealized P&L for the whole account, and
+  // one number in two places is one number that can disagree with itself.
   return (
     <table className="w-full text-[12px]">
       <thead>
@@ -257,18 +254,6 @@ function PositionsTable({
           )
         })}
       </tbody>
-      <tfoot>
-        <tr className="border-t border-line bg-raised">
-          <Td align="left" className="text-[10px] font-semibold tracking-wider text-ink-3 uppercase">
-            Total
-          </Td>
-          <Td colSpan={4} />
-          <Td className={`font-semibold ${pnlClass(totalUnrealized)}`}>
-            {signedUsd(totalUnrealized, 4)}
-          </Td>
-          <Td colSpan={4} />
-        </tr>
-      </tfoot>
     </table>
   )
 }

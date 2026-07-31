@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- The same token as src/components/Logo.tsx, with a fixed highlight in
+       place of the sheen. Kept in sync by hand: two files, one mark. -->
+  <defs>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffeeb8" />
+      <stop offset="32%" stop-color="#f4c556" />
+      <stop offset="66%" stop-color="#dc9a17" />
+      <stop offset="100%" stop-color="#9d6208" />
+    </linearGradient>
+    <clipPath id="token">
+      <path d="M16 2.2 L27.95 9.1 L27.95 22.9 L16 29.8 L4.05 22.9 L4.05 9.1 Z" />
+    </clipPath>
+  </defs>
+
+  <path d="M16 2.2 L27.95 9.1 L27.95 22.9 L16 29.8 L4.05 22.9 L4.05 9.1 Z" fill="url(#gold)" />
+  <g clip-path="url(#token)">
+    <path d="M-4 12 L36 -8 L36 2 L-4 22 Z" fill="#ffffff" opacity="0.22" />
+  </g>
+  <path
+    d="M10.2 20.4 L14.4 15.4 L18 18.3 L22.2 11.3"
+    fill="none"
+    stroke="#2a1a04"
+    stroke-width="2.4"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>

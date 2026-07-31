@@ -45,7 +45,7 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
   // opened deliberately from there.
   const [adminOpen, setAdminOpen] = useState(false)
 
-  useMarketTick()
+  const tick = useMarketTick()
 
   // Typing the admin keyword anywhere opens the account manager. Disabled while
   // the order ticket is up so the ticket's own inputs keep focus behaviour.
@@ -128,8 +128,11 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
         tickerFor,
         market.spot,
       ),
-    // Recomputed on each throttled tick via the useMarketTick subscription above.
-    [accounts.selected?.cash_balance, trading.positions, tickerFor],
+    // The tick has to be a dependency, not merely a reason to re-render: the
+    // marks this reads live outside React, so without it the memo hands back a
+    // stale summary and the header's unrealized P&L freezes between fills.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tick, accounts.selected?.cash_balance, trading.positions, tickerFor],
   )
 
   const openTicket = useCallback((product: Product, side: Side, presetPrice: number | null) => {
