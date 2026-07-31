@@ -3,7 +3,7 @@ import type { Expiry, Product, Ticker } from '../lib/delta'
 import { UNDERLYING } from '../lib/delta'
 import { market, useMarketTick } from '../lib/marketStore'
 import type { PositionRow, Side } from '../engine/paper'
-import { compact, greek, ivShort, price, timeToExpiry, usdPrice } from '../lib/format'
+import { greek, ivShort, price, timeToExpiry, usdPrice } from '../lib/format'
 
 interface Props {
   expiry: Expiry
@@ -12,24 +12,25 @@ interface Props {
 }
 
 // ---------------------------------------------------------------------------
-// Column definitions, transcribed from Delta's rendered chain: 18 per side.
+// Column definitions, transcribed from Delta's rendered chain: 11 per side.
 //
-// The two sides are not a clean mirror. OI sits against the strike on both
-// sides, and the quote block reads Bid Qty → Bid → Mark → Ask → Ask Qty
-// left-to-right on both sides. Only the outer block (Delta, Volume, greeks,
-// OHLC) is mirrored. Both orders are therefore written out literally rather
-// than derived, because a derivation would be wrong.
+// The two sides are very nearly mirrored — the greeks and the OHLC block read
+// outward from the strike on both. The quote block does not mirror, though:
+// Bid → Mark → Ask reads left-to-right on both sides, so it is the ask that
+// meets the strike on the calls and the bid that meets it on the puts. Both
+// orders are therefore written out literally rather than derived from one
+// another, because a derivation would be wrong.
 //
-// Delta renders the two sides as two independently scrolling books rather than
-// one wide table, with the strike column heading up the puts book. That is why
+// Delta does not render one wide table either. The calls and the puts are
+// separate scroll panes with the strike riding between them, which is why
 // their at-the-money rule draws as two boxes and their vertical scrollbar sits
 // between the calls' Ask and the strike rather than out at the window edge.
 // ---------------------------------------------------------------------------
 
 type ColKey =
-  | 'oi' | 'bidQty' | 'bid' | 'mark' | 'ask' | 'askQty' | 'delta' | 'volume'
-  | 'oiChg' | 'pos' | 'gamma' | 'vega' | 'theta' | 'chg24' | 'last'
-  | 'open' | 'high' | 'low'
+  | 'bid' | 'mark' | 'ask'
+  | 'delta' | 'gamma' | 'vega' | 'theta'
+  | 'last' | 'open' | 'high' | 'low'
 
 interface ColSpec {
   label: string
@@ -39,20 +40,13 @@ interface ColSpec {
 }
 
 const COLS: Record<ColKey, ColSpec> = {
-  oi: { label: 'OI', w: 83 },
-  bidQty: { label: 'Bid Qty', sub: UNDERLYING, w: 80 },
   bid: { label: 'Bid', sub: '(Price / IV)', w: 80 },
   mark: { label: 'Mark', sub: '(Price / IV)', w: 80 },
   ask: { label: 'Ask', sub: '(Price / IV)', w: 80 },
-  askQty: { label: 'Ask Qty', sub: UNDERLYING, w: 80 },
   delta: { label: 'Delta', w: 80 },
-  volume: { label: 'Volume', w: 83 },
-  oiChg: { label: '6H OI Chg.', w: 91 },
-  pos: { label: 'POS', sub: UNDERLYING, w: 80 },
   gamma: { label: 'Gamma', w: 80 },
   vega: { label: 'Vega', w: 80 },
   theta: { label: 'Theta', w: 80 },
-  chg24: { label: '24hr Chg.', w: 85 },
   last: { label: 'Last', w: 80 },
   open: { label: 'Open', w: 80 },
   high: { label: 'High', w: 80 },
@@ -60,13 +54,11 @@ const COLS: Record<ColKey, ColSpec> = {
 }
 
 const CALL_COLS: ColKey[] = [
-  'low', 'high', 'open', 'last', 'chg24', 'theta', 'vega', 'gamma', 'pos',
-  'oiChg', 'volume', 'delta', 'bidQty', 'bid', 'mark', 'ask', 'askQty', 'oi',
+  'low', 'high', 'open', 'last', 'theta', 'vega', 'gamma', 'delta', 'bid', 'mark', 'ask',
 ]
 
 const PUT_COLS: ColKey[] = [
-  'oi', 'bidQty', 'bid', 'mark', 'ask', 'askQty', 'delta', 'volume', 'oiChg',
-  'pos', 'gamma', 'vega', 'theta', 'chg24', 'last', 'open', 'high', 'low',
+  'bid', 'mark', 'ask', 'delta', 'gamma', 'vega', 'theta', 'last', 'open', 'high', 'low',
 ]
 
 const STRIKE_W = 102
@@ -74,6 +66,8 @@ const STRIKE_W = 102
 const CALL_TEMPLATE = CALL_COLS.map((k) => `${COLS[k].w}px`).join(' ')
 
 const PUT_TEMPLATE = [`${STRIKE_W}px`, ...PUT_COLS.map((k) => `${COLS[k].w}px`)].join(' ')
+
+const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n))
 
 /**
  * The option chain, laid out to match Delta Exchange's own.
@@ -87,9 +81,10 @@ const PUT_TEMPLATE = [`${STRIKE_W}px`, ...PUT_COLS.map((k) => `${COLS[k].w}px`)]
  * what you buy from, and the clicked price seeds the order ticket. Everything
  * else, the mark included, is informational.
  *
- * The two books scroll horizontally on their own and vertically in lockstep.
- * Only the calls book shows its vertical scrollbar; the puts book's is
- * suppressed, so one list reads as one list.
+ * The two books scroll as one. Vertically they are the same list of strikes.
+ * Horizontally they are mirrored, both reading outward from the strike, so
+ * scrolling the calls out to Low walks the puts out to Low alongside it. Only
+ * the calls book shows its vertical scrollbar; the puts book's is suppressed.
  */
 export function OptionChain({ expiry, positions, onPick }: Props) {
   useMarketTick() // repaint on every throttled market update
@@ -118,19 +113,31 @@ export function OptionChain({ expiry, positions, onPick }: Props) {
     if (syncing.current) return
     const from = (source === 'calls' ? callsRef : putsRef).current
     const to = (source === 'calls' ? putsRef : callsRef).current
-    if (!from || !to || to.scrollTop === from.scrollTop) return
+    if (!from || !to) return
+
+    // How far this book has read away from the strike. The calls travel away
+    // by scrolling towards zero and the puts by scrolling away from it, so the
+    // two measurements are opposite ends of the same distance.
+    const fromMax = from.scrollWidth - from.clientWidth
+    const toMax = to.scrollWidth - to.clientWidth
+    const away = source === 'calls' ? fromMax - from.scrollLeft : from.scrollLeft
+
+    const left = clamp(source === 'calls' ? away : toMax - away, 0, toMax)
+    const top = from.scrollTop
+    if (to.scrollLeft === left && to.scrollTop === top) return
 
     syncing.current = true
-    to.scrollTop = from.scrollTop
-    // The scroll event from that assignment lands before the next frame.
+    to.scrollLeft = left
+    to.scrollTop = top
+    // The scroll event from those assignments lands before the next frame.
     requestAnimationFrame(() => {
       syncing.current = false
     })
   }
 
-  // Park the books facing each other — calls read right up to the strike, puts
-  // away from it — with the ATM row centred. Once per expiry; after that the
-  // user's scroll position is left alone.
+  // Park the books facing each other — both read right up to the strike — with
+  // the ATM row centred. Once per expiry; after that the user's scroll position
+  // is left alone.
   useEffect(() => {
     const calls = callsRef.current
     const puts = putsRef.current
@@ -195,7 +202,7 @@ export function OptionChain({ expiry, positions, onPick }: Props) {
 
 /**
  * One side of the chain. The puts book carries the strike column at its head,
- * which is where Delta puts it.
+ * pinned there rather than scrolling with the rest of it.
  */
 function Book({
   side,
@@ -231,7 +238,7 @@ function Book({
             <Head
               spec={{ label: 'Strike', w: STRIKE_W }}
               align="center"
-              className="border-x border-line"
+              className="strike-spine border-x border-line"
             />
           )}
           {cols.map((k) => (
@@ -241,7 +248,6 @@ function Book({
 
         {expiry.strikes.map((strike) => {
           const product = book.get(strike)
-          const position = product ? positionBySymbol.get(product.symbol) : undefined
 
           return (
             <div
@@ -257,11 +263,7 @@ function Book({
               style={{ gridTemplateColumns: template }}
             >
               {side === 'put' && (
-                <StrikeCell
-                  strike={strike}
-                  expiry={expiry}
-                  positionBySymbol={positionBySymbol}
-                />
+                <StrikeCell strike={strike} expiry={expiry} positionBySymbol={positionBySymbol} />
               )}
               {cols.map((k) => (
                 <ChainCell
@@ -269,7 +271,6 @@ function Book({
                   col={k}
                   product={product}
                   ticker={product ? market.get(product.symbol) : undefined}
-                  position={position}
                   onPick={onPick}
                 />
               ))}
@@ -281,7 +282,7 @@ function Book({
   )
 }
 
-/** The strike, walled off from both books by a rule on either side. */
+/** The strike, on its own spine between the two books. */
 function StrikeCell({
   strike,
   expiry,
@@ -297,7 +298,7 @@ function StrikeCell({
     (call && positionBySymbol.has(call.symbol)) || (put && positionBySymbol.has(put.symbol))
 
   return (
-    <div className="num flex h-full items-center justify-center gap-1 border-x border-line text-[12px] text-ink">
+    <div className="strike-spine num flex items-center justify-center gap-1 self-stretch border-x border-line text-[12px] text-ink">
       {/* Not Delta's — a marker so held strikes stay findable. */}
       {held && <span className="text-[10px] text-brand-text">●</span>}
       {price(strike, 0)}
@@ -330,34 +331,18 @@ function Head({
 
 // ---------------------------------------------------------------------------
 
-/** `$` plus a compacted magnitude, e.g. `$88.27K` — how Delta shows OI and Volume. */
-function usdCompact(v: number | string | null | undefined): string {
-  const n = typeof v === 'string' ? Number(v) : v
-  if (n === null || n === undefined || !Number.isFinite(n)) return '-'
-  return `${n < 0 ? '-' : ''}$${compact(Math.abs(n))}`
-}
-
-/** Book size or position size expressed in the underlying, e.g. `30.877`. */
-function inUnderlying(contracts: string | number | null | undefined, cv: number): string {
-  const n = typeof contracts === 'string' ? Number(contracts) : contracts
-  if (n === null || n === undefined || !Number.isFinite(n) || n === 0) return '-'
-  return (n * cv).toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 })
-}
-
 interface CellProps {
   col: ColKey
   product: Product | undefined
   ticker: Ticker | undefined
-  position: PositionRow | undefined
   onPick: (product: Product, side: Side, presetPrice: number | null) => void
 }
 
-function ChainCell({ col, product, ticker, position, onPick }: CellProps) {
+function ChainCell({ col, product, ticker, onPick }: CellProps) {
   if (!product) return <Plain>-</Plain>
 
   const q = ticker?.quotes
   const g = ticker?.greeks
-  const cv = Number(product.contract_value)
 
   switch (col) {
     case 'bid':
@@ -378,11 +363,6 @@ function ChainCell({ col, product, ticker, position, onPick }: CellProps) {
     case 'mark':
       return <PriceCell value={ticker?.mark_price} iv={q?.mark_iv} tone="mark" />
 
-    case 'bidQty':
-      return <Plain>{inUnderlying(q?.bid_size, cv)}</Plain>
-    case 'askQty':
-      return <Plain>{inUnderlying(q?.ask_size, cv)}</Plain>
-
     case 'delta':
       return <Plain>{greek(g?.delta, 2)}</Plain>
     case 'gamma':
@@ -391,27 +371,6 @@ function ChainCell({ col, product, ticker, position, onPick }: CellProps) {
       return <Plain>{greek(g?.vega, 2)}</Plain>
     case 'theta':
       return <Plain>{greek(g?.theta, 2)}</Plain>
-
-    case 'oi':
-      return <Plain>{usdCompact(ticker?.oi_value_usd)}</Plain>
-    case 'oiChg':
-      return <Plain>{usdCompact(ticker?.oi_change_usd_6h)}</Plain>
-    case 'volume':
-      return <Plain>{usdCompact(ticker?.turnover_usd)}</Plain>
-
-    case 'pos':
-      // Our own paper position, signed, in the underlying.
-      return <Plain>{position ? inUnderlying(position.net_qty, cv) : '-'}</Plain>
-
-    case 'chg24': {
-      const n = ticker?.ltp_change_24h ? Number(ticker.ltp_change_24h) : null
-      if (n === null || !Number.isFinite(n)) return <Plain>-</Plain>
-      return (
-        <Plain className={n > 0 ? 'text-pos' : n < 0 ? 'text-neg' : undefined}>
-          {n.toFixed(2)}%
-        </Plain>
-      )
-    }
 
     case 'last':
       return <Plain>{usdPrice(ticker?.close)}</Plain>

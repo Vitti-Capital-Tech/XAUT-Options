@@ -123,6 +123,17 @@ body {
   width: 0;
 }
 
+/* The strike is pinned to the head of the puts pane and casts a shadow over
+   the columns sliding under it, so it reads as the chain's centre line rather
+   than as that pane's first column. */
+.strike-spine {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--color-surface);
+  box-shadow: 6px 0 14px -6px #000000cc;
+}
+
 /* Brief tint when a quote moves, as the real terminal does. */
 @keyframes flash-up {
   from {
