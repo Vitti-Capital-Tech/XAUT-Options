@@ -183,7 +183,11 @@ export function OptionChain({ expiry, positions, onPick }: Props) {
           paneRef={callsRef}
           onScroll={syncFrom('calls')}
           // The one visible vertical scrollbar, so it lands against the strike.
-          className="overflow-x-auto overflow-y-scroll"
+          // Both books reserve the horizontal gutter whether or not they need
+          // it: the puts carry the strike and so run 102px wider, and without
+          // this the puts alone would take a horizontal scrollbar and stop a
+          // gutter's height short of the calls at the bottom.
+          className="overflow-x-scroll overflow-y-scroll"
         />
         <Book
           side="put"
@@ -193,7 +197,7 @@ export function OptionChain({ expiry, positions, onPick }: Props) {
           onPick={onPick}
           paneRef={putsRef}
           onScroll={syncFrom('puts')}
-          className="overflow-x-auto overflow-y-scroll no-vscrollbar"
+          className="overflow-x-scroll overflow-y-scroll no-vscrollbar"
         />
       </div>
     </div>
@@ -298,7 +302,7 @@ function StrikeCell({
     (call && positionBySymbol.has(call.symbol)) || (put && positionBySymbol.has(put.symbol))
 
   return (
-    <div className="strike-spine num flex items-center justify-center gap-1 self-stretch border-x border-line text-[12px] text-ink">
+    <div className="strike-spine num flex items-center justify-center gap-1 self-stretch border-x border-line text-[12px] font-bold text-ink">
       {/* Not Delta's — a marker so held strikes stay findable. */}
       {held && <span className="text-[10px] text-brand-text">●</span>}
       {price(strike, 0)}
