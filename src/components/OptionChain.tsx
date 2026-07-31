@@ -69,6 +69,14 @@ const PUT_TEMPLATE = [`${STRIKE_W}px`, ...PUT_COLS.map((k) => `${COLS[k].w}px`)]
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n))
 
+type BookSide = 'call' | 'put'
+
+/** A clicked row: the strike, and which of the two books took the click. */
+interface Selection {
+  strike: number
+  side: BookSide
+}
+
 /**
  * The option chain, laid out to match Delta Exchange's own.
  *
@@ -97,18 +105,31 @@ export function OptionChain({ expiry, positions, onPick }: Props) {
     return m
   }, [positions])
 
-  // The strike nearest spot — anchors the ATM rule and the initial scroll.
+  // The strike nearest spot — anchors the initial scroll.
   const atmStrike = useMemo(() => {
     if (!spot || expiry.strikes.length === 0) return null
     return expiry.strikes.reduce((best, s) => (Math.abs(s - spot) < Math.abs(best - spot) ? s : best))
   }, [expiry.strikes, spot])
 
-  // The strike the user has clicked, marked with the same rule as the ATM row.
-  // Purely a reading aid — it holds no order state.
-  const [selectedStrike, setSelectedStrike] = useState<number | null>(null)
+  // Delta marks the money with a single rule laid where spot falls in the
+  // ladder — not a box around a row. It sits above the lowest strike the
+  // underlying has not reached, so the line lands between the two that
+  // bracket it.
+  const spotRule = useMemo(() => {
+    if (!spot) return null
+    let above: number | null = null
+    for (const s of expiry.strikes) {
+      if (s >= spot && (above === null || s < above)) above = s
+    }
+    return above
+  }, [expiry.strikes, spot])
+
+  // The row the user has clicked, and which book they clicked it in — only that
+  // book rules it. Purely a reading aid; it holds no order state.
+  const [selected, setSelected] = useState<Selection | null>(null)
 
   // A strike picked out on one expiry means nothing on the next.
-  useEffect(() => setSelectedStrike(null), [expiry.label])
+  useEffect(() => setSelected(null), [expiry.label])
 
   const callsRef = useRef<HTMLDivElement>(null)
   const putsRef = useRef<HTMLDivElement>(null)
@@ -185,9 +206,9 @@ export function OptionChain({ expiry, positions, onPick }: Props) {
         <Book
           side="call"
           expiry={expiry}
-          atmStrike={atmStrike}
-          selectedStrike={selectedStrike}
-          onSelectStrike={setSelectedStrike}
+          spotRule={spotRule}
+          selected={selected}
+          onSelect={(strike) => setSelected({ strike, side: 'call' })}
           positionBySymbol={positionBySymbol}
           onPick={onPick}
           paneRef={callsRef}
@@ -202,9 +223,9 @@ export function OptionChain({ expiry, positions, onPick }: Props) {
         <Book
           side="put"
           expiry={expiry}
-          atmStrike={atmStrike}
-          selectedStrike={selectedStrike}
-          onSelectStrike={setSelectedStrike}
+          spotRule={spotRule}
+          selected={selected}
+          onSelect={(strike) => setSelected({ strike, side: 'put' })}
           positionBySymbol={positionBySymbol}
           onPick={onPick}
           paneRef={putsRef}
@@ -223,20 +244,20 @@ export function OptionChain({ expiry, positions, onPick }: Props) {
 function Book({
   side,
   expiry,
-  atmStrike,
-  selectedStrike,
-  onSelectStrike,
+  spotRule,
+  selected,
+  onSelect,
   positionBySymbol,
   onPick,
   paneRef,
   onScroll,
   className,
 }: {
-  side: 'call' | 'put'
+  side: BookSide
   expiry: Expiry
-  atmStrike: number | null
-  selectedStrike: number | null
-  onSelectStrike: (strike: number) => void
+  spotRule: number | null
+  selected: Selection | null
+  onSelect: (strike: number) => void
   positionBySymbol: Map<string, PositionRow>
   onPick: Props['onPick']
   paneRef: React.RefObject<HTMLDivElement | null>
@@ -246,6 +267,9 @@ function Book({
   const cols = side === 'call' ? CALL_COLS : PUT_COLS
   const template = side === 'call' ? CALL_TEMPLATE : PUT_TEMPLATE
   const book = side === 'call' ? expiry.calls : expiry.puts
+
+  // A click rules the row in the book that took it and nowhere else.
+  const ruled = selected?.side === side ? selected.strike : null
 
   return (
     <div ref={paneRef} onScroll={onScroll} className={`min-w-0 flex-1 ${className}`}>
@@ -273,22 +297,30 @@ function Book({
             <div
               key={strike}
               data-strike={strike}
-              // Clicking anywhere in either book rules that strike across both.
-              // It sits under the bid and ask buttons rather than around them,
-              // so lifting an ask both rules the row and opens the ticket.
-              onClick={() => onSelectStrike(strike)}
-              // Delta rules a row top and bottom in brand orange and does
-              // nothing else to it, both for the money and for a click. Row
-              // height is theirs: 43px.
+              // The click sits under the bid and ask buttons rather than around
+              // them, so lifting an ask both rules the row and opens the ticket.
+              onClick={() => onSelect(strike)}
+              // A clicked row is boxed top and bottom; the money is a single
+              // rule laid above the strike spot has not reached. Row height is
+              // Delta's: 43px.
               className={`grid h-[43px] cursor-pointer items-center hover:bg-raised/50 ${
-                strike === atmStrike || strike === selectedStrike
+                strike === ruled
                   ? 'border-y-[0.8px] border-brand-text'
-                  : 'border-b border-line'
+                  : strike === spotRule
+                    ? 'border-t-[0.8px] border-t-brand-text border-b border-b-line'
+                    : 'border-b border-line'
               }`}
               style={{ gridTemplateColumns: template }}
             >
               {side === 'put' && (
-                <StrikeCell strike={strike} expiry={expiry} positionBySymbol={positionBySymbol} />
+                <StrikeCell
+                  strike={strike}
+                  expiry={expiry}
+                  positionBySymbol={positionBySymbol}
+                  // The strike is ruled alongside whichever book was clicked.
+                  // When that was the puts, the row's own box already covers it.
+                  ruled={selected?.strike === strike && selected.side === 'call'}
+                />
               )}
               {cols.map((k) => (
                 <ChainCell
@@ -312,10 +344,12 @@ function StrikeCell({
   strike,
   expiry,
   positionBySymbol,
+  ruled,
 }: {
   strike: number
   expiry: Expiry
   positionBySymbol: Map<string, PositionRow>
+  ruled: boolean
 }) {
   const call = expiry.calls.get(strike)
   const put = expiry.puts.get(strike)
@@ -323,7 +357,11 @@ function StrikeCell({
     (call && positionBySymbol.has(call.symbol)) || (put && positionBySymbol.has(put.symbol))
 
   return (
-    <div className="strike-spine num flex items-center justify-center gap-1 self-stretch border-x border-line text-[12px] font-bold text-ink">
+    <div
+      className={`strike-spine num flex items-center justify-center gap-1 self-stretch border-x border-line text-[12px] font-bold text-ink ${
+        ruled ? 'border-y-[0.8px] border-y-brand-text' : ''
+      }`}
+    >
       {/* Not Delta's — a marker so held strikes stay findable. */}
       {held && <span className="text-[10px] text-brand-text">●</span>}
       {price(strike, 0)}
