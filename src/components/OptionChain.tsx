@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Expiry, Product, Ticker } from '../lib/delta'
 import { UNDERLYING } from '../lib/delta'
 import { market, useMarketTick } from '../lib/marketStore'
@@ -75,7 +75,8 @@ const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n
  * Deliberately absent, because Delta's chain does not have them: any
  * in-the-money row tint, and any highlight on the at-the-money strike cell.
  * Every one of their chain cells is transparent; the ATM row is marked only by
- * a brand-orange rule above and below it.
+ * a brand-orange rule above and below it, and a strike clicked to select it
+ * gets that same rule and nothing more.
  *
  * Click semantics follow their terminal — a bid is what you sell into, an ask is
  * what you buy from, and the clicked price seeds the order ticket. Everything
@@ -101,6 +102,13 @@ export function OptionChain({ expiry, positions, onPick }: Props) {
     if (!spot || expiry.strikes.length === 0) return null
     return expiry.strikes.reduce((best, s) => (Math.abs(s - spot) < Math.abs(best - spot) ? s : best))
   }, [expiry.strikes, spot])
+
+  // The strike the user has clicked, marked with the same rule as the ATM row.
+  // Purely a reading aid — it holds no order state.
+  const [selectedStrike, setSelectedStrike] = useState<number | null>(null)
+
+  // A strike picked out on one expiry means nothing on the next.
+  useEffect(() => setSelectedStrike(null), [expiry.label])
 
   const callsRef = useRef<HTMLDivElement>(null)
   const putsRef = useRef<HTMLDivElement>(null)
@@ -178,6 +186,8 @@ export function OptionChain({ expiry, positions, onPick }: Props) {
           side="call"
           expiry={expiry}
           atmStrike={atmStrike}
+          selectedStrike={selectedStrike}
+          onSelectStrike={(s) => setSelectedStrike((cur) => (cur === s ? null : s))}
           positionBySymbol={positionBySymbol}
           onPick={onPick}
           paneRef={callsRef}
@@ -193,6 +203,8 @@ export function OptionChain({ expiry, positions, onPick }: Props) {
           side="put"
           expiry={expiry}
           atmStrike={atmStrike}
+          selectedStrike={selectedStrike}
+          onSelectStrike={(s) => setSelectedStrike((cur) => (cur === s ? null : s))}
           positionBySymbol={positionBySymbol}
           onPick={onPick}
           paneRef={putsRef}
@@ -212,6 +224,8 @@ function Book({
   side,
   expiry,
   atmStrike,
+  selectedStrike,
+  onSelectStrike,
   positionBySymbol,
   onPick,
   paneRef,
@@ -221,6 +235,8 @@ function Book({
   side: 'call' | 'put'
   expiry: Expiry
   atmStrike: number | null
+  selectedStrike: number | null
+  onSelectStrike: (strike: number) => void
   positionBySymbol: Map<string, PositionRow>
   onPick: Props['onPick']
   paneRef: React.RefObject<HTMLDivElement | null>
@@ -257,17 +273,23 @@ function Book({
             <div
               key={strike}
               data-strike={strike}
-              // Delta marks the ATM row with a brand rule top and bottom and
-              // nothing else. Row height is theirs: 43px.
+              // Delta rules a row top and bottom in brand orange and does
+              // nothing else to it, both for the money and for a click. Row
+              // height is theirs: 43px.
               className={`grid h-[43px] items-center hover:bg-raised/50 ${
-                strike === atmStrike
+                strike === atmStrike || strike === selectedStrike
                   ? 'border-y-[0.8px] border-brand-text'
                   : 'border-b border-line'
               }`}
               style={{ gridTemplateColumns: template }}
             >
               {side === 'put' && (
-                <StrikeCell strike={strike} expiry={expiry} positionBySymbol={positionBySymbol} />
+                <StrikeCell
+                  strike={strike}
+                  expiry={expiry}
+                  positionBySymbol={positionBySymbol}
+                  onSelect={() => onSelectStrike(strike)}
+                />
               )}
               {cols.map((k) => (
                 <ChainCell
@@ -286,15 +308,20 @@ function Book({
   )
 }
 
-/** The strike, on its own spine between the two books. */
+/**
+ * The strike, on its own spine between the two books. Clicking it rules the
+ * row across both of them; clicking it again clears the rule.
+ */
 function StrikeCell({
   strike,
   expiry,
   positionBySymbol,
+  onSelect,
 }: {
   strike: number
   expiry: Expiry
   positionBySymbol: Map<string, PositionRow>
+  onSelect: () => void
 }) {
   const call = expiry.calls.get(strike)
   const put = expiry.puts.get(strike)
@@ -302,11 +329,15 @@ function StrikeCell({
     (call && positionBySymbol.has(call.symbol)) || (put && positionBySymbol.has(put.symbol))
 
   return (
-    <div className="strike-spine num flex items-center justify-center gap-1 self-stretch border-x border-line text-[12px] font-bold text-ink">
+    <button
+      type="button"
+      onClick={onSelect}
+      className="strike-spine num flex cursor-pointer items-center justify-center gap-1 self-stretch border-x border-line text-[12px] font-bold text-ink"
+    >
       {/* Not Delta's — a marker so held strikes stay findable. */}
       {held && <span className="text-[10px] text-brand-text">●</span>}
       {price(strike, 0)}
-    </div>
+    </button>
   )
 }
 
