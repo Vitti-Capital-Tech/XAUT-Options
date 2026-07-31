@@ -317,9 +317,9 @@ function Book({
                   strike={strike}
                   expiry={expiry}
                   positionBySymbol={positionBySymbol}
-                  // The strike is ruled alongside whichever book was clicked.
-                  // When that was the puts, the row's own box already covers it.
-                  ruled={selected?.strike === strike && selected.side === 'call'}
+                  // The strike is ruled alongside whichever book was clicked,
+                  // and closes that book's box off on its far side.
+                  ruledFrom={selected?.strike === strike ? selected.side : null}
                 />
               )}
               {cols.map((k) => (
@@ -339,28 +339,45 @@ function Book({
   )
 }
 
-/** The strike, on its own spine between the two books. */
+/**
+ * The strike, on its own spine between the two books.
+ *
+ * It also closes off the selected row's box. A box opened in the calls runs
+ * leftward, so the strike's right edge shuts it and the strike supplies its own
+ * top and bottom — the puts row it lives in is not ruled. A box opened in the
+ * puts runs rightward, so the left edge shuts it and the row's own rule already
+ * carries top and bottom across. Either way the edge between the strike and the
+ * book that was clicked stays grey, because it falls inside the box.
+ *
+ * Sides are coloured one at a time rather than by overriding a shorthand, so
+ * that none of this depends on the order Tailwind happens to emit.
+ */
 function StrikeCell({
   strike,
   expiry,
   positionBySymbol,
-  ruled,
+  ruledFrom,
 }: {
   strike: number
   expiry: Expiry
   positionBySymbol: Map<string, PositionRow>
-  ruled: boolean
+  ruledFrom: BookSide | null
 }) {
   const call = expiry.calls.get(strike)
   const put = expiry.puts.get(strike)
   const held =
     (call && positionBySymbol.has(call.symbol)) || (put && positionBySymbol.has(put.symbol))
 
+  const rule =
+    ruledFrom === 'call'
+      ? 'border-x border-l-line border-r-brand-text border-y-[0.8px] border-y-brand-text'
+      : ruledFrom === 'put'
+        ? 'border-x border-l-brand-text border-r-line'
+        : 'border-x border-l-line border-r-line'
+
   return (
     <div
-      className={`strike-spine num flex items-center justify-center gap-1 self-stretch border-x border-line text-[12px] font-bold text-ink ${
-        ruled ? 'border-y-[0.8px] border-y-brand-text' : ''
-      }`}
+      className={`strike-spine num flex items-center justify-center gap-1 self-stretch text-[12px] font-bold text-ink ${rule}`}
     >
       {/* Not Delta's — a marker so held strikes stay findable. */}
       {held && <span className="text-[10px] text-brand-text">●</span>}
