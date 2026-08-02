@@ -131,6 +131,11 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-raised-3);
 }
+/* Where a pane's two scrollbars meet. Left unstyled the browser fills it white,
+   which on the chain lands as a bright square between the two books. */
+::-webkit-scrollbar-corner {
+  background: var(--color-sub);
+}
 
 /* The option chain is two panes scrolling as one list, so only the left pane
    shows a vertical scrollbar. The right pane keeps its horizontal one. */
