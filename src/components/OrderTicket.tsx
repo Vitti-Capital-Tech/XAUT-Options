@@ -113,6 +113,13 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
       ? Math.floor(available / perLot)
       : 0
 
+  // The field's own stepper, so the chevrons can be grey rather than the white
+  // pair the browser draws. Never steps below one lot.
+  const step = (by: number) => {
+    const from = Number.isFinite(qty) ? Math.trunc(qty) : 1
+    setQtyText(String(Math.max(1, from + by)))
+  }
+
   const setPct = (p: number) => {
     const n = Math.floor((maxLots * p) / 100)
     // Never silently size to nothing: one lot, and let the preview say if it
@@ -237,9 +244,27 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
                 autoFocus
                 placeholder="Enter Quantity"
                 aria-label="Quantity in lots"
-                className="num min-w-0 flex-1 bg-transparent px-2.5 py-2 text-sm text-ink placeholder:text-ink-3 focus:outline-none"
+                className="num step-own min-w-0 flex-1 bg-transparent px-2.5 py-2 text-sm text-ink placeholder:text-ink-3 focus:outline-none"
               />
-              <span className="pr-2.5 text-[11px] font-medium tracking-wider text-ink-3 uppercase">
+              <div className="flex flex-col justify-center">
+                <button
+                  type="button"
+                  onClick={() => step(1)}
+                  aria-label="One more lot"
+                  className="px-1 text-[7px] leading-none text-ink-3 hover:text-ink"
+                >
+                  ▲
+                </button>
+                <button
+                  type="button"
+                  onClick={() => step(-1)}
+                  aria-label="One fewer lot"
+                  className="px-1 pt-0.5 text-[7px] leading-none text-ink-3 hover:text-ink"
+                >
+                  ▼
+                </button>
+              </div>
+              <span className="pr-2.5 pl-2 text-[11px] font-medium tracking-wider text-ink-3 uppercase">
                 Lots
               </span>
             </div>

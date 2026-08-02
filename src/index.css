@@ -97,16 +97,17 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* Number spinners render as bright white chevrons that outweigh the 12px figure
-   beside them, and nobody steps a quantity one lot at a time in a terminal. The
-   arrow keys still work; only the drawn buttons go. */
-input[type='number']::-webkit-inner-spin-button,
-input[type='number']::-webkit-outer-spin-button {
+/* The browser draws number spinners itself, in bright white, and will not be
+   styled out of it. Opt a field out of the native pair and it can carry its own
+   chevrons in the terminal's own ink instead — see the order ticket. Applied by
+   class, not to every number input, so fields without a replacement keep theirs. */
+.step-own::-webkit-inner-spin-button,
+.step-own::-webkit-outer-spin-button {
   -webkit-appearance: none;
   appearance: none;
   margin: 0;
 }
-input[type='number'] {
+.step-own {
   -moz-appearance: textfield;
   appearance: textfield;
 }
