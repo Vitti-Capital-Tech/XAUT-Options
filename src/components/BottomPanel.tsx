@@ -220,7 +220,7 @@ function PositionsTable({
               <Td className="text-ink">{price(pos.avg_entry_price)}</Td>
               <Td className="text-ink" >
                 {v.mark !== null ? (
-                  <span title={isLong ? 'Marked at best bid (your exit)' : 'Marked at best ask (your exit)'}>
+                  <span title="Delta's fair mark price">
                     {price(v.mark)}
                   </span>
                 ) : (

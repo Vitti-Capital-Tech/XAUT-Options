@@ -124,6 +124,7 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
     () =>
       summarizeAccount(
         Number(accounts.selected?.cash_balance ?? 0),
+        Number(accounts.selected?.starting_balance ?? 0),
         trading.positions,
         tickerFor,
         market.spot,
@@ -132,7 +133,13 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
     // marks this reads live outside React, so without it the memo hands back a
     // stale summary and the header's unrealized P&L freezes between fills.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tick, accounts.selected?.cash_balance, trading.positions, tickerFor],
+    [
+      tick,
+      accounts.selected?.cash_balance,
+      accounts.selected?.starting_balance,
+      trading.positions,
+      tickerFor,
+    ],
   )
 
   const openTicket = useCallback((product: Product, side: Side, presetPrice: number | null) => {

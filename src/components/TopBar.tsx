@@ -95,6 +95,12 @@ export function TopBar({
           label="Unrealized"
           value={signedUsd(summary.unrealized, 4)}
           className={pnlClass(summary.unrealized)}
+        />
+        {/* Everything the account has made since it opened, booked and open. */}
+        <Stat
+          label="Total P&L"
+          value={signedUsd(summary.totalPnl, 4)}
+          className={pnlClass(summary.totalPnl)}
           emphasis
         />
         <Stat label="Equity" value={usd(summary.equity)} emphasis />

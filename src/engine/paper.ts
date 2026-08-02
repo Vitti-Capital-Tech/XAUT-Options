@@ -122,7 +122,7 @@ export interface PositionValue {
   netQty: number
   /** Signed lots as displayed; positive long, negative short. */
   avgEntry: number
-  /** Exit-side price, or null when that side of the book is empty. */
+  /** Delta's fair mark price; the exit-side price if they have not published one. */
   mark: number | null
   /** price * cv * |qty| at entry — what the position cost (long) or collected (short). */
   entryValue: number
@@ -140,19 +140,21 @@ export function valuePosition(pos: PositionRow, ticker: Ticker | undefined, spot
   const avgEntry = Number(pos.avg_entry_price)
   const lots = Math.abs(netQty)
 
-  const mark = exitPrice(ticker, netQty)
+  // Delta values open positions off the fair mark price, not off the touch, and
+  // this follows them. The exit price is kept as the fallback for the case their
+  // mark is missing, which is the only case where the book is the better guess.
+  const mark = markPrice(ticker) ?? exitPrice(ticker, netQty)
   const entryValue = avgEntry * cv * lots
   const currentValue = mark === null ? null : mark * cv * lots
 
-  // Long: gain when the bid rises above entry. Short: gain when the ask falls below it.
+  // Long: gain when the mark rises above entry. Short: gain when it falls below.
   const unrealized =
     mark === null ? null : netQty > 0 ? (mark - avgEntry) * lots * cv : (avgEntry - mark) * lots * cv
 
-  const referenceMark = mark ?? markPrice(ticker) ?? avgEntry
   const marginBlocked =
     netQty > 0
       ? entryValue // long option risk is capped at the premium paid
-      : (SHORT_IM_RATE * spot + referenceMark) * cv * lots
+      : (SHORT_IM_RATE * spot + (mark ?? avgEntry)) * cv * lots
 
   return {
     netQty,
@@ -169,7 +171,11 @@ export function valuePosition(pos: PositionRow, ticker: Ticker | undefined, spot
 export interface AccountSummary {
   /** starting_balance + realized P&L - fees. Open positions are excluded. */
   balance: number
+  /** balance - starting_balance: booked P&L, net of fees. */
+  realized: number
   unrealized: number
+  /** realized + unrealized: everything the account has made since it opened. */
+  totalPnl: number
   /** balance + unrealized */
   equity: number
   marginBlocked: number
@@ -179,6 +185,7 @@ export interface AccountSummary {
 
 export function summarizeAccount(
   cashBalance: number,
+  startingBalance: number,
   positions: PositionRow[],
   tickerFor: (symbol: string) => Ticker | undefined,
   spot: number,
@@ -191,9 +198,12 @@ export function summarizeAccount(
     marginBlocked += v.marginBlocked
   }
   const equity = cashBalance + unrealized
+  const realized = cashBalance - startingBalance
   return {
     balance: cashBalance,
+    realized,
     unrealized,
+    totalPnl: realized + unrealized,
     equity,
     marginBlocked,
     available: equity - marginBlocked,
