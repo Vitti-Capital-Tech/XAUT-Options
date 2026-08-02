@@ -51,6 +51,7 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
 
   const [side, setSide] = useState<Side>(request.side)
   const [qtyText, setQtyText] = useState('1')
+  const [details, setDetails] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
@@ -173,19 +174,18 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
           </button>
         </div>
 
-        <div className="flex divide-x divide-line border-b border-line bg-sub text-center text-[12px]">
-          <div className="flex-1 py-2">
-            <div className="text-ink-4">Bid</div>
-            <div className="num font-semibold text-pos">{price(bid)}</div>
-          </div>
-          <div className="flex-1 py-2">
-            <div className="text-ink-4">Ask</div>
-            <div className="num font-semibold text-neg">{price(ask)}</div>
-          </div>
-          <div className="flex-1 py-2">
-            <div className="text-ink-4">Spot</div>
-            <div className="num font-semibold text-brand-text">{price(spot)}</div>
-          </div>
+        {/* Delta's ticket has no quote strip because their chain is beside it.
+            Ours covers the chain, so it earns its place — quietly. */}
+        <div className="flex items-baseline gap-4 border-b border-line px-4 py-2 text-[11px]">
+          <span className="text-ink-4">
+            Bid <span className="num text-pos">{price(bid)}</span>
+          </span>
+          <span className="text-ink-4">
+            Ask <span className="num text-neg">{price(ask)}</span>
+          </span>
+          <span className="ml-auto text-ink-4">
+            Spot <span className="num text-brand-text">{price(spot)}</span>
+          </span>
         </div>
 
         <div className="space-y-3 p-4">
@@ -216,15 +216,17 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
 
           {/* Where Delta's Limit / Market / Stop Limit tabs sit. One order type
               needs no tabs, but it should still say which one it is. */}
-          <div className="flex items-baseline justify-between border-b border-line pb-2">
-            <span className="text-[12px] font-semibold text-ink">Market</span>
+          <div className="flex items-baseline gap-3">
+            <span className="border-b-2 border-brand-text pb-1 text-[13px] font-bold text-ink">
+              Market
+            </span>
             <span className="text-[10px] text-ink-4">
-              Crosses the {buying ? 'ask' : 'bid'} immediately
+              crosses the {buying ? 'ask' : 'bid'}
             </span>
           </div>
 
           <div>
-            <div className="flex items-stretch overflow-hidden rounded border border-raised-3 focus-within:border-ink-3">
+            <div className="flex items-center rounded border border-raised-3 bg-surface focus-within:border-ink-3">
               <input
                 type="number"
                 min={1}
@@ -235,15 +237,17 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
                 autoFocus
                 placeholder="Enter Quantity"
                 aria-label="Quantity in lots"
-                className="num min-w-0 flex-1 bg-surface px-2 py-1.5 text-right text-sm text-ink focus:outline-none"
+                className="num min-w-0 flex-1 bg-transparent px-2.5 py-2 text-sm text-ink placeholder:text-ink-4 focus:outline-none"
               />
-              <span className="flex items-center border-l border-raised-3 bg-raised-2 px-2 text-[11px] font-semibold tracking-wider text-ink-2 uppercase">
+              <span className="pr-2.5 text-[11px] font-medium tracking-wider text-ink-3 uppercase">
                 Lots
               </span>
             </div>
 
-            <div className="mt-1.5 flex gap-1">
-              {PCTS.map((p) => (
+            {/* One divided strip, as theirs is — five bordered boxes read as
+                five controls, and this is one control with five notches. */}
+            <div className="mt-1.5 flex overflow-hidden rounded bg-sub">
+              {PCTS.map((p, i) => (
                 <button
                   key={p}
                   onClick={() => setPct(p)}
@@ -252,7 +256,9 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
                       ? `${p}% of the ${Math.abs(netQty)} lots held`
                       : `${p}% of what the balance can margin`
                   }
-                  className="num flex-1 rounded bg-sub py-1 text-[11px] text-ink-3 hover:bg-raised-2 hover:text-ink"
+                  className={`num flex-1 py-1 text-[11px] text-ink-3 hover:bg-raised-2 hover:text-ink ${
+                    i > 0 ? 'border-l border-surface' : ''
+                  }`}
                 >
                   {p}%
                 </button>
@@ -261,7 +267,8 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
 
             <div className="mt-1.5 flex items-baseline justify-between text-[10px] text-ink-4">
               <span className="num">
-                ≈ {(qty > 0 ? qty * lotSize : 0).toLocaleString('en-US', {
+                ≈{' '}
+                {(qty > 0 ? qty * lotSize : 0).toLocaleString('en-US', {
                   minimumFractionDigits: 3,
                   maximumFractionDigits: 3,
                 })}{' '}
@@ -273,39 +280,55 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
             </div>
           </div>
 
-          <dl className="space-y-1 rounded bg-sub p-2.5 text-[12px]">
-            <Row label="Est. fill">
-              <span className="num text-ink">
-                {preview.fillPrice !== null ? price(preview.fillPrice) : '—'}
-              </span>
-            </Row>
-            <Row label="Premium">
-              <span className="num text-ink">{usd(preview.premium, 4)}</span>
-            </Row>
-            <Row label="Notional">
-              <span className="num text-ink-2">{usd(preview.notional)}</span>
-            </Row>
-            <Row label="Est. fee">
-              <span className="num text-ink-2">{usd(preview.fee, 4)}</span>
-            </Row>
-            {/* Delta's wording, so the two read the same side by side. */}
-            <Row label={reduces ? 'Funds released' : 'Funds req.'}>
-              <span className="num text-ink">
+          {/* Two figures, unboxed. Delta shows exactly these two and nothing
+              else, and the panel is quieter for it. The rest is a click away. */}
+          <div className="space-y-1.5 pt-1">
+            <Row label={reduces ? 'Funds released' : 'Funds req.'} hint="Margin this order blocks">
+              <span className="num text-[13px] font-semibold text-ink">
                 {reduces ? '—' : usd(preview.marginRequired, 4)}
               </span>
             </Row>
             <Row label="Available Margin">
-              <span className="num text-ink-2">{usd(available)}</span>
+              <span className="num text-[13px] text-ink-2">{usd(available)}</span>
             </Row>
             {netQty !== 0 && (
-              <Row label="Current position">
+              <Row label="Position">
                 <span className={`num ${netQty > 0 ? 'text-pos' : 'text-neg'}`}>
                   {netQty > 0 ? '+' : ''}
-                  {netQty} lots @ {price(position!.avg_entry_price)}
+                  {netQty} @ {price(position!.avg_entry_price)}
                 </span>
               </Row>
             )}
-          </dl>
+          </div>
+
+          <div>
+            <button
+              onClick={() => setDetails((v) => !v)}
+              className="flex items-center gap-1 text-[11px] text-ink-3 hover:text-ink"
+            >
+              <span className="border-b border-dashed border-ink-4">Order details</span>
+              <span className="text-[8px]">{details ? '▲' : '▼'}</span>
+            </button>
+
+            {details && (
+              <div className="mt-2 space-y-1">
+                <Row label="Est. fill">
+                  <span className="num text-ink">
+                    {preview.fillPrice !== null ? price(preview.fillPrice) : '—'}
+                  </span>
+                </Row>
+                <Row label="Premium">
+                  <span className="num text-ink-2">{usd(preview.premium, 4)}</span>
+                </Row>
+                <Row label="Notional">
+                  <span className="num text-ink-2">{usd(preview.notional)}</span>
+                </Row>
+                <Row label="Est. fee">
+                  <span className="num text-ink-2">{usd(preview.fee, 4)}</span>
+                </Row>
+              </div>
+            )}
+          </div>
 
           {netQty !== 0 && (
             <button
@@ -349,11 +372,29 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
   )
 }
 
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
+/** A label on the left, a figure on the right. Hinted labels take Delta's
+ *  dashed underline, which is their signal that an explanation is available. */
+function Row({
+  label,
+  hint,
+  children,
+}: {
+  label: string
+  hint?: string
+  children: React.ReactNode
+}) {
   return (
-    <div className="flex items-baseline justify-between">
-      <dt className="text-ink-3">{label}</dt>
-      <dd>{children}</dd>
+    <div className="flex items-baseline justify-between text-[12px]">
+      <span className="text-ink-3">
+        {hint ? (
+          <span className="border-b border-dashed border-ink-4" title={hint}>
+            {label}
+          </span>
+        ) : (
+          label
+        )}
+      </span>
+      <span>{children}</span>
     </div>
   )
 }
