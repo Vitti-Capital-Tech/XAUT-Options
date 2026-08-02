@@ -3,7 +3,7 @@ import type { Expiry, Product, Ticker } from '../lib/delta'
 import { UNDERLYING } from '../lib/delta'
 import { market, useMarketTick } from '../lib/marketStore'
 import type { PositionRow, Side } from '../engine/paper'
-import { greek, ivShort, price, timeToExpiry, usdPrice } from '../lib/format'
+import { compact, greek, ivShort, price, timeToExpiry, usdPrice } from '../lib/format'
 
 interface Props {
   expiry: Expiry
@@ -12,14 +12,13 @@ interface Props {
 }
 
 // ---------------------------------------------------------------------------
-// Column definitions, transcribed from Delta's rendered chain: 11 per side.
+// Column definitions, transcribed from Delta's rendered chain: 18 per side.
 //
-// The two sides are very nearly mirrored — the greeks and the OHLC block read
-// outward from the strike on both. The quote block does not mirror, though:
-// Bid → Mark → Ask reads left-to-right on both sides, so it is the ask that
-// meets the strike on the calls and the bid that meets it on the puts. Both
-// orders are therefore written out literally rather than derived from one
-// another, because a derivation would be wrong.
+// The two sides are not a clean mirror. OI sits against the strike on both
+// sides, and the quote block reads Bid Qty → Bid → Mark → Ask → Ask Qty
+// left-to-right on both sides. Only the outer block (Delta, Volume, greeks,
+// OHLC) is mirrored. Both orders are therefore written out literally rather
+// than derived from one another, because a derivation would be wrong.
 //
 // Delta does not render one wide table either. The calls and the puts are
 // separate scroll panes with the strike riding between them, which is why
@@ -28,9 +27,9 @@ interface Props {
 // ---------------------------------------------------------------------------
 
 type ColKey =
-  | 'bid' | 'mark' | 'ask'
-  | 'delta' | 'gamma' | 'vega' | 'theta'
-  | 'last' | 'open' | 'high' | 'low'
+  | 'oi' | 'bidQty' | 'bid' | 'mark' | 'ask' | 'askQty' | 'delta' | 'volume'
+  | 'oiChg' | 'pos' | 'gamma' | 'vega' | 'theta' | 'chg24' | 'last'
+  | 'open' | 'high' | 'low'
 
 interface ColSpec {
   label: string
@@ -40,13 +39,20 @@ interface ColSpec {
 }
 
 const COLS: Record<ColKey, ColSpec> = {
+  oi: { label: 'OI', w: 83 },
+  bidQty: { label: 'Bid Qty', sub: UNDERLYING, w: 80 },
   bid: { label: 'Bid', sub: '(Price / IV)', w: 80 },
   mark: { label: 'Mark', sub: '(Price / IV)', w: 80 },
   ask: { label: 'Ask', sub: '(Price / IV)', w: 80 },
+  askQty: { label: 'Ask Qty', sub: UNDERLYING, w: 80 },
   delta: { label: 'Delta', w: 80 },
+  volume: { label: 'Volume', w: 83 },
+  oiChg: { label: '6H OI Chg.', w: 91 },
+  pos: { label: 'POS', sub: UNDERLYING, w: 80 },
   gamma: { label: 'Gamma', w: 80 },
   vega: { label: 'Vega', w: 80 },
   theta: { label: 'Theta', w: 80 },
+  chg24: { label: '24hr Chg.', w: 85 },
   last: { label: 'Last', w: 80 },
   open: { label: 'Open', w: 80 },
   high: { label: 'High', w: 80 },
@@ -54,11 +60,13 @@ const COLS: Record<ColKey, ColSpec> = {
 }
 
 const CALL_COLS: ColKey[] = [
-  'low', 'high', 'open', 'last', 'theta', 'vega', 'gamma', 'delta', 'bid', 'mark', 'ask',
+  'low', 'high', 'open', 'last', 'chg24', 'theta', 'vega', 'gamma', 'pos',
+  'oiChg', 'volume', 'delta', 'bidQty', 'bid', 'mark', 'ask', 'askQty', 'oi',
 ]
 
 const PUT_COLS: ColKey[] = [
-  'bid', 'mark', 'ask', 'delta', 'gamma', 'vega', 'theta', 'last', 'open', 'high', 'low',
+  'oi', 'bidQty', 'bid', 'mark', 'ask', 'askQty', 'delta', 'volume', 'oiChg',
+  'pos', 'gamma', 'vega', 'theta', 'chg24', 'last', 'open', 'high', 'low',
 ]
 
 const STRIKE_W = 102
@@ -292,6 +300,7 @@ function Book({
 
         {expiry.strikes.map((strike) => {
           const product = book.get(strike)
+          const position = product ? positionBySymbol.get(product.symbol) : undefined
 
           return (
             <div
@@ -328,6 +337,7 @@ function Book({
                   col={k}
                   product={product}
                   ticker={product ? market.get(product.symbol) : undefined}
+                  position={position}
                   onPick={onPick}
                 />
               ))}
@@ -411,18 +421,34 @@ function Head({
 
 // ---------------------------------------------------------------------------
 
+/** `$` plus a compacted magnitude, e.g. `$88.27K` — how Delta shows OI and Volume. */
+function usdCompact(v: number | string | null | undefined): string {
+  const n = typeof v === 'string' ? Number(v) : v
+  if (n === null || n === undefined || !Number.isFinite(n)) return '-'
+  return `${n < 0 ? '-' : ''}$${compact(Math.abs(n))}`
+}
+
+/** Book size or position size expressed in the underlying, e.g. `30.877`. */
+function inUnderlying(contracts: string | number | null | undefined, cv: number): string {
+  const n = typeof contracts === 'string' ? Number(contracts) : contracts
+  if (n === null || n === undefined || !Number.isFinite(n) || n === 0) return '-'
+  return (n * cv).toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 })
+}
+
 interface CellProps {
   col: ColKey
   product: Product | undefined
   ticker: Ticker | undefined
+  position: PositionRow | undefined
   onPick: (product: Product, side: Side, presetPrice: number | null) => void
 }
 
-function ChainCell({ col, product, ticker, onPick }: CellProps) {
+function ChainCell({ col, product, ticker, position, onPick }: CellProps) {
   if (!product) return <Plain>-</Plain>
 
   const q = ticker?.quotes
   const g = ticker?.greeks
+  const cv = Number(product.contract_value)
 
   switch (col) {
     case 'bid':
@@ -443,6 +469,11 @@ function ChainCell({ col, product, ticker, onPick }: CellProps) {
     case 'mark':
       return <PriceCell value={ticker?.mark_price} iv={q?.mark_iv} tone="mark" />
 
+    case 'bidQty':
+      return <Plain>{inUnderlying(q?.bid_size, cv)}</Plain>
+    case 'askQty':
+      return <Plain>{inUnderlying(q?.ask_size, cv)}</Plain>
+
     case 'delta':
       return <Plain>{greek(g?.delta, 2)}</Plain>
     case 'gamma':
@@ -451,6 +482,27 @@ function ChainCell({ col, product, ticker, onPick }: CellProps) {
       return <Plain>{greek(g?.vega, 2)}</Plain>
     case 'theta':
       return <Plain>{greek(g?.theta, 2)}</Plain>
+
+    case 'oi':
+      return <Plain>{usdCompact(ticker?.oi_value_usd)}</Plain>
+    case 'oiChg':
+      return <Plain>{usdCompact(ticker?.oi_change_usd_6h)}</Plain>
+    case 'volume':
+      return <Plain>{usdCompact(ticker?.turnover_usd)}</Plain>
+
+    case 'pos':
+      // Our own paper position, signed, in the underlying.
+      return <Plain>{position ? inUnderlying(position.net_qty, cv) : '-'}</Plain>
+
+    case 'chg24': {
+      const n = ticker?.ltp_change_24h ? Number(ticker.ltp_change_24h) : null
+      if (n === null || !Number.isFinite(n)) return <Plain>-</Plain>
+      return (
+        <Plain className={n > 0 ? 'text-pos' : n < 0 ? 'text-neg' : undefined}>
+          {n.toFixed(2)}%
+        </Plain>
+      )
+    }
 
     case 'last':
       return <Plain>{usdPrice(ticker?.close)}</Plain>
