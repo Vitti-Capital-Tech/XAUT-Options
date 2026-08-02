@@ -97,6 +97,20 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* Number spinners render as bright white chevrons that outweigh the 12px figure
+   beside them, and nobody steps a quantity one lot at a time in a terminal. The
+   arrow keys still work; only the drawn buttons go. */
+input[type='number']::-webkit-inner-spin-button,
+input[type='number']::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
+}
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
 /* Divider matching Delta's translucent-white rule. */
 .divider-b {
   border-bottom: 1px solid #ffffff14;

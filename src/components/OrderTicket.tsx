@@ -342,11 +342,8 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
             </button>
           )}
 
-          {preview.warning && !preview.error && (
-            <p className="rounded bg-brand-muted px-2 py-1.5 text-[12px] text-brand-text">
-              {preview.warning}
-            </p>
-          )}
+          {/* Errors only. An advisory banner is not something Delta's ticket
+              carries, and these are the ones that block the order. */}
           {(preview.error || submitError) && (
             <p className="rounded bg-neg-muted px-2 py-1.5 text-[12px] text-neg">
               {submitError ?? preview.error}
@@ -362,10 +359,6 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
           >
             {submitting ? 'Placing…' : buying ? 'Buy' : 'Sell'}
           </button>
-
-          <p className="text-center text-[10px] text-ink-3">
-            Paper trade — no real order is sent to Delta Exchange
-          </p>
         </div>
       </div>
     </div>

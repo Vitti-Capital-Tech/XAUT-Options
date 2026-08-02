@@ -313,15 +313,11 @@ export function previewOrder(
     return preview
   }
 
+  // No wide-spread warning: Delta's ticket does not carry one, and the bid and
+  // the ask are quoted directly above the quantity, so the spread is on screen
+  // for anyone who looks. The ticket no longer renders warnings at all.
   if (orderType === 'limit' && fillPrice === null) {
     preview.warning = 'Price is away from the market — this order will rest until it crosses'
-  } else if (orderType === 'market') {
-    const bid = bestBid(ticker)
-    const ask = bestAsk(ticker)
-    if (bid !== null && ask !== null && bid > 0) {
-      const spreadPct = ((ask - bid) / ((ask + bid) / 2)) * 100
-      if (spreadPct > 10) preview.warning = `Wide spread (${spreadPct.toFixed(1)}%) — you are crossing it`
-    }
   }
 
   return preview
