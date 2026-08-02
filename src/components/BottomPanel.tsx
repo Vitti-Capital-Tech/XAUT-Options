@@ -273,7 +273,12 @@ function OrdersTable({
   const [cancelling, setCancelling] = useState<string | null>(null)
 
   if (orders.length === 0) {
-    return <Empty>No open orders. Limit orders that have not crossed the book appear here.</Empty>
+    return (
+      <Empty>
+        No open orders. The ticket places market orders only, so nothing rests here — any
+        limit order left from before can still be cancelled from this tab.
+      </Empty>
+    )
   }
 
   return (

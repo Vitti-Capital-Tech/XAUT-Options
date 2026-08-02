@@ -1,20 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Product } from '../lib/delta'
-import { formatExpiry, parseSymbol } from '../lib/delta'
+import { UNDERLYING, formatExpiry, parseSymbol } from '../lib/delta'
 import { market, useMarketTick } from '../lib/marketStore'
-import {
-  bestAsk,
-  bestBid,
-  previewOrder,
-  type OrderType,
-  type PositionRow,
-  type Side,
-} from '../engine/paper'
+import { bestAsk, bestBid, previewOrder, type OrderType, type PositionRow, type Side } from '../engine/paper'
 import { price, usd } from '../lib/format'
 
 export interface TicketRequest {
   product: Product
   side: Side
+  /**
+   * The price that was clicked on the chain. Market orders cross the touch, so
+   * this no longer seeds anything — it is kept because it records which side of
+   * the book the click came from, and the estimated fill is checked against it.
+   */
   presetPrice: number | null
 }
 
@@ -32,27 +30,34 @@ interface Props {
   }) => Promise<void>
 }
 
-const QTY_PRESETS = [1, 10, 100, 1000]
+/** Delta sizes by fraction of margin, not by round lots. */
+const PCTS = [10, 25, 50, 75, 100]
 
+/**
+ * The order ticket, laid out as Delta lays theirs out.
+ *
+ * Market only, deliberately. Resting orders are matched by a loop in this very
+ * browser, so a limit or a stop would only work while the tab stayed open —
+ * which is precisely when you would not need it. Offering one would be
+ * promising something we cannot keep. If the fill engine ever moves to the
+ * database, where the settlement cron already lives, they become worth having.
+ *
+ * Absent for the same reason: Reduce Only, and bracket TP/SL. A Reduce Only box
+ * that nothing enforces is worse than no box at all.
+ */
 export function OrderTicket({ request, position, available, onClose, onSubmit }: Props) {
   const { product } = request
   useMarketTick()
 
   const [side, setSide] = useState<Side>(request.side)
-  const [orderType, setOrderType] = useState<OrderType>('market')
   const [qtyText, setQtyText] = useState('1')
-  const [limitText, setLimitText] = useState(
-    request.presetPrice !== null ? String(request.presetPrice) : '',
-  )
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
   // Reopening the ticket on a different contract resets the form.
   useEffect(() => {
     setSide(request.side)
-    setOrderType('market')
     setQtyText('1')
-    setLimitText(request.presetPrice !== null ? String(request.presetPrice) : '')
     setSubmitError(null)
   }, [request])
 
@@ -71,25 +76,48 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
   const ask = bestAsk(ticker)
 
   const qty = Number(qtyText)
-  const limitPrice = limitText === '' ? null : Number(limitText)
+  const lotSize = Number(product.contract_value)
 
   const preview = useMemo(
     () =>
-      previewOrder(
-        { product, side, orderType, qty, limitPrice },
-        ticker,
-        spot,
-        position,
-        available,
-      ),
+      previewOrder({ product, side, orderType: 'market', qty, limitPrice: null }, ticker, spot, position, available),
     // `market.spot` and the ticker mutate in place, so the tick from
     // useMarketTick above is what actually drives recomputation.
-    [product, side, orderType, qty, limitPrice, ticker, spot, position, available],
+    [product, side, qty, ticker, spot, position, available],
   )
 
   const netQty = position?.net_qty ?? 0
   const signed = side === 'buy' ? qty : -qty
   const reduces = netQty !== 0 && Math.sign(netQty) !== Math.sign(signed)
+
+  // What one lot costs in margin, so the percentage buttons can size against
+  // the balance the way Delta's do. Priced at one lot rather than derived from
+  // the current quantity, so the buttons do not drift as the field changes.
+  const perLot = useMemo(
+    () =>
+      previewOrder(
+        { product, side, orderType: 'market', qty: 1, limitPrice: null },
+        ticker,
+        spot,
+        position,
+        available,
+      ).marginRequired,
+    [product, side, ticker, spot, position, available],
+  )
+
+  // Closing an existing position is bounded by the position, not the balance.
+  const maxLots = reduces
+    ? Math.abs(netQty)
+    : perLot > 0
+      ? Math.floor(available / perLot)
+      : 0
+
+  const setPct = (p: number) => {
+    const n = Math.floor((maxLots * p) / 100)
+    // Never silently size to nothing: one lot, and let the preview say if it
+    // cannot be afforded, rather than leaving the field blank.
+    setQtyText(String(Math.max(1, n)))
+  }
 
   const canSubmit = !submitting && preview.error === null && Number.isInteger(qty) && qty > 0
 
@@ -98,7 +126,7 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
     setSubmitting(true)
     setSubmitError(null)
     try {
-      await onSubmit({ product, side, orderType, qty, limitPrice: orderType === 'limit' ? limitPrice : null })
+      await onSubmit({ product, side, orderType: 'market', qty, limitPrice: null })
       onClose()
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : 'Order failed')
@@ -107,6 +135,7 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
   }
 
   const isCall = product.contract_type === 'call_options'
+  const buying = side === 'buy'
 
   return (
     <div
@@ -114,7 +143,7 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
       onClick={onClose}
     >
       <div
-        className="w-full max-w-sm overflow-hidden rounded-lg border border-raised-3 bg-raised shadow-2xl"
+        className="w-full max-w-sm overflow-hidden rounded-lg border border-raised-3 bg-raised shadow-delta-lg"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between border-b border-line px-4 py-3">
@@ -132,7 +161,7 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
               </span>
             </div>
             <div className="mt-0.5 text-[12px] text-ink-3">
-              XAUT · {parsed ? formatExpiry(parsed.expiry) : ''}
+              {UNDERLYING} · {parsed ? formatExpiry(parsed.expiry) : ''}
             </div>
           </div>
           <button
@@ -160,96 +189,94 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
         </div>
 
         <div className="space-y-3 p-4">
+          {/* Delta's own arrangement: the side chosen first, on two tabs that
+              carry the colour of the trade. */}
           <div className="grid grid-cols-2 gap-2">
             <button
               onClick={() => setSide('buy')}
-              className={`rounded py-2 text-sm font-semibold transition-colors ${
-                side === 'buy'
-                  ? 'bg-pos-solid text-white'
-                  : 'bg-raised-2 text-ink-2 hover:bg-raised-3 hover:text-ink'
+              className={`rounded border py-2 text-sm font-semibold transition-colors ${
+                buying
+                  ? 'border-pos-solid bg-pos-muted text-pos'
+                  : 'border-raised-3 text-ink-3 hover:border-ink-3 hover:text-ink'
               }`}
             >
-              Buy / Long
+              Buy
             </button>
             <button
               onClick={() => setSide('sell')}
-              className={`rounded py-2 text-sm font-semibold transition-colors ${
-                side === 'sell'
-                  ? 'bg-neg-solid text-white'
-                  : 'bg-raised-2 text-ink-2 hover:bg-raised-3 hover:text-ink'
+              className={`rounded border py-2 text-sm font-semibold transition-colors ${
+                !buying
+                  ? 'border-neg-solid bg-neg-muted text-neg'
+                  : 'border-raised-3 text-ink-3 hover:border-ink-3 hover:text-ink'
               }`}
             >
-              Sell / Short
+              Sell
             </button>
           </div>
 
-          <div className="flex gap-1 rounded bg-sub p-0.5">
-            {(['market', 'limit'] as const).map((t) => (
-              <button
-                key={t}
-                onClick={() => setOrderType(t)}
-                className={`flex-1 rounded py-1 text-xs font-medium capitalize transition-colors ${
-                  orderType === t ? 'bg-raised-3 text-ink' : 'text-ink-3 hover:text-ink'
-                }`}
-              >
-                {t}
-              </button>
-            ))}
+          {/* Where Delta's Limit / Market / Stop Limit tabs sit. One order type
+              needs no tabs, but it should still say which one it is. */}
+          <div className="flex items-baseline justify-between border-b border-line pb-2">
+            <span className="text-[12px] font-semibold text-ink">Market</span>
+            <span className="text-[10px] text-ink-4">
+              Crosses the {buying ? 'ask' : 'bid'} immediately
+            </span>
           </div>
 
-          {orderType === 'limit' && (
-            <Field label="Limit price" hint={`Tick ${product.tick_size}`}>
+          <div>
+            <div className="flex items-stretch overflow-hidden rounded border border-raised-3 focus-within:border-ink-3">
               <input
                 type="number"
-                step={product.tick_size}
-                value={limitText}
-                onChange={(e) => setLimitText(e.target.value)}
-                className="num w-full rounded border border-raised-3 bg-surface px-2 py-1.5 text-right text-sm text-ink focus:border-ink-3 focus:outline-none"
+                min={1}
+                step={1}
+                value={qtyText}
+                onChange={(e) => setQtyText(e.target.value)}
+                onFocus={(e) => e.target.select()}
+                autoFocus
+                placeholder="Enter Quantity"
+                aria-label="Quantity in lots"
+                className="num min-w-0 flex-1 bg-surface px-2 py-1.5 text-right text-sm text-ink focus:outline-none"
               />
-            </Field>
-          )}
+              <span className="flex items-center border-l border-raised-3 bg-raised-2 px-2 text-[11px] font-semibold tracking-wider text-ink-2 uppercase">
+                Lots
+              </span>
+            </div>
 
-          <Field label="Quantity" hint="lots">
-            <input
-              type="number"
-              min={1}
-              step={1}
-              value={qtyText}
-              onChange={(e) => setQtyText(e.target.value)}
-              onFocus={(e) => e.target.select()}
-              autoFocus
-              className="num w-full rounded border border-raised-3 bg-surface px-2 py-1.5 text-right text-sm text-ink focus:border-ink-3 focus:outline-none"
-            />
-          </Field>
+            <div className="mt-1.5 flex gap-1">
+              {PCTS.map((p) => (
+                <button
+                  key={p}
+                  onClick={() => setPct(p)}
+                  title={
+                    reduces
+                      ? `${p}% of the ${Math.abs(netQty)} lots held`
+                      : `${p}% of what the balance can margin`
+                  }
+                  className="num flex-1 rounded bg-sub py-1 text-[11px] text-ink-3 hover:bg-raised-2 hover:text-ink"
+                >
+                  {p}%
+                </button>
+              ))}
+            </div>
 
-          <div className="flex gap-1.5">
-            {QTY_PRESETS.map((n) => (
-              <button
-                key={n}
-                onClick={() => setQtyText(String(n))}
-                className="num flex-1 rounded border border-raised-3 py-1 text-[12px] text-ink-2 hover:border-ink-3 hover:text-ink"
-              >
-                {n}
-              </button>
-            ))}
-            {netQty !== 0 && (
-              <button
-                onClick={() => {
-                  setQtyText(String(Math.abs(netQty)))
-                  setSide(netQty > 0 ? 'sell' : 'buy')
-                }}
-                className="flex-1 rounded border border-brand-text py-1 text-[12px] text-brand-text hover:border-brand"
-                title={`Flatten ${Math.abs(netQty)} lots`}
-              >
-                Close
-              </button>
-            )}
+            <div className="mt-1.5 flex items-baseline justify-between text-[10px] text-ink-4">
+              <span className="num">
+                ≈ {(qty > 0 ? qty * lotSize : 0).toLocaleString('en-US', {
+                  minimumFractionDigits: 3,
+                  maximumFractionDigits: 3,
+                })}{' '}
+                {UNDERLYING}
+              </span>
+              <span className="num">
+                1 Lot = {lotSize} {UNDERLYING}
+              </span>
+            </div>
           </div>
 
           <dl className="space-y-1 rounded bg-sub p-2.5 text-[12px]">
-            <Row label={orderType === 'market' ? 'Est. fill' : 'Fills at'}>
+            <Row label="Est. fill">
               <span className="num text-ink">
-                {preview.fillPrice !== null ? price(preview.fillPrice) : 'Resting'}
+                {preview.fillPrice !== null ? price(preview.fillPrice) : '—'}
               </span>
             </Row>
             <Row label="Premium">
@@ -261,12 +288,13 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
             <Row label="Est. fee">
               <span className="num text-ink-2">{usd(preview.fee, 4)}</span>
             </Row>
-            <Row label={reduces ? 'Margin released' : 'Margin required'}>
+            {/* Delta's wording, so the two read the same side by side. */}
+            <Row label={reduces ? 'Funds released' : 'Funds req.'}>
               <span className="num text-ink">
                 {reduces ? '—' : usd(preview.marginRequired, 4)}
               </span>
             </Row>
-            <Row label="Available">
+            <Row label="Available Margin">
               <span className="num text-ink-2">{usd(available)}</span>
             </Row>
             {netQty !== 0 && (
@@ -278,6 +306,18 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
               </Row>
             )}
           </dl>
+
+          {netQty !== 0 && (
+            <button
+              onClick={() => {
+                setQtyText(String(Math.abs(netQty)))
+                setSide(netQty > 0 ? 'sell' : 'buy')
+              }}
+              className="w-full rounded border border-brand-text py-1.5 text-[12px] text-brand-text hover:bg-brand-muted"
+            >
+              Close {Math.abs(netQty)} lots
+            </button>
+          )}
 
           {preview.warning && !preview.error && (
             <p className="rounded bg-brand-muted px-2 py-1.5 text-[12px] text-brand-text">
@@ -293,17 +333,11 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
           <button
             onClick={submit}
             disabled={!canSubmit}
-            className={`w-full rounded py-2.5 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-              side === 'buy'
-                ? 'bg-pos-solid text-white hover:bg-pos-hover'
-                : 'bg-neg-solid text-white hover:bg-neg-hover'
+            className={`w-full rounded py-2.5 text-sm font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+              buying ? 'bg-pos-solid hover:bg-pos-hover' : 'bg-neg-solid hover:bg-neg-hover'
             }`}
           >
-            {submitting
-              ? 'Placing…'
-              : `${side === 'buy' ? 'Buy' : 'Sell'} ${qty > 0 ? qty : ''} ${
-                  orderType === 'limit' && preview.fillPrice === null ? '(rest)' : ''
-                }`.trim()}
+            {submitting ? 'Placing…' : buying ? 'Buy' : 'Sell'}
           </button>
 
           <p className="text-center text-[10px] text-ink-4">
@@ -312,26 +346,6 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
         </div>
       </div>
     </div>
-  )
-}
-
-function Field({
-  label,
-  hint,
-  children,
-}: {
-  label: string
-  hint?: string
-  children: React.ReactNode
-}) {
-  return (
-    <label className="block">
-      <div className="mb-1 flex items-baseline justify-between">
-        <span className="text-[12px] font-medium text-ink-2">{label}</span>
-        {hint && <span className="text-[10px] text-ink-4">{hint}</span>}
-      </div>
-      {children}
-    </label>
   )
 }
 
