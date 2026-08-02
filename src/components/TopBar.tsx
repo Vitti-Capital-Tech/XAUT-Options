@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Account } from '../hooks/useAccounts'
 import type { AccountSummary } from '../engine/paper'
+import { market, useMarketTick } from '../lib/marketStore'
 import { pnlClass, signedUsd, usd } from '../lib/format'
 import { supabase } from '../lib/supabase'
 import { Logo } from './Logo'
@@ -31,6 +32,12 @@ export function TopBar({
   onOpenAdmin,
   adminKeyword,
 }: Props) {
+  // Subscribed in its own right, not merely repainted by the summary prop:
+  // setStatus flushes the moment the socket drops, and that is precisely when
+  // no ticks are arriving to repaint us. A stale 'Live' is worse than no badge.
+  useMarketTick()
+  const status = market.status
+
   const [menuOpen, setMenuOpen] = useState(false)
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
@@ -110,6 +117,27 @@ export function TopBar({
           value={usd(summary.available)}
           className={summary.available < 0 ? 'text-neg' : undefined}
         />
+      </div>
+
+      {/* Feed health belongs with the session chrome, beside the account it is
+          a property of the connection rather than of the branding or the money.
+          Dead feeds pulse, because a still red dot is easy to read past. */}
+      <div
+        className="flex items-center gap-1.5 rounded border border-raised-3 px-2 py-1"
+        title={`Market data: ${status}`}
+      >
+        <span
+          className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+            status === 'live'
+              ? 'bg-pos-solid'
+              : status === 'connecting'
+                ? 'bg-brand'
+                : 'animate-pulse bg-neg-solid'
+          }`}
+        />
+        <span className="text-[10px] font-semibold tracking-wider text-ink-3 uppercase">
+          {status}
+        </span>
       </div>
 
       <div className="relative" ref={menuRef}>
