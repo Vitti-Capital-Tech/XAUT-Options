@@ -144,7 +144,7 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
       onClick={onClose}
     >
       <div
-        className="w-full max-w-sm overflow-hidden rounded-lg border border-raised-3 bg-raised shadow-delta-lg"
+        className="w-full max-w-sm overflow-hidden rounded-lg border border-raised-3 bg-surface shadow-delta-lg"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between border-b border-line px-4 py-3">
@@ -177,13 +177,13 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
         {/* Delta's ticket has no quote strip because their chain is beside it.
             Ours covers the chain, so it earns its place — quietly. */}
         <div className="flex items-baseline gap-4 border-b border-line px-4 py-2 text-[11px]">
-          <span className="text-ink-4">
+          <span className="text-ink-3">
             Bid <span className="num text-pos">{price(bid)}</span>
           </span>
-          <span className="text-ink-4">
+          <span className="text-ink-3">
             Ask <span className="num text-neg">{price(ask)}</span>
           </span>
-          <span className="ml-auto text-ink-4">
+          <span className="ml-auto text-ink-3">
             Spot <span className="num text-brand-text">{price(spot)}</span>
           </span>
         </div>
@@ -220,13 +220,13 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
             <span className="border-b-2 border-brand-text pb-1 text-[13px] font-bold text-ink">
               Market
             </span>
-            <span className="text-[10px] text-ink-4">
+            <span className="text-[10px] text-ink-3">
               crosses the {buying ? 'ask' : 'bid'}
             </span>
           </div>
 
           <div>
-            <div className="flex items-center rounded border border-raised-3 bg-surface focus-within:border-ink-3">
+            <div className="flex items-center rounded border border-raised-3 bg-raised focus-within:border-ink-3">
               <input
                 type="number"
                 min={1}
@@ -237,7 +237,7 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
                 autoFocus
                 placeholder="Enter Quantity"
                 aria-label="Quantity in lots"
-                className="num min-w-0 flex-1 bg-transparent px-2.5 py-2 text-sm text-ink placeholder:text-ink-4 focus:outline-none"
+                className="num min-w-0 flex-1 bg-transparent px-2.5 py-2 text-sm text-ink placeholder:text-ink-3 focus:outline-none"
               />
               <span className="pr-2.5 text-[11px] font-medium tracking-wider text-ink-3 uppercase">
                 Lots
@@ -246,7 +246,7 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
 
             {/* One divided strip, as theirs is — five bordered boxes read as
                 five controls, and this is one control with five notches. */}
-            <div className="mt-1.5 flex overflow-hidden rounded bg-sub">
+            <div className="mt-1.5 flex overflow-hidden rounded bg-raised">
               {PCTS.map((p, i) => (
                 <button
                   key={p}
@@ -265,7 +265,7 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
               ))}
             </div>
 
-            <div className="mt-1.5 flex items-baseline justify-between text-[10px] text-ink-4">
+            <div className="mt-1.5 flex items-baseline justify-between text-[10px] text-ink-3">
               <span className="num">
                 ≈{' '}
                 {(qty > 0 ? qty * lotSize : 0).toLocaleString('en-US', {
@@ -306,7 +306,7 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
               onClick={() => setDetails((v) => !v)}
               className="flex items-center gap-1 text-[11px] text-ink-3 hover:text-ink"
             >
-              <span className="border-b border-dashed border-ink-4">Order details</span>
+              <span className="border-b border-dashed border-ink-3">Order details</span>
               <span className="text-[8px]">{details ? '▲' : '▼'}</span>
             </button>
 
@@ -363,7 +363,7 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
             {submitting ? 'Placing…' : buying ? 'Buy' : 'Sell'}
           </button>
 
-          <p className="text-center text-[10px] text-ink-4">
+          <p className="text-center text-[10px] text-ink-3">
             Paper trade — no real order is sent to Delta Exchange
           </p>
         </div>
@@ -385,9 +385,11 @@ function Row({
 }) {
   return (
     <div className="flex items-baseline justify-between text-[12px]">
-      <span className="text-ink-3">
+      {/* Delta reads these labels in secondary ink, not tertiary — they are
+          content, and the figure beside them is what should recede less. */}
+      <span className="text-ink-2">
         {hint ? (
-          <span className="border-b border-dashed border-ink-4" title={hint}>
+          <span className="border-b border-dashed border-ink-3" title={hint}>
             {label}
           </span>
         ) : (
