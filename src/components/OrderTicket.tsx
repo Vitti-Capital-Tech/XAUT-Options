@@ -243,7 +243,7 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
                 onFocus={(e) => e.target.select()}
                 autoFocus
                 placeholder="Enter Quantity"
-                aria-label="Quantity in lots"
+                aria-label="Quantity"
                 className="num step-own min-w-0 flex-1 bg-transparent px-2.5 py-2 text-sm text-ink placeholder:text-ink-3 focus:outline-none"
               />
               <div className="flex flex-col justify-center">
@@ -264,8 +264,11 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
                   ▼
                 </button>
               </div>
+              {/* Delta calls this quantity, and keeps 'lot' for the conversion
+                  line underneath. Same number either way — one lot is one
+                  contract — so the field takes their word for it. */}
               <span className="pr-2.5 pl-2 text-[11px] font-medium tracking-wider text-ink-3 uppercase">
-                Lots
+                Qty
               </span>
             </div>
 
@@ -278,7 +281,7 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
                   onClick={() => setPct(p)}
                   title={
                     reduces
-                      ? `${p}% of the ${Math.abs(netQty)} lots held`
+                      ? `${p}% of the ${Math.abs(netQty)} held`
                       : `${p}% of what the balance can margin`
                   }
                   className={`num flex-1 py-1 text-[11px] text-ink-3 hover:bg-raised-2 hover:text-ink ${
@@ -363,7 +366,7 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
               }}
               className="w-full rounded border border-brand-text py-1.5 text-[12px] text-brand-text hover:bg-brand-muted"
             >
-              Close {Math.abs(netQty)} lots
+              Close position
             </button>
           )}
 
