@@ -293,17 +293,23 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
               ))}
             </div>
 
+            {/* Two different facts — what this order comes to, and what one of
+                them is worth. At a quantity of one they print the same number,
+                so each has to say which it is. */}
             <div className="mt-1.5 flex items-baseline justify-between text-[10px] text-ink-3">
-              <span className="num">
-                ≈{' '}
-                {(qty > 0 ? qty * lotSize : 0).toLocaleString('en-US', {
-                  minimumFractionDigits: 3,
-                  maximumFractionDigits: 3,
-                })}{' '}
-                {UNDERLYING}
+              <span>
+                Size{' '}
+                <span className="num">
+                  ≈{' '}
+                  {(qty > 0 ? qty * lotSize : 0).toLocaleString('en-US', {
+                    minimumFractionDigits: 3,
+                    maximumFractionDigits: 3,
+                  })}{' '}
+                  {UNDERLYING}
+                </span>
               </span>
               <span className="num">
-                1 Lot = {lotSize} {UNDERLYING}
+                1 QTY = {lotSize} {UNDERLYING}
               </span>
             </div>
           </div>
