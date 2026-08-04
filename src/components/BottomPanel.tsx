@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { Product } from '../lib/delta'
+import type { Product, Ticker } from '../lib/delta'
 import { formatExpiry } from '../lib/delta'
 import { market, useMarketTick } from '../lib/marketStore'
 import { valuePosition, type OrderRow, type PositionRow } from '../engine/paper'
@@ -173,8 +173,27 @@ function PositionsTable({
 
   if (positions.length === 0) return <Empty>No open positions. Click a bid or ask on the chain to trade.</Empty>
 
-  // No total row: the header carries unrealized P&L for the whole account, and
-  // one number in two places is one number that can disagree with itself.
+  // Portfolio totals. Only the greeks and the money add up across rows — an
+  // average entry or a percentage would not, so those columns stay blank in the
+  // footer rather than carrying a number that means nothing.
+  const totals = positions.reduce(
+    (acc, pos) => {
+      const t = market.get(pos.symbol)
+      const v = valuePosition(pos, t, spot)
+      const g = positionGreeks(pos, t)
+      return {
+        value: acc.value + (v.currentValue ?? 0),
+        unrealized: acc.unrealized + (v.unrealized ?? 0),
+        margin: acc.margin + v.marginBlocked,
+        delta: acc.delta + (g.delta ?? 0),
+        gamma: acc.gamma + (g.gamma ?? 0),
+        vega: acc.vega + (g.vega ?? 0),
+        theta: acc.theta + (g.theta ?? 0),
+      }
+    },
+    { value: 0, unrealized: 0, margin: 0, delta: 0, gamma: 0, vega: 0, theta: 0 },
+  )
+
   return (
     <table className="w-full text-[12px]">
       <thead>
@@ -188,6 +207,9 @@ function PositionsTable({
           <Th>%</Th>
           <Th>Margin</Th>
           <Th>Delta</Th>
+          <Th>Gamma</Th>
+          <Th>Vega</Th>
+          <Th>Theta</Th>
           <Th align="right">Action</Th>
         </tr>
       </thead>
@@ -197,10 +219,7 @@ function PositionsTable({
           const v = valuePosition(pos, ticker, spot)
           const product = productsBySymbol.get(pos.symbol)
           const isLong = pos.net_qty > 0
-          // Position delta: per-contract greek scaled by signed lots and contract size.
-          const posDelta = ticker?.greeks?.delta
-            ? Number(ticker.greeks.delta) * pos.net_qty * Number(pos.contract_value)
-            : null
+          const g = positionGreeks(pos, ticker)
 
           return (
             <tr key={pos.id} className="border-b border-line hover:bg-raised">
@@ -231,7 +250,10 @@ function PositionsTable({
               <Td className={`font-semibold ${pnlClass(v.unrealized)}`}>{signedUsd(v.unrealized, 4)}</Td>
               <Td className={pnlClass(v.unrealized)}>{pct(v.unrealizedPct)}</Td>
               <Td className="text-ink-2">{usd(v.marginBlocked, 4)}</Td>
-              <Td className="text-ink-2">{posDelta === null ? '—' : posDelta.toFixed(4)}</Td>
+              <Td className="text-ink-2">{greekCell(g.delta, 4)}</Td>
+              <Td className="text-ink-2">{greekCell(g.gamma, 6)}</Td>
+              <Td className="text-ink-2">{greekCell(g.vega, 4)}</Td>
+              <Td className="text-ink-2">{greekCell(g.theta, 4)}</Td>
               <Td align="right">
                 <button
                   disabled={!product || closing === pos.id}
@@ -254,9 +276,53 @@ function PositionsTable({
           )
         })}
       </tbody>
+
+      <tfoot>
+        <tr className="border-t border-line bg-raised">
+          <Td align="left" className="text-[10px] font-semibold tracking-wider text-ink-3 uppercase">
+            Total · {positions.length}
+          </Td>
+          {/* Size, entry, mark and the percentage do not sum to anything. */}
+          <Td colSpan={3} />
+          <Td className="text-ink-2">{usd(totals.value, 4)}</Td>
+          <Td className={`font-semibold ${pnlClass(totals.unrealized)}`}>
+            {signedUsd(totals.unrealized, 4)}
+          </Td>
+          <Td />
+          <Td className="text-ink-2">{usd(totals.margin, 4)}</Td>
+          <Td className="font-semibold text-ink">{totals.delta.toFixed(4)}</Td>
+          <Td className="font-semibold text-ink">{totals.gamma.toFixed(6)}</Td>
+          <Td className="font-semibold text-ink">{totals.vega.toFixed(4)}</Td>
+          <Td className="font-semibold text-ink">{totals.theta.toFixed(4)}</Td>
+          <Td />
+        </tr>
+      </tfoot>
     </table>
   )
 }
+
+/**
+ * A position's greeks: the per-contract figure scaled by signed size and
+ * contract value, so a short reads negative and the column sums to the book's
+ * exposure. Null where the venue has published no greek for that leg.
+ */
+function positionGreeks(pos: PositionRow, ticker: Ticker | undefined) {
+  const cv = Number(pos.contract_value)
+  const scale = (v: string | null | undefined) => {
+    if (v === null || v === undefined || v === '') return null
+    const n = Number(v)
+    return Number.isFinite(n) ? n * pos.net_qty * cv : null
+  }
+  const g = ticker?.greeks
+  return {
+    delta: scale(g?.delta),
+    gamma: scale(g?.gamma),
+    vega: scale(g?.vega),
+    theta: scale(g?.theta),
+  }
+}
+
+const greekCell = (v: number | null, dp: number) => (v === null ? '—' : v.toFixed(dp))
 
 // ---------------------------------------------------------------------------
 
