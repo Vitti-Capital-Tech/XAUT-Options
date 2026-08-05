@@ -735,9 +735,9 @@ function TpSlBlock({
   dist: number | null
   onPct: (pct: number) => void
 }) {
-  // The percent shown in the editable box — 0 when unset, the distance from the
-  // index otherwise, trailing zeros trimmed.
-  const pctValue = parseFloat((dist ?? 0).toFixed(2))
+  // The percent box is empty until a level is set, then shows its distance from
+  // the index with trailing zeros trimmed. Empty falls back to the 0% placeholder.
+  const pctValue = dist === null ? '' : parseFloat(dist.toFixed(2))
   return (
     <div>
       <div className="mb-1.5 flex items-center justify-between">
@@ -758,7 +758,7 @@ function TpSlBlock({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder="Trigger Price USD"
-          className="num w-full bg-raised px-2.5 py-2 text-right text-sm text-ink placeholder:text-ink-4 focus:outline-none"
+          className="num step-own w-full bg-raised px-2.5 py-2 text-right text-sm text-ink placeholder:text-ink-4 focus:outline-none"
         />
         <div className="flex border-t border-raised-3 text-[11px]">
           {[5, 10, 15, 20].map((p) => (
@@ -774,13 +774,15 @@ function TpSlBlock({
           <div className="flex w-16 items-center justify-center gap-0.5 bg-raised-2 text-ink">
             <input
               type="number"
-              value={Number.isFinite(pctValue) ? pctValue : 0}
+              value={pctValue}
               onChange={(e) => {
+                if (e.target.value === '') return
                 const n = Number(e.target.value)
                 if (Number.isFinite(n)) onPct(n)
               }}
+              placeholder="0"
               aria-label={`${title} distance percent`}
-              className="num w-9 bg-transparent text-right focus:outline-none"
+              className="num step-own w-9 bg-transparent text-right placeholder:text-ink-4 focus:outline-none"
             />
             <span className="text-ink-3">%</span>
           </div>
