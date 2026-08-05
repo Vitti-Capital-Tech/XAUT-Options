@@ -623,8 +623,11 @@ function TpSlDialog({
   onClose: () => void
   onSave: (positionId: string, takeProfit: number | null, stopLoss: number | null) => Promise<void>
 }) {
-  const [tp, setTp] = useState(position.take_profit ?? '')
-  const [sl, setSl] = useState(position.stop_loss ?? '')
+  // Coerced to string: a numeric column can arrive as a number, and the render
+  // path calls .trim() on these — an uncoerced number blanked the dialog the
+  // moment it opened on an already-set level.
+  const [tp, setTp] = useState(position.take_profit != null ? String(position.take_profit) : '')
+  const [sl, setSl] = useState(position.stop_loss != null ? String(position.stop_loss) : '')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -634,8 +637,9 @@ function TpSlDialog({
   // A level's distance from the index, as a signed percent, so the input can
   // show how far off it sits the way Delta's little box does.
   const distPct = (v: string) => {
+    if (!spot || String(v).trim() === '') return null
     const n = Number(v)
-    if (!spot || v.trim() === '' || !Number.isFinite(n)) return null
+    if (!Number.isFinite(n)) return null
     return Math.abs((n - spot) / spot) * 100
   }
 
@@ -647,8 +651,8 @@ function TpSlDialog({
   }
 
   const save = async () => {
-    const tpNum = tp.trim() === '' ? null : Number(tp)
-    const slNum = sl.trim() === '' ? null : Number(sl)
+    const tpNum = String(tp).trim() === '' ? null : Number(tp)
+    const slNum = String(sl).trim() === '' ? null : Number(sl)
     if (tpNum !== null && !(tpNum > 0)) return setError('Take-profit must be a positive price')
     if (slNum !== null && !(slNum > 0)) return setError('Stop-loss must be a positive price')
 
