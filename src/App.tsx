@@ -301,8 +301,10 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
 // ---------------------------------------------------------------------------
 
 function Splash({ children }: { children: React.ReactNode }) {
+  // min-h-screen, not h-full: #root is min-height now, so h-full has no definite
+  // height to fill and the splash would collapse to the top of the page.
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-ink-3">
+    <div className="flex min-h-screen flex-col items-center justify-center gap-2 text-sm text-ink-3">
       {children}
     </div>
   )
@@ -310,7 +312,7 @@ function Splash({ children }: { children: React.ReactNode }) {
 
 function ConfigNotice() {
   return (
-    <div className="flex h-full items-center justify-center p-6">
+    <div className="flex min-h-screen items-center justify-center p-6">
       <div className="max-w-lg rounded-lg border border-brand-text bg-brand/5 p-5 text-sm">
         <h1 className="font-semibold text-brand-text">Supabase is not configured</h1>
         <p className="mt-2 text-ink-2">
