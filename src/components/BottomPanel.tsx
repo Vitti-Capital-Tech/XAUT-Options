@@ -468,6 +468,7 @@ function PositionsTable({
                   takeProfit={pos.take_profit}
                   stopLoss={pos.stop_loss}
                   onEdit={() => setEditing(pos)}
+                  onClear={() => void onSetTpSl(pos.id, null, null)}
                 />
               </Td>
               {/* Delta shows no margin against a long, because buying one debits
@@ -514,44 +515,94 @@ function PositionsTable({
 }
 
 /**
- * The TP/SL cell — two small lines, each a level or a dash, with a pencil to
- * arm them. Delta shows the same TP:/SL: stack; the pencil opens the editor.
+ * The TP/SL cell, as Delta lays it out: the two levels stacked as TP (USD)/SL,
+ * with a pencil to edit and a trash to clear both at once. The trash is dead
+ * while nothing is armed, so it never promises to remove what is not there.
  */
 function TpSlCell({
   takeProfit,
   stopLoss,
   onEdit,
+  onClear,
 }: {
   takeProfit: string | null
   stopLoss: string | null
   onEdit: () => void
+  onClear: () => void
 }) {
-  const line = (label: string, v: string | null, tone: string) => (
-    <div className="flex items-baseline justify-center gap-1 text-[10px] leading-tight">
-      <span className="text-ink-4">{label}</span>
-      <span className={v ? tone : 'text-ink-4'}>{v ? price(v) : '—'}</span>
+  const armed = Boolean(takeProfit || stopLoss)
+  return (
+    <div className="flex items-center justify-center gap-2">
+      <div className="text-left text-[10px] leading-tight whitespace-nowrap">
+        <div>
+          <span className="text-ink-4">TP (USD) : </span>
+          <span className={takeProfit ? 'text-pos' : 'text-ink-4'}>
+            {takeProfit ? price(takeProfit) : '-'}
+          </span>
+        </div>
+        <div>
+          <span className="text-ink-4">SL : </span>
+          <span className={stopLoss ? 'text-neg' : 'text-ink-4'}>
+            {stopLoss ? price(stopLoss) : '-'}
+          </span>
+        </div>
+      </div>
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={onEdit}
+          title="Edit take-profit / stop-loss"
+          className="rounded border border-raised-3 p-1 text-brand-text hover:border-brand-text"
+        >
+          <PencilIcon />
+        </button>
+        <button
+          type="button"
+          onClick={onClear}
+          disabled={!armed}
+          title="Clear take-profit / stop-loss"
+          className="rounded border border-raised-3 p-1 text-brand-text hover:border-brand-text disabled:opacity-30 disabled:hover:border-raised-3"
+        >
+          <TrashIcon />
+        </button>
+      </div>
     </div>
   )
+}
+
+function PencilIcon() {
   return (
-    <button
-      type="button"
-      onClick={onEdit}
-      title="Set take-profit / stop-loss"
-      className="mx-auto flex items-center gap-1.5 rounded px-1.5 py-0.5 hover:bg-raised-2"
-    >
-      <div>
-        {line('TP', takeProfit, 'text-pos')}
-        {line('SL', stopLoss, 'text-neg')}
-      </div>
-      <span className="text-[10px] text-ink-4">✎</span>
-    </button>
+    <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path
+        d="M11.5 2.5l2 2L5 13l-2.5.5L3 11l8.5-8.5z"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+function TrashIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path
+        d="M2.5 4h11M6 4V2.5h4V4M4 4l.5 9.5h7L12 4M6.5 6.5v5M9.5 6.5v5"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   )
 }
 
 /**
- * Arms the index-price levels. The trigger direction is the position's, and the
- * dialog says which way each fires so a level set the wrong side is obvious
- * before it is saved rather than after it never triggers.
+ * Delta's "Edit Bracket Order": entry and the index it triggers against up top,
+ * then a take-profit and a stop-loss block, each with a Market tag and a row of
+ * percentage presets. The presets step the trigger away from the index in the
+ * direction that side fires — profit for TP, loss for SL — so tapping 10% always
+ * arms a sane level whichever way the position leans.
  */
 function TpSlDialog({
   position,
@@ -571,6 +622,21 @@ function TpSlDialog({
 
   const isLong = position.net_qty > 0
   const bullish = (position.contract_type === 'call_options') === isLong
+
+  // A level's distance from the index, as a signed percent, so the input can
+  // show how far off it sits the way Delta's little box does.
+  const distPct = (v: string) => {
+    const n = Number(v)
+    if (!spot || v.trim() === '' || !Number.isFinite(n)) return null
+    return Math.abs((n - spot) / spot) * 100
+  }
+
+  // Step the index by a percent in a side's firing direction.
+  const stepFrom = (pct: number, side: 'tp' | 'sl') => {
+    const up = side === 'tp' ? bullish : !bullish
+    const level = spot * (1 + (up ? pct : -pct) / 100)
+    return level.toFixed(2)
+  }
 
   const save = async () => {
     const tpNum = tp.trim() === '' ? null : Number(tp)
@@ -595,69 +661,129 @@ function TpSlDialog({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-sm rounded-lg border border-raised-3 bg-surface p-4 shadow-delta-lg"
+        className="w-full max-w-sm rounded-lg border border-raised-3 bg-surface shadow-delta-lg"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-1 text-sm font-semibold text-ink">Take Profit / Stop Loss</div>
-        <div className="num mb-3 text-[11px] text-ink-3">
-          {position.symbol} · index {price(spot)}
+        <div className="flex items-center justify-between border-b border-line px-4 py-3">
+          <span className="num text-sm font-semibold text-ink">
+            Edit Bracket Order: {position.symbol}
+          </span>
+          <button
+            onClick={onClose}
+            className="rounded p-1 text-ink-3 hover:bg-raised-2 hover:text-ink"
+            aria-label="Close"
+          >
+            ✕
+          </button>
         </div>
 
-        <label className="mb-3 block">
-          <div className="mb-1 flex items-baseline justify-between">
-            <span className="text-[12px] font-medium text-pos">Take Profit</span>
-            <span className="text-[10px] text-ink-4">
-              fires when index {bullish ? 'rises to' : 'falls to'}
-            </span>
+        <div className="space-y-4 p-4">
+          <div className="flex items-baseline justify-between text-[12px]">
+            <span className="text-ink-3">Entry Price</span>
+            <span className="num text-ink">{price(position.avg_entry_price)}</span>
           </div>
-          <input
-            type="number"
+          <div className="flex items-baseline justify-between text-[12px]">
+            <span className="text-ink-3">Trigger Index</span>
+            <span className="num text-ink">Index {price(spot)}</span>
+          </div>
+
+          <TpSlBlock
+            title="Take Profit"
+            titleClass="text-pos"
             value={tp}
-            onChange={(e) => setTp(e.target.value)}
-            placeholder="none"
-            className="num w-full rounded border border-raised-3 bg-raised px-2 py-1.5 text-right text-sm text-ink focus:border-ink-3 focus:outline-none"
+            onChange={setTp}
+            dist={distPct(tp)}
+            onPct={(p) => setTp(stepFrom(p, 'tp'))}
+            hint={`fires when index ${bullish ? 'rises to' : 'falls to'} it`}
           />
-        </label>
 
-        <label className="block">
-          <div className="mb-1 flex items-baseline justify-between">
-            <span className="text-[12px] font-medium text-neg">Stop Loss</span>
-            <span className="text-[10px] text-ink-4">
-              fires when index {bullish ? 'falls to' : 'rises to'}
-            </span>
-          </div>
-          <input
-            type="number"
+          <div className="border-t border-dashed border-line" />
+
+          <TpSlBlock
+            title="Stop Loss"
+            titleClass="text-neg"
             value={sl}
-            onChange={(e) => setSl(e.target.value)}
-            placeholder="none"
-            className="num w-full rounded border border-raised-3 bg-raised px-2 py-1.5 text-right text-sm text-ink focus:border-ink-3 focus:outline-none"
+            onChange={setSl}
+            dist={distPct(sl)}
+            onPct={(p) => setSl(stepFrom(p, 'sl'))}
+            hint={`fires when index ${bullish ? 'falls to' : 'rises to'} it`}
           />
-        </label>
 
-        <p className="mt-3 text-[10px] text-ink-4">
-          Watched server-side and closed at market when hit — it fires whether or not this tab is
-          open. Leave a field blank to clear that side.
-        </p>
+          <p className="text-[10px] text-ink-4">
+            Watched server-side and closed at market when hit — it fires whether or not this tab is
+            open. Clear a field to remove that side.
+          </p>
 
-        {error && <p className="mt-2 text-[11px] text-neg">{error}</p>}
+          {error && <p className="text-[11px] text-neg">{error}</p>}
 
-        <div className="mt-3 flex gap-2">
           <button
             onClick={save}
             disabled={busy}
-            className="flex-1 rounded bg-brand py-2 text-sm font-semibold text-white hover:bg-brand-hover disabled:opacity-40"
+            className="w-full rounded bg-brand py-2.5 text-sm font-semibold text-white hover:bg-brand-hover disabled:opacity-40"
           >
-            {busy ? 'Saving…' : 'Save'}
-          </button>
-          <button
-            onClick={onClose}
-            className="rounded border border-raised-3 px-4 py-2 text-sm text-ink-2 hover:border-ink-3"
-          >
-            Cancel
+            {busy ? 'Saving…' : 'Update'}
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+/** One side of the bracket editor: title + Market tag, the trigger input with
+ *  its distance readout, and the percentage presets beneath. */
+function TpSlBlock({
+  title,
+  titleClass,
+  value,
+  onChange,
+  dist,
+  onPct,
+  hint,
+}: {
+  title: string
+  titleClass: string
+  value: string
+  onChange: (v: string) => void
+  dist: number | null
+  onPct: (pct: number) => void
+  hint: string
+}) {
+  return (
+    <div>
+      <div className="mb-1.5 flex items-center justify-between">
+        <span className={`text-[13px] font-bold ${titleClass}`}>{title}</span>
+        <span className="rounded border border-brand-text/50 px-2 py-0.5 text-[10px] font-semibold text-brand-text">
+          Market
+        </span>
+      </div>
+
+      <div className="flex items-stretch overflow-hidden rounded border border-raised-3 focus-within:border-ink-3">
+        <input
+          type="number"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="Trigger Price USD"
+          className="num min-w-0 flex-1 bg-raised px-2.5 py-2 text-right text-sm text-ink placeholder:text-ink-4 focus:outline-none"
+        />
+        <span className="num flex w-14 items-center justify-center border-l border-raised-3 bg-raised-2 text-[11px] text-ink-3">
+          {dist === null ? '—' : `${dist.toFixed(2)}%`}
+        </span>
+      </div>
+
+      <div className="mt-1.5 flex gap-1">
+        {[5, 10, 15, 20].map((p) => (
+          <button
+            key={p}
+            type="button"
+            onClick={() => onPct(p)}
+            className="num flex-1 rounded bg-sub py-1 text-[11px] text-ink-3 hover:bg-raised-2 hover:text-ink"
+          >
+            {p}%
+          </button>
+        ))}
+      </div>
+
+      <div className="mt-1 text-[10px] text-ink-4">{hint}</div>
     </div>
   )
 }
