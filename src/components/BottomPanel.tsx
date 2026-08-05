@@ -110,21 +110,24 @@ const WALL = 'border-x border-line shadow-[-7px_0_16px_-7px_#000000cc]'
  * Sticky lives on the `thead` rather than on each cell, so a table can pin more
  * than one row — the positions table pins its totals above its labels.
  */
+const alignClass = (align: 'left' | 'right' | 'center') =>
+  align === 'left' ? 'text-left' : align === 'center' ? 'text-center' : 'text-right'
+
 function Th({
   children,
   align = 'right',
   walled = false,
 }: {
   children: React.ReactNode
-  align?: 'left' | 'right'
+  align?: 'left' | 'right' | 'center'
   /** Ruled off on both sides and lifted, as the chain walls the strike column. */
   walled?: boolean
 }) {
   return (
     <th
-      className={`bg-raised px-2.5 py-1.5 text-[10px] font-semibold tracking-wider text-ink-3 uppercase ${
-        align === 'left' ? 'text-left' : 'text-right'
-      } ${walled ? WALL : ''}`}
+      className={`bg-raised px-2.5 py-1.5 text-[10px] font-semibold tracking-wider text-ink-3 uppercase ${alignClass(
+        align,
+      )} ${walled ? WALL : ''}`}
     >
       {children}
     </th>
@@ -264,7 +267,7 @@ function Td({
   walled = false,
 }: {
   children?: React.ReactNode
-  align?: 'left' | 'right'
+  align?: 'left' | 'right' | 'center'
   className?: string
   colSpan?: number
   title?: string
@@ -278,9 +281,7 @@ function Td({
     <td
       colSpan={colSpan}
       title={title}
-      className={`num px-2.5 py-1.5 ${align === 'left' ? 'text-left' : 'text-right'} ${
-        walled ? WALL : ''
-      } ${className}`}
+      className={`num px-2.5 py-1.5 ${alignClass(align)} ${walled ? WALL : ''} ${className}`}
     >
       {children}
     </td>
@@ -410,7 +411,7 @@ function PositionsTable({
           <Th>Gamma</Th>
           <Th>Vega</Th>
           <Th>Theta</Th>
-          <Th align="right" walled>Action</Th>
+          <Th align="center" walled>Action</Th>
         </tr>
       </thead>
       <tbody>
@@ -475,7 +476,7 @@ function PositionsTable({
               <Td className="text-ink-2">{greekCell(g.gamma, 6)}</Td>
               <Td className="text-ink-2">{greekCell(g.vega, 4)}</Td>
               <Td className="text-ink-2">{greekCell(g.theta, 4)}</Td>
-              <Td align="right" walled>
+              <Td align="center" walled>
                 <KillButton
                   disabled={!product || closing === pos.id}
                   busy={closing === pos.id}
@@ -561,7 +562,7 @@ function OrdersTable({
           <Th>Qty</Th>
           <Th>Limit</Th>
           <Th>Distance</Th>
-          <Th align="right" walled>Action</Th>
+          <Th align="center" walled>Action</Th>
         </tr>
       </thead>
       <tbody>
@@ -596,7 +597,7 @@ function OrdersTable({
               <Td className={gap !== null && gap <= 0 ? 'text-pos' : 'text-ink-3'}>
                 {gap === null ? '—' : gap <= 0 ? 'crossing' : price(gap)}
               </Td>
-              <Td align="right" walled>
+              <Td align="center" walled>
                 <KillButton
                   disabled={cancelling === o.id || !productsBySymbol.has(o.symbol)}
                   busy={cancelling === o.id}
