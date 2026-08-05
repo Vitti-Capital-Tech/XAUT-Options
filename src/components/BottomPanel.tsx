@@ -46,9 +46,9 @@ export function BottomPanel({
   ]
 
   return (
-    /* No h-full: the panel is as tall as whichever table is showing, and shrinks
-       only when that table would exceed the cap its parent sets. */
-    <div className="flex min-h-0 flex-col border-t border-line bg-surface">
+    /* As tall as whichever table is showing. Nothing here scrolls: the document
+       does. */
+    <div className="flex flex-col border-t border-line bg-surface">
       <div className="flex shrink-0 items-center gap-1 border-b border-line px-2">
         {tabs.map((t) => (
           <button
@@ -69,9 +69,7 @@ export function BottomPanel({
         ))}
       </div>
 
-      {/* Sizes to the table rather than filling the panel — min-h-0 so it can
-          still give way if the cap above bites. */}
-      <div className="flex min-h-0 flex-col">
+      <div className="flex flex-col">
         {tab === 'positions' && (
           <PositionsTable
             positions={positions}
@@ -197,10 +195,7 @@ function Paged<T>({
   rows: T[]
   children: (visible: T[]) => React.ReactNode
 }) {
-  // Ten rather than Delta's twenty, chosen so that a default page fits without
-  // scrolling — which is the whole point of sizing to the rows. Larger pages are
-  // there to be picked deliberately.
-  const [size, setSize] = useState(10)
+  const [size, setSize] = useState(20)
   const [page, setPage] = useState(0)
 
   const pages = Math.max(1, Math.ceil(rows.length / size))
@@ -210,12 +205,11 @@ function Paged<T>({
   const start = current * size
 
   return (
-    <div className="flex min-h-0 flex-col">
-      {/* No flex-1: the rows decide the height. overflow-auto is the escape
-          hatch for a page of a hundred, not the normal case. */}
-      <div className="no-scrollbar min-h-0 overflow-auto">
-        {children(rows.slice(start, start + size))}
-      </div>
+    <div className="flex flex-col">
+      {/* No scroll box at all: the rows decide the height and the document
+          scrolls to them, so a page of a hundred makes a long page rather than a
+          small window onto a hundred rows. */}
+      <div>{children(rows.slice(start, start + size))}</div>
 
       {/* Delta's arrangement: the size selector, then boxed arrows either side of
           the range. The range is the one bright thing here, because it is the

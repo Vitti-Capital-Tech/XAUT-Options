@@ -175,55 +175,61 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
   if (accounts.loading || expiries.length === 0) return <Splash>Loading market…</Splash>
 
   return (
-    <div className="flex h-full flex-col">
-      <TopBar
-        accounts={accounts.accounts}
-        selected={accounts.selected}
-        summary={summary}
-        email={email}
-        onSelect={accounts.setSelectedId}
-        onCreate={accounts.createAccount}
-        onSetBalance={accounts.setStartingBalance}
-        onReset={async (id) => {
-          await accounts.resetAccount(id)
-          await trading.reload()
-        }}
-        onArchive={(id) => accounts.setArchived(id, true)}
-        onOpenAdmin={() => setAdminOpen(true)}
-        adminKeyword={ADMIN_KEYWORD}
-      />
+    /* The page scrolls. The header, the expiries and the chain fill exactly one
+       screen, and the panel grows downward from there rather than taking height
+       off the chain — so a long list of positions is something you scroll to, not
+       something that squeezes the book. */
+    <div className="flex flex-col">
+      <div className="flex h-screen flex-col">
+        <TopBar
+          accounts={accounts.accounts}
+          selected={accounts.selected}
+          summary={summary}
+          email={email}
+          onSelect={accounts.setSelectedId}
+          onCreate={accounts.createAccount}
+          onSetBalance={accounts.setStartingBalance}
+          onReset={async (id) => {
+            await accounts.resetAccount(id)
+            await trading.reload()
+          }}
+          onArchive={(id) => accounts.setArchived(id, true)}
+          onOpenAdmin={() => setAdminOpen(true)}
+          adminKeyword={ADMIN_KEYWORD}
+        />
 
-      <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-line bg-surface px-2 py-1.5">
-        <span className="mr-1 shrink-0 text-[10px] tracking-wider text-ink-4 uppercase">
-          Expiry
-        </span>
-        {expiries.map((e) => (
-          <button
-            key={e.label}
-            onClick={() => setActiveExpiry(e.label)}
-            className={`shrink-0 rounded px-2.5 py-1 text-[12px] font-medium whitespace-nowrap transition-colors ${
-              e.label === activeExpiry
-                ? 'border-[0.8px] border-brand-text text-brand-text'
-                : 'text-ink-3 hover:bg-sub hover:text-ink'
-            }`}
-          >
-            {formatExpiry(e.label)}
-          </button>
-        ))}
+        <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-line bg-surface px-2 py-1.5">
+          <span className="mr-1 shrink-0 text-[10px] tracking-wider text-ink-4 uppercase">
+            Expiry
+          </span>
+          {expiries.map((e) => (
+            <button
+              key={e.label}
+              onClick={() => setActiveExpiry(e.label)}
+              className={`shrink-0 rounded px-2.5 py-1 text-[12px] font-medium whitespace-nowrap transition-colors ${
+                e.label === activeExpiry
+                  ? 'border-[0.8px] border-brand-text text-brand-text'
+                  : 'text-ink-3 hover:bg-sub hover:text-ink'
+              }`}
+            >
+              {formatExpiry(e.label)}
+            </button>
+          ))}
+        </div>
+
+        {/* Fills what the header and the expiries leave of the screen, and keeps
+            it — the panel below can no longer take height off it. */}
+        <div className="flex min-h-0 flex-1 flex-col">
+          {expiry && (
+            <OptionChain expiry={expiry} positions={trading.positions} onPick={openTicket} />
+          )}
+        </div>
       </div>
 
-      {/* The chain takes whatever the panel leaves. */}
-      <div className="flex min-h-0 flex-1 flex-col">
-        {expiry && (
-          <OptionChain expiry={expiry} positions={trading.positions} onPick={openTicket} />
-        )}
-      </div>
-
-      {/* The panel is as tall as its rows, the way Delta's is — a page of ten
-          shows ten rows, not ten rows inside a box of a fixed size. Capped so
-          that a page of a hundred cannot take the chain off the screen; past the
-          cap the rows scroll, which is the only case where they do. */}
-      <div className="flex max-h-[60vh] shrink-0 flex-col">
+      {/* As tall as its rows, the way Delta's is: a page of twenty shows twenty.
+          Uncapped, because it grows below the fold now rather than upward into
+          the chain, and the page scrolls to reach it. */}
+      <div className="flex flex-col">
         <BottomPanel
           positions={trading.positions}
           openOrders={trading.openOrders}
