@@ -102,6 +102,17 @@ export function useTrading(accountId: string | null, onAccountChanged: () => voi
     void reload()
   }, [reload])
 
+  // Poll, because a position can be created without this tab doing anything to
+  // trigger a reload — the settlement cron closing an expiry, another tab or
+  // device on the same paper account, an admin editing it. Without this, such a
+  // change shows only after a trade here or a full reopen. reload() just re-reads
+  // from the database, so an extra pass is cheap and self-reconciling.
+  useEffect(() => {
+    if (!accountId) return
+    const id = setInterval(() => void reload(), 15_000)
+    return () => clearInterval(id)
+  }, [accountId, reload])
+
   /** Run a fill against an existing order row. Returns the realized P&L. */
   const executeFill = useCallback(
     async (order: OrderRow, product: Product, fillPrice: number) => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Login } from './components/Login'
 import { TopBar } from './components/TopBar'
 import { OptionChain } from './components/OptionChain'
@@ -52,10 +52,16 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
   useKeywordTrigger(ADMIN_KEYWORD, () => setAdminOpen(true), !ticket)
 
   // ---- Market data bootstrap -----------------------------------------------
+  // Refetched on an interval, not just at mount: Delta lists new strikes (and
+  // rolls expiries) through the day, and a chain frozen at page-load would never
+  // show them — you would have to reload the tab to trade a strike opened after
+  // you arrived. The websocket only streams quotes for symbols that already
+  // exist in this list, so the list itself has to be refreshed over HTTP.
+  const loadedOnce = useRef(false)
   useEffect(() => {
     let active = true
 
-    void (async () => {
+    const load = async () => {
       try {
         const [exps, tickers] = await Promise.all([fetchExpiries(), fetchTickers()])
         if (!active) return
@@ -65,14 +71,28 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
         }
         market.upsertMany(tickers)
         setExpiries(exps)
-        setActiveExpiry((current) => current ?? exps[0].label)
+        // Keep the chosen expiry if it is still listed; otherwise fall to the
+        // nearest, so a settled same-day expiry advances on its own rather than
+        // leaving the chain blank.
+        setActiveExpiry((current) =>
+          current && exps.some((e) => e.label === current) ? current : exps[0].label,
+        )
+        loadedOnce.current = true
+        setMarketError(null)
       } catch (err) {
-        if (active) setMarketError(err instanceof Error ? err.message : 'Could not load market data')
+        // A failed refresh must not blank a chain that is already up — only
+        // surface the error when nothing has ever loaded.
+        if (active && !loadedOnce.current) {
+          setMarketError(err instanceof Error ? err.message : 'Could not load market data')
+        }
       }
-    })()
+    }
 
+    void load()
+    const id = setInterval(load, 60_000)
     return () => {
       active = false
+      clearInterval(id)
     }
   }, [])
 
