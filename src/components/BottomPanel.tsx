@@ -406,9 +406,9 @@ function PositionsTable({
           <Th>Size</Th>
           <Th>Notional</Th>
           <Th>Entry Price</Th>
+          <Th align="center">TP / SL</Th>
           <Th>Index Price</Th>
           <Th>Mark Price</Th>
-          <Th align="center">TP / SL</Th>
           <Th>Margin</Th>
           <Th>UPNL</Th>
           <Th>Delta</Th>
@@ -448,6 +448,14 @@ function PositionsTable({
               </Td>
               <Td className="text-ink-2">{usd(spot * cv * lots)}</Td>
               <Td className="text-ink">{price(pos.avg_entry_price)}</Td>
+              <Td align="center">
+                <TpSlCell
+                  takeProfit={pos.take_profit}
+                  stopLoss={pos.stop_loss}
+                  onEdit={() => setEditing(pos)}
+                  onClear={() => void onSetTpSl(pos.id, null, null)}
+                />
+              </Td>
               <Td className="text-ink-2">{price(spot)}</Td>
               <Td>
                 {v.mark !== null ? (
@@ -462,14 +470,6 @@ function PositionsTable({
                     —
                   </span>
                 )}
-              </Td>
-              <Td align="center">
-                <TpSlCell
-                  takeProfit={pos.take_profit}
-                  stopLoss={pos.stop_loss}
-                  onEdit={() => setEditing(pos)}
-                  onClear={() => void onSetTpSl(pos.id, null, null)}
-                />
               </Td>
               {/* Delta shows no margin against a long, because buying one debits
                   the premium outright. Ours blocks that premium instead, so the
@@ -533,16 +533,16 @@ function TpSlCell({
   const armed = Boolean(takeProfit || stopLoss)
   return (
     <div className="flex items-center justify-center gap-2">
-      <div className="text-left text-[10px] leading-tight whitespace-nowrap">
+      <div className="text-left text-[11px] leading-snug whitespace-nowrap">
         <div>
-          <span className="text-ink-4">TP (USD) : </span>
-          <span className={takeProfit ? 'text-ink' : 'text-ink-4'}>
+          <span className="text-ink-3">TP (USD) : </span>
+          <span className={takeProfit ? 'text-ink' : 'text-ink-3'}>
             {takeProfit ? price(takeProfit) : '-'}
           </span>
         </div>
         <div>
-          <span className="text-ink-4">SL : </span>
-          <span className={stopLoss ? 'text-ink' : 'text-ink-4'}>
+          <span className="text-ink-3">SL : </span>
+          <span className={stopLoss ? 'text-ink' : 'text-ink-3'}>
             {stopLoss ? price(stopLoss) : '-'}
           </span>
         </div>
