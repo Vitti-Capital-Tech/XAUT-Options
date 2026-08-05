@@ -104,15 +104,75 @@ function Empty({ children }: { children: React.ReactNode }) {
  * Sticky lives on the `thead` rather than on each cell, so a table can pin more
  * than one row — the positions table pins its totals above its labels.
  */
-function Th({ children, align = 'right' }: { children: React.ReactNode; align?: 'left' | 'right' }) {
+function Th({
+  children,
+  align = 'right',
+  pinned = false,
+}: {
+  children: React.ReactNode
+  align?: 'left' | 'right'
+  /** Held against the right edge while the rest of the table scrolls under it. */
+  pinned?: boolean
+}) {
   return (
     <th
       className={`bg-raised px-2.5 py-1.5 text-[10px] font-semibold tracking-wider text-ink-3 uppercase ${
         align === 'left' ? 'text-left' : 'text-right'
-      }`}
+      } ${pinned ? 'sticky right-0 z-10 border-l border-line' : ''}`}
     >
       {children}
     </th>
+  )
+}
+
+/**
+ * The red ✕ Delta closes and cancels with. A box rather than a bare glyph, so it
+ * reads as a button at 10px, and never a word — the column is too narrow for one
+ * and every row's word would be the same.
+ */
+function KillButton({
+  onClick,
+  disabled,
+  busy,
+  title,
+}: {
+  onClick: () => void
+  disabled?: boolean
+  busy?: boolean
+  title: string
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className="rounded border border-neg/70 px-2 py-0.5 text-[11px] leading-none text-neg hover:border-neg hover:bg-neg-muted disabled:opacity-30 disabled:hover:bg-transparent"
+    >
+      {busy ? '…' : '✕'}
+    </button>
+  )
+}
+
+function PageArrow({
+  children,
+  onClick,
+  disabled,
+  label,
+}: {
+  children: React.ReactNode
+  onClick: () => void
+  disabled: boolean
+  label: string
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      className="rounded border border-raised-3 px-2 py-0.5 text-[12px] leading-tight text-ink-2 hover:border-ink-3 hover:text-ink disabled:opacity-30 disabled:hover:border-raised-3 disabled:hover:text-ink-2"
+    >
+      {children}
+    </button>
   )
 }
 
@@ -144,8 +204,11 @@ function Paged<T>({
         {children(rows.slice(start, start + size))}
       </div>
 
+      {/* Delta's arrangement: the size selector, then boxed arrows either side of
+          the range. The range is the one bright thing here, because it is the
+          only part that answers "where am I". */}
       {rows.length > 0 && (
-        <div className="flex shrink-0 items-center justify-center gap-3 border-t border-line px-3 py-1.5 text-[11px] text-ink-3">
+        <div className="flex shrink-0 items-center justify-center gap-2 border-t border-line px-3 py-1.5">
           <select
             value={size}
             onChange={(e) => {
@@ -153,7 +216,7 @@ function Paged<T>({
               setPage(0)
             }}
             aria-label="Rows per page"
-            className="num rounded border border-raised-3 bg-raised px-1.5 py-0.5 text-[11px] text-ink-2 focus:border-ink-3 focus:outline-none"
+            className="num rounded border border-raised-3 bg-raised px-2 py-1 text-[11px] text-ink-2 hover:border-ink-3 focus:border-ink-3 focus:outline-none"
           >
             {[10, 20, 50, 100].map((n) => (
               <option key={n} value={n}>
@@ -162,26 +225,23 @@ function Paged<T>({
             ))}
           </select>
 
-          <button
+          <PageArrow
             onClick={() => setPage(current - 1)}
             disabled={current === 0}
-            aria-label="Previous page"
-            className="rounded px-1.5 hover:text-ink disabled:opacity-30 disabled:hover:text-ink-3"
+            label="Previous page"
           >
             ‹
-          </button>
-          <span className="num">
+          </PageArrow>
+          <span className="num px-1 text-[11px] font-bold text-ink">
             {start + 1} - {Math.min(rows.length, start + size)}
-            <span className="text-ink-4"> of {rows.length}</span>
           </span>
-          <button
+          <PageArrow
             onClick={() => setPage(current + 1)}
             disabled={current >= pages - 1}
-            aria-label="Next page"
-            className="rounded px-1.5 hover:text-ink disabled:opacity-30 disabled:hover:text-ink-3"
+            label="Next page"
           >
             ›
-          </button>
+          </PageArrow>
         </div>
       )}
     </div>
@@ -194,18 +254,27 @@ function Td({
   className = '',
   colSpan,
   title,
+  pinned = false,
 }: {
   children?: React.ReactNode
   align?: 'left' | 'right'
   className?: string
   colSpan?: number
   title?: string
+  /**
+   * Held against the right edge. Needs an opaque background from the caller,
+   * since what it is holding still against is the rest of the row sliding
+   * beneath it — a transparent cell would let that show through.
+   */
+  pinned?: boolean
 }) {
   return (
     <td
       colSpan={colSpan}
       title={title}
-      className={`num px-2.5 py-1.5 ${align === 'left' ? 'text-left' : 'text-right'} ${className}`}
+      className={`num px-2.5 py-1.5 ${align === 'left' ? 'text-left' : 'text-right'} ${
+        pinned ? 'sticky right-0 z-[5] border-l border-line' : ''
+      } ${className}`}
     >
       {children}
     </td>
@@ -320,7 +389,7 @@ function PositionsTable({
           <Td className="font-semibold text-ink">{totals.gamma.toFixed(6)}</Td>
           <Td className="font-semibold text-ink">{totals.vega.toFixed(4)}</Td>
           <Td className="font-semibold text-ink">{totals.theta.toFixed(4)}</Td>
-          <Td />
+          <Td pinned className="bg-raised-2" />
         </tr>
         <tr>
           <Th align="left">Symbol</Th>
@@ -335,7 +404,7 @@ function PositionsTable({
           <Th>Gamma</Th>
           <Th>Vega</Th>
           <Th>Theta</Th>
-          <Th align="right">Action</Th>
+          <Th align="right" pinned>Action</Th>
         </tr>
       </thead>
       <tbody>
@@ -400,9 +469,10 @@ function PositionsTable({
               <Td className="text-ink-2">{greekCell(g.gamma, 6)}</Td>
               <Td className="text-ink-2">{greekCell(g.vega, 4)}</Td>
               <Td className="text-ink-2">{greekCell(g.theta, 4)}</Td>
-              <Td align="right">
-                <button
+              <Td align="right" pinned className="bg-surface">
+                <KillButton
                   disabled={!product || closing === pos.id}
+                  busy={closing === pos.id}
                   onClick={async () => {
                     if (!product) return
                     setClosing(pos.id)
@@ -413,10 +483,7 @@ function PositionsTable({
                     }
                   }}
                   title={product ? 'Close at market' : 'Contract not in the loaded chain'}
-                  className="rounded border border-raised-3 px-2 py-0.5 text-[10px] text-ink hover:border-neg hover:text-neg disabled:opacity-40"
-                >
-                  {closing === pos.id ? '…' : 'Close'}
-                </button>
+                />
               </Td>
             </tr>
           )
@@ -488,7 +555,7 @@ function OrdersTable({
           <Th>Qty</Th>
           <Th>Limit</Th>
           <Th>Distance</Th>
-          <Th align="right">Action</Th>
+          <Th align="right" pinned>Action</Th>
         </tr>
       </thead>
       <tbody>
@@ -523,9 +590,10 @@ function OrdersTable({
               <Td className={gap !== null && gap <= 0 ? 'text-pos' : 'text-ink-3'}>
                 {gap === null ? '—' : gap <= 0 ? 'crossing' : price(gap)}
               </Td>
-              <Td align="right">
-                <button
+              <Td align="right" pinned className="bg-surface">
+                <KillButton
                   disabled={cancelling === o.id || !productsBySymbol.has(o.symbol)}
+                  busy={cancelling === o.id}
                   onClick={async () => {
                     setCancelling(o.id)
                     try {
@@ -534,10 +602,8 @@ function OrdersTable({
                       setCancelling(null)
                     }
                   }}
-                  className="rounded border border-raised-3 px-2 py-0.5 text-[10px] text-ink hover:border-neg hover:text-neg disabled:opacity-40"
-                >
-                  {cancelling === o.id ? '…' : 'Cancel'}
-                </button>
+                  title="Cancel this order"
+                />
               </Td>
             </tr>
           )
