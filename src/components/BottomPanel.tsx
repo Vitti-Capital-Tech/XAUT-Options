@@ -50,23 +50,26 @@ export function BottomPanel({
        does. */
     <div className="flex flex-col border-t border-line bg-surface">
       <div className="flex shrink-0 items-center gap-1 border-b border-line px-2">
-        {tabs.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            className={`relative px-3 py-2 text-xs font-medium transition-colors ${
-              tab === t.key ? 'text-ink' : 'text-ink-3 hover:text-ink'
-            }`}
-          >
-            {t.label}
-            {t.count > 0 && (
-              <span className="num ml-1.5 rounded bg-raised-2 px-1.5 py-0.5 text-[10px] text-ink-2">
-                {t.count}
-              </span>
-            )}
-            {tab === t.key && <span className="absolute inset-x-0 -bottom-px h-0.5 bg-brand" />}
-          </button>
-        ))}
+        {tabs.map((t) => {
+          const active = tab === t.key
+          return (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              className={`relative px-3 py-2 text-xs font-medium transition-colors ${
+                active ? 'text-ink' : 'text-ink-3 hover:text-ink'
+              }`}
+            >
+              {/* Delta writes the count in parentheses beside the label, in the
+                  same ink, rather than as a chip of its own. */}
+              {t.label}
+              {t.count > 0 && <span className="num ml-1 text-ink-3">({t.count})</span>}
+              {/* The brand rule sits on the border line itself, the width of the
+                  tab, the way theirs does. */}
+              {active && <span className="absolute inset-x-0 -bottom-px h-0.5 bg-brand-text" />}
+            </button>
+          )
+        })}
       </div>
 
       <div className="flex flex-col">
@@ -98,40 +101,37 @@ function Empty({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * A ruled, lifted column — what the chain does to the strike, applied to the
- * action column here. The shadow falls leftward, over the columns it sits beside,
- * which is what makes it read as standing on the table rather than in it.
- *
- * No background of its own, so the row's hover still runs underneath.
+ * The two edge columns — symbol and action — are ruled off and lifted the way
+ * the chain lifts its strike, so the scrolling middle reads as held between
+ * them. Each casts its shadow inward over its neighbour, and no wider than that:
+ * a longer reach greyed the figures in the next column along. No background of
+ * their own, so a row's hover still runs the whole width underneath.
  */
-// A tight shadow that sits at the rule rather than reaching back across the
-// column before it — a wider one washed over the Theta figures next to it.
-const WALL = 'border-x border-line shadow-[-2px_0_5px_-3px_#000000aa]'
+const WALL: Record<'start' | 'end', string> = {
+  start: 'border-x border-line shadow-[3px_0_6px_-3px_#000000aa]',
+  end: 'border-x border-line shadow-[-3px_0_6px_-3px_#000000aa]',
+}
 
-/**
- * Sticky lives on the `thead` rather than on each cell, so a table can pin more
- * than one row — the positions table pins its totals above its labels.
- */
 const alignClass = (align: 'left' | 'right' | 'center') =>
   align === 'left' ? 'text-left' : align === 'center' ? 'text-center' : 'text-right'
 
 function Th({
   children,
   align = 'right',
-  walled = false,
+  wall,
   className = '',
 }: {
   children: React.ReactNode
   align?: 'left' | 'right' | 'center'
-  /** Ruled off on both sides and lifted, as the chain walls the strike column. */
-  walled?: boolean
+  /** Ruled off and lifted as an edge column; the value picks which way it casts. */
+  wall?: 'start' | 'end'
   className?: string
 }) {
   return (
     <th
       className={`bg-raised px-2.5 py-1.5 text-[10px] font-semibold tracking-wider text-ink-3 uppercase ${alignClass(
         align,
-      )} ${walled ? WALL : ''} ${className}`}
+      )} ${wall ? WALL[wall] : ''} ${className}`}
     >
       {children}
     </th>
@@ -268,7 +268,7 @@ function Td({
   className = '',
   colSpan,
   title,
-  walled = false,
+  wall,
 }: {
   children?: React.ReactNode
   align?: 'left' | 'right' | 'center'
@@ -276,16 +276,16 @@ function Td({
   colSpan?: number
   title?: string
   /**
-   * Ruled off on both sides and lifted, as the chain walls the strike column.
+   * Ruled off and lifted as an edge column, the way the chain walls its strike.
    * Not pinned: it scrolls with the table like everything else.
    */
-  walled?: boolean
+  wall?: 'start' | 'end'
 }) {
   return (
     <td
       colSpan={colSpan}
       title={title}
-      className={`num px-2.5 py-1.5 ${alignClass(align)} ${walled ? WALL : ''} ${className}`}
+      className={`num px-2.5 py-1.5 ${alignClass(align)} ${wall ? WALL[wall] : ''} ${className}`}
     >
       {children}
     </td>
@@ -382,7 +382,11 @@ function PositionsTable({
             total sits under one page and reads as that page's — these are the
             whole book's, every position, whichever page is showing. */}
         <tr className="border-b border-line bg-raised-2">
-          <Td align="left" className="text-[10px] font-semibold tracking-wider text-ink-2 uppercase">
+          <Td
+            align="left"
+            wall="start"
+            className="text-[10px] font-semibold tracking-wider text-ink-2 uppercase"
+          >
             Σ Total · {positions.length}
           </Td>
           <Td />
@@ -396,10 +400,10 @@ function PositionsTable({
           <Td className="font-semibold text-ink">{totals.gamma.toFixed(6)}</Td>
           <Td className="font-semibold text-ink">{totals.vega.toFixed(4)}</Td>
           <Td className="pr-5 font-semibold text-ink">{totals.theta.toFixed(4)}</Td>
-          <Td walled />
+          <Td wall="end" />
         </tr>
         <tr>
-          <Th align="left">Symbol</Th>
+          <Th align="left" wall="start">Symbol</Th>
           <Th>Size</Th>
           <Th>Notional</Th>
           <Th>Entry Price</Th>
@@ -411,7 +415,7 @@ function PositionsTable({
           <Th>Gamma</Th>
           <Th>Vega</Th>
           <Th className="pr-5">Theta</Th>
-          <Th align="center" walled>Action</Th>
+          <Th align="center" wall="end">Action</Th>
         </tr>
       </thead>
       <tbody>
@@ -426,7 +430,7 @@ function PositionsTable({
 
           return (
             <tr key={pos.id} className="border-b border-line hover:bg-raised">
-              <Td align="left">
+              <Td align="left" wall="start">
                 <Instrument
                   symbol={pos.symbol}
                   accent={isLong ? 'pos' : 'neg'}
@@ -474,7 +478,7 @@ function PositionsTable({
               <Td className="text-ink-2">{greekCell(g.gamma, 6)}</Td>
               <Td className="text-ink-2">{greekCell(g.vega, 4)}</Td>
               <Td className="pr-5 text-ink-2">{greekCell(g.theta, 4)}</Td>
-              <Td align="center" walled>
+              <Td align="center" wall="end">
                 <KillButton
                   disabled={!product || closing === pos.id}
                   busy={closing === pos.id}
@@ -560,7 +564,7 @@ function OrdersTable({
           <Th>Qty</Th>
           <Th>Limit</Th>
           <Th>Distance</Th>
-          <Th align="center" walled>Action</Th>
+          <Th align="center" wall="end">Action</Th>
         </tr>
       </thead>
       <tbody>
@@ -590,7 +594,7 @@ function OrdersTable({
               <Td className={gap !== null && gap <= 0 ? 'text-pos' : 'text-ink-3'}>
                 {gap === null ? '—' : gap <= 0 ? 'crossing' : price(gap)}
               </Td>
-              <Td align="center" walled>
+              <Td align="center" wall="end">
                 <KillButton
                   disabled={cancelling === o.id || !productsBySymbol.has(o.symbol)}
                   busy={cancelling === o.id}
