@@ -536,13 +536,13 @@ function TpSlCell({
       <div className="text-left text-[10px] leading-tight whitespace-nowrap">
         <div>
           <span className="text-ink-4">TP (USD) : </span>
-          <span className={takeProfit ? 'text-pos' : 'text-ink-4'}>
+          <span className={takeProfit ? 'text-ink' : 'text-ink-4'}>
             {takeProfit ? price(takeProfit) : '-'}
           </span>
         </div>
         <div>
           <span className="text-ink-4">SL : </span>
-          <span className={stopLoss ? 'text-neg' : 'text-ink-4'}>
+          <span className={stopLoss ? 'text-ink' : 'text-ink-4'}>
             {stopLoss ? price(stopLoss) : '-'}
           </span>
         </div>
@@ -751,22 +751,30 @@ function TpSlBlock({
 
       {/* One control: the price on top, and a strip beneath holding the four
           presets and the editable percent — the box on the right, as Delta has
-          it, where typing a percent sets the trigger that far off the index. */}
-      <div className="overflow-hidden rounded border border-raised-3 focus-within:border-ink-3">
-        <input
-          type="number"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder="Trigger Price USD"
-          className="num step-own w-full bg-raised px-2.5 py-2 text-right text-sm text-ink placeholder:text-ink-4 focus:outline-none"
-        />
+          it, where typing a percent sets the trigger that far off the index.
+          The placeholder sits left and the typed value right, the way theirs
+          does, so it needs to be an overlay rather than the native placeholder. */}
+      <div className="overflow-hidden rounded border border-raised-3 bg-raised focus-within:border-ink-3">
+        <div className="relative">
+          {value === '' && (
+            <span className="pointer-events-none absolute inset-y-0 left-2.5 flex items-center text-sm text-ink-4">
+              Trigger Price USD
+            </span>
+          )}
+          <input
+            type="number"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            className="num step-own w-full bg-transparent px-2.5 py-2 text-right text-sm text-ink focus:outline-none"
+          />
+        </div>
         <div className="flex border-t border-raised-3 text-[11px]">
           {[5, 10, 15, 20].map((p) => (
             <button
               key={p}
               type="button"
               onClick={() => onPct(p)}
-              className="num flex-1 border-r border-raised-3 bg-sub py-1 text-ink-3 hover:bg-raised-2 hover:text-ink"
+              className="num flex-1 border-r border-raised-3 py-1 text-ink-3 hover:bg-raised-2 hover:text-ink"
             >
               {p}%
             </button>
