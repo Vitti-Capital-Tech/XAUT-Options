@@ -4,7 +4,7 @@ import { UNDERLYING } from '../lib/delta'
 import { market, useMarketTick } from '../lib/marketStore'
 import { shortImRate, valuePosition, type PositionRow } from '../engine/paper'
 import type { FillRow } from '../hooks/useTrading'
-import { compact, dateTime, ivShort, pct, pnlClass, price, signedUsd, usd } from '../lib/format'
+import { dateTime, ivShort, pct, pnlClass, price } from '../lib/format'
 
 type Tab = 'positions' | 'history'
 
@@ -892,41 +892,45 @@ function HistoryTable({ fills }: { fills: FillRow[] }) {
   return (
     <Paged rows={fills}>
       {(visible) => (
-    <table className="w-full text-[12px]">
+    <table className="w-full text-[13px]">
       <thead className="sticky top-0 z-10">
+        {/* Delta's order-history order, less the columns that never vary on a
+            fills ledger. Symbol and Time are walled, as the positions table
+            walls its symbol and action, so the row reads between two edges. */}
         <tr>
-          <Th align="left">Time</Th>
-          <Th align="left">Instrument</Th>
+          <Th align="center" wall="start">Symbol</Th>
+          <Th>Qty (Lot)</Th>
           <Th align="left">Side</Th>
-          <Th align="left">Type</Th>
-          <Th>Qty</Th>
-          <Th>Price</Th>
-          <Th>Premium</Th>
-          <Th>Notional</Th>
-          <Th>Fee</Th>
-          <Th>Realized</Th>
+          <Th>Execution Price</Th>
+          <Th>Size</Th>
+          <Th>Realized PnL</Th>
+          <Th align="center" wall="end">Time</Th>
         </tr>
       </thead>
       <tbody>
         {visible.map((f) => {
           const realized = Number(f.realized_pnl)
+          const buy = f.side === 'buy'
+          const size = f.qty * Number(f.contract_value)
           return (
             <tr key={f.id} className="border-b border-line hover:bg-raised">
-              <Td align="left" className="text-ink-3">{dateTime(f.created_at)}</Td>
-              <Td align="left">
-                <Instrument symbol={f.symbol} accent={f.side === 'buy' ? 'pos' : 'neg'} />
+              <Td align="center" wall="start">
+                <Instrument symbol={f.symbol} accent={buy ? 'pos' : 'neg'} />
               </Td>
-              <Td align="left" className={f.side === 'buy' ? 'text-pos' : 'text-neg'}>
+              <Td className="text-ink">{f.qty}</Td>
+              <Td align="left" className={buy ? 'text-pos' : 'text-neg'}>
                 {f.side.toUpperCase()}
               </Td>
-              <Td align="left" className="text-ink-3 capitalize">{f.order_type}</Td>
-              <Td className="text-ink">{compact(f.qty)}</Td>
               <Td className="text-ink">{price(f.price)}</Td>
-              <Td className="text-ink-2">{usd(Number(f.premium), 4)}</Td>
-              <Td className="text-ink-3">{usd(Number(f.notional))}</Td>
-              <Td className="text-ink-3">{usd(Number(f.fee), 4)}</Td>
+              <Td className={buy ? 'text-pos' : 'text-neg'}>
+                {buy ? '+' : '-'}
+                {size.toFixed(3)} <span className="text-ink-2">{UNDERLYING}</span>
+              </Td>
               <Td className={realized === 0 ? 'text-ink-4' : pnlClass(realized)}>
-                {realized === 0 ? '—' : signedUsd(realized, 4)}
+                {realized === 0 ? '—' : <Money value={realized} signed suffix="inherit" />}
+              </Td>
+              <Td align="center" wall="end" className="text-ink-3">
+                {dateTime(f.created_at)}
               </Td>
             </tr>
           )

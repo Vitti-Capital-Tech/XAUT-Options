@@ -22,6 +22,7 @@ export interface FillRow {
   order_type: string
   qty: number
   price: string
+  contract_value: string
   premium: string
   notional: string
   fee: string
@@ -35,7 +36,7 @@ const POSITION_COLS =
 const ORDER_COLS =
   'id, account_id, symbol, product_id, contract_type, strike_price, expiry_label, contract_value, side, order_type, qty, limit_price, status, avg_fill_price, filled_qty, reduce_only, created_at'
 const FILL_COLS =
-  'id, symbol, contract_type, strike_price, side, order_type, qty, price, premium, notional, fee, realized_pnl, spot_at_fill, created_at'
+  'id, symbol, contract_type, strike_price, side, order_type, qty, price, contract_value, premium, notional, fee, realized_pnl, spot_at_fill, created_at'
 
 export interface PlaceOrderArgs {
   product: Product
