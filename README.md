@@ -135,14 +135,16 @@ protecting.
 
 ## Known approximations
 
-- **Short-option margin is approximated** as `10% x spot + premium` per lot.
-  Delta's real short-option margin is a risk model that also accounts for
-  moneyness and isn't exposed on the public API. The constant is
-  `SHORT_IM_RATE` in [`src/engine/paper.ts`](src/engine/paper.ts). Long options
-  are exact — risk is capped at the premium paid.
-- **No liquidation, no auto-settlement at expiry.** Positions in an expired
-  contract stay open in the UI; close them manually. Adding settlement means
-  reading the settlement price after expiry and realizing intrinsic value.
+- **Short-option margin** is `im% x spot + premium` per lot, where `im%` is the
+  contract's own published `initial_margin` (1% for an XAUT option) rather than a
+  rate of ours. Still approximate in two ways: Delta raises the rate with order
+  size via `initial_margin_scaling_factor`, which isn't modelled, and accounts on
+  portfolio rather than isolated margin are floored at
+  `max(5% x premium, OM% x notional)`, which can bind higher. Long options are
+  exact — risk is capped at the premium paid.
+- **No liquidation.** Nothing force-closes a losing position.
+- **Expiry settles server-side** via `pg_cron`; see
+  [`supabase/migrations/0002_settlement.sql`](supabase/migrations/0002_settlement.sql).
 - **Fills are all-or-nothing** and ignore quoted size, so a market order for
   more lots than are actually offered still fills at the touch. Respecting
   `bid_size`/`ask_size` and walking the book would be the realistic upgrade.

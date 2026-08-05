@@ -201,12 +201,22 @@ cheap far-out strikes.
 | Position | Margin blocked | Exact? |
 | --- | --- | --- |
 | Long option | `avg_entry × cv × lots` — the premium paid | Yes; loss is capped at premium |
-| Short option | `(0.10 × spot + mark) × cv × lots` | **Approximation** |
+| Short option | `(im% × spot + mark) × cv × lots` | Rate is the venue's; scaling is not |
 
-`SHORT_IM_RATE = 0.10` in [`src/engine/paper.ts`](../src/engine/paper.ts). Delta's real
-short-option margin is a risk model that also accounts for moneyness and is not
-exposed publicly. The chosen shape — a slice of notional plus the premium owed — is
-the right order of magnitude and conservative near the money.
+`im%` is the contract's own `initial_margin`, read off the product by
+`shortImRate` in [`src/engine/paper.ts`](../src/engine/paper.ts) — 1% for an XAUT
+option. The field is a percentage, which `BTCUSD` settles: it publishes `0.5`
+against a default leverage of 200, and 200x is 0.5% margin.
+
+This used to be a hardcoded 10%, on the stated grounds that Delta did not publish
+the number. They do. Two things are still approximate: Delta raises the rate with
+order size via `initial_margin_scaling_factor`, which is not modelled, so a large
+short margins slightly cheaper here; and accounts on portfolio margin instead of
+isolated margin are floored at `max(5% × premium, OM% × notional)`, which for a
+naked short can bind well above this figure.
+
+`FALLBACK_SHORT_IM_RATE` applies only where the product is not loaded at all, as
+with a contract that has already expired.
 
 Only the portion of an order that *increases* exposure requires new margin:
 

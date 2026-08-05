@@ -18,7 +18,7 @@ import {
   type Expiry,
   type Product,
 } from './lib/delta'
-import { summarizeAccount, type Side } from './engine/paper'
+import { shortImRate, summarizeAccount, type Side } from './engine/paper'
 import { supabaseConfigured } from './lib/supabase'
 import { ADMIN_KEYWORD } from './lib/admin'
 
@@ -120,6 +120,16 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
 
   // ---- Account summary ----------------------------------------------------
   const tickerFor = useCallback((symbol: string) => market.get(symbol), [])
+  // Margin at the rate the venue publishes for that very contract, not at a rate
+  // of ours. Undefined for a contract no longer in the chain, which is the one
+  // case the engine's fallback is for.
+  const imRateFor = useCallback(
+    (symbol: string) => {
+      const product = productsBySymbol.get(symbol)
+      return product ? shortImRate(product) : undefined
+    },
+    [productsBySymbol],
+  )
   const summary = useMemo(
     () =>
       summarizeAccount(
@@ -128,6 +138,7 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
         trading.positions,
         tickerFor,
         market.spot,
+        imRateFor,
       ),
     // The tick has to be a dependency, not merely a reason to re-render: the
     // marks this reads live outside React, so without it the memo hands back a
@@ -139,6 +150,7 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
       accounts.selected?.starting_balance,
       trading.positions,
       tickerFor,
+      imRateFor,
     ],
   )
 
@@ -171,6 +183,7 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
         email={email}
         onSelect={accounts.setSelectedId}
         onCreate={accounts.createAccount}
+        onSetBalance={accounts.setStartingBalance}
         onReset={async (id) => {
           await accounts.resetAccount(id)
           await trading.reload()

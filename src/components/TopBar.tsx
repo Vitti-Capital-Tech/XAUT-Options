@@ -13,6 +13,11 @@ interface Props {
   email: string | undefined
   onSelect: (id: string) => void
   onCreate: (name: string, startingBalance: number) => Promise<void>
+  /**
+   * Rebase the balance, keeping whatever the account has already made or lost —
+   * unlike a reset, which throws the history away along with the P&L.
+   */
+  onSetBalance: (id: string, startingBalance: number) => Promise<void>
   onReset: (id: string) => Promise<void>
   onArchive: (id: string) => Promise<void>
   onOpenAdmin: () => void
@@ -27,6 +32,7 @@ export function TopBar({
   email,
   onSelect,
   onCreate,
+  onSetBalance,
   onReset,
   onArchive,
   onOpenAdmin,
@@ -44,6 +50,9 @@ export function TopBar({
   const [newBalance, setNewBalance] = useState('10000')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // The account whose balance is being edited in place, and the draft figure.
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [draftBalance, setDraftBalance] = useState('')
   const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -159,6 +168,67 @@ export function TopBar({
               {accounts.map((a) => {
                 const isActive = a.id === selected?.id
                 const pnl = Number(a.cash_balance) - Number(a.starting_balance)
+
+                // Editing takes the whole row: a number field this narrow next
+                // to a name and two figures would be unreadable.
+                if (editingId === a.id) {
+                  const save = async () => {
+                    const n = Number(draftBalance)
+                    if (!Number.isFinite(n) || n <= 0) return setError('Balance must be positive')
+                    setBusy(true)
+                    setError(null)
+                    try {
+                      await onSetBalance(a.id, n)
+                      setEditingId(null)
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : 'Could not set balance')
+                    } finally {
+                      setBusy(false)
+                    }
+                  }
+                  return (
+                    <div key={a.id} className="space-y-1.5 border-b border-line bg-sub px-3 py-2">
+                      <div className="text-[10px] tracking-wider text-ink-3 uppercase">
+                        Balance · {a.name}
+                      </div>
+                      <input
+                        type="number"
+                        value={draftBalance}
+                        onChange={(e) => setDraftBalance(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') void save()
+                          if (e.key === 'Escape') setEditingId(null)
+                        }}
+                        autoFocus
+                        className="num w-full rounded border border-raised-3 bg-surface px-2 py-1 text-right text-xs text-ink focus:border-ink-3 focus:outline-none"
+                      />
+                      <p className="text-[10px] text-ink-3">
+                        Keeps this account's {signedUsd(pnl)} of P&amp;L and its history — only the
+                        baseline moves.
+                      </p>
+                      {error && <p className="text-[10px] text-neg">{error}</p>}
+                      <div className="flex gap-2">
+                        <button
+                          onClick={save}
+                          disabled={busy}
+                          className="flex-1 rounded bg-brand py-1 text-xs font-medium text-white hover:bg-brand-hover disabled:opacity-40"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => {
+                            setEditingId(null)
+                            setError(null)
+                          }}
+                          className="rounded border border-raised-3 px-3 py-1 text-xs text-ink-2 hover:border-ink-3"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )
+                }
+
                 return (
                   <div
                     key={a.id}
@@ -179,6 +249,17 @@ export function TopBar({
                         <span className="text-ink-2">{usd(Number(a.cash_balance))}</span>
                         <span className={pnlClass(pnl)}>{signedUsd(pnl)}</span>
                       </div>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setDraftBalance(String(Number(a.starting_balance)))
+                        setEditingId(a.id)
+                        setError(null)
+                      }}
+                      title="Edit balance, keeping P&L and history"
+                      className="rounded p-1 text-[10px] text-ink-3 hover:bg-raised-3 hover:text-brand-text"
+                    >
+                      ✎
                     </button>
                     <button
                       onClick={async () => {

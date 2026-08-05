@@ -13,14 +13,28 @@
 import type { Product, Ticker } from '../lib/delta'
 
 /**
- * Initial margin rate applied to the underlying when short an option.
+ * Fallback initial-margin rate for a short option, used only when the contract
+ * itself is not to hand — an expired position whose product no longer loads.
  *
- * APPROXIMATION. Delta's real short-option margin is a risk model that also
- * accounts for moneyness, and it is not exposed on the public API. We use the
- * standard shape — a slice of notional plus the premium owed — which is the
- * right order of magnitude and always conservative for near-the-money strikes.
+ * Prefer `shortImRate(product)`. Delta publishes the rate per contract and we
+ * had been ignoring it in favour of a hardcoded 10%, which was ten times what
+ * they ask for an XAUT option. 1% is what they publish for those, so it is the
+ * least surprising thing to fall back to.
  */
-export const SHORT_IM_RATE = 0.1
+export const FALLBACK_SHORT_IM_RATE = 0.01
+
+/**
+ * The venue's own initial-margin rate for a contract, as a fraction.
+ *
+ * `initial_margin` is a percentage: BTCUSD reads '0.5' at a default leverage of
+ * 200, and 200x is 0.5% margin, which settles the unit. Delta also raises the
+ * rate with order size via `initial_margin_scaling_factor`, which we do not
+ * model — so a large short is margined slightly more cheaply here than there.
+ */
+export function shortImRate(product: Product): number {
+  const pct = Number(product.initial_margin)
+  return Number.isFinite(pct) && pct > 0 ? pct / 100 : FALLBACK_SHORT_IM_RATE
+}
 
 export type Side = 'buy' | 'sell'
 export type OrderType = 'market' | 'limit'
@@ -134,7 +148,13 @@ export interface PositionValue {
   marginBlocked: number
 }
 
-export function valuePosition(pos: PositionRow, ticker: Ticker | undefined, spot: number): PositionValue {
+export function valuePosition(
+  pos: PositionRow,
+  ticker: Ticker | undefined,
+  spot: number,
+  /** The contract's own rate; falls back only when the product is not loaded. */
+  imRate: number = FALLBACK_SHORT_IM_RATE,
+): PositionValue {
   const cv = Number(pos.contract_value)
   const netQty = pos.net_qty
   const avgEntry = Number(pos.avg_entry_price)
@@ -154,7 +174,7 @@ export function valuePosition(pos: PositionRow, ticker: Ticker | undefined, spot
   const marginBlocked =
     netQty > 0
       ? entryValue // long option risk is capped at the premium paid
-      : (SHORT_IM_RATE * spot + (mark ?? avgEntry)) * cv * lots
+      : (imRate * spot + (mark ?? avgEntry)) * cv * lots
 
   return {
     netQty,
@@ -189,11 +209,14 @@ export function summarizeAccount(
   positions: PositionRow[],
   tickerFor: (symbol: string) => Ticker | undefined,
   spot: number,
+  /** The contract's published margin rate, per symbol. Omit and every short
+   *  falls back to the constant, which is only right for XAUT options. */
+  imRateFor?: (symbol: string) => number | undefined,
 ): AccountSummary {
   let unrealized = 0
   let marginBlocked = 0
   for (const pos of positions) {
-    const v = valuePosition(pos, tickerFor(pos.symbol), spot)
+    const v = valuePosition(pos, tickerFor(pos.symbol), spot, imRateFor?.(pos.symbol))
     unrealized += v.unrealized ?? 0
     marginBlocked += v.marginBlocked
   }
@@ -294,7 +317,7 @@ export function previewOrder(
     marginRequired =
       side === 'buy'
         ? valuationPrice * cv * openingQty
-        : (SHORT_IM_RATE * spot + valuationPrice) * cv * openingQty
+        : (shortImRate(product) * spot + valuationPrice) * cv * openingQty
     marginRequired += fee
   }
 

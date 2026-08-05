@@ -76,6 +76,15 @@ export interface Product {
   settlement_time: string
   taker_commission_rate: string
   maker_commission_rate: string
+  /**
+   * Initial margin for the contract, as a percentage. Delta publishes it per
+   * product: BTCUSD reads '0.5' against a default leverage of 200, which is the
+   * check that fixes the unit — 200x is 0.5% margin, so the field is percent and
+   * not a fraction. XAUT options read '1', i.e. 1%.
+   */
+  initial_margin: string
+  /** Delta raises the rate with order size. We do not model that — see paper.ts. */
+  initial_margin_scaling_factor: string
   product_specs: { premium_commission_rate?: number } | null
   state: string
 }

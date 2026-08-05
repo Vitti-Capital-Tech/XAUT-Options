@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { Product, Ticker } from '../lib/delta'
 import { formatExpiry } from '../lib/delta'
 import { market, useMarketTick } from '../lib/marketStore'
-import { valuePosition, type OrderRow, type PositionRow } from '../engine/paper'
+import { shortImRate, valuePosition, type OrderRow, type PositionRow } from '../engine/paper'
 import type { FillRow } from '../hooks/useTrading'
 import { compact, dateTime, pct, pnlClass, price, signedUsd, timeOfDay, usd } from '../lib/format'
 
@@ -176,10 +176,15 @@ function PositionsTable({
   // Portfolio totals. Only the greeks and the money add up across rows — an
   // average entry or a percentage would not, so those columns stay blank in the
   // footer rather than carrying a number that means nothing.
+  const imRateFor = (symbol: string) => {
+    const p = productsBySymbol.get(symbol)
+    return p ? shortImRate(p) : undefined
+  }
+
   const totals = positions.reduce(
     (acc, pos) => {
       const t = market.get(pos.symbol)
-      const v = valuePosition(pos, t, spot)
+      const v = valuePosition(pos, t, spot, imRateFor(pos.symbol))
       const g = positionGreeks(pos, t)
       return {
         value: acc.value + (v.currentValue ?? 0),
@@ -216,8 +221,8 @@ function PositionsTable({
       <tbody>
         {positions.map((pos) => {
           const ticker = market.get(pos.symbol)
-          const v = valuePosition(pos, ticker, spot)
           const product = productsBySymbol.get(pos.symbol)
+          const v = valuePosition(pos, ticker, spot, product ? shortImRate(product) : undefined)
           const isLong = pos.net_qty > 0
           const g = positionGreeks(pos, ticker)
 
