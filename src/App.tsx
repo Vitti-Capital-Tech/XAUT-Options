@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Login } from './components/Login'
-import { TopBar } from './components/TopBar'
+import { TopBar, type Page } from './components/TopBar'
 import { OptionChain } from './components/OptionChain'
 import { OrderTicket, type TicketRequest } from './components/OrderTicket'
 import { BottomPanel } from './components/BottomPanel'
+import { StrategyTab } from './components/StrategyTab'
 import { AdminPanel } from './components/AdminPanel'
 import { useAuth } from './hooks/useAuth'
 import { useAccounts } from './hooks/useAccounts'
@@ -45,6 +46,8 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
   // Always starts closed: signing in lands on the chain, and the panel is
   // opened deliberately from there.
   const [adminOpen, setAdminOpen] = useState(false)
+  // Which top-level page is showing. Signing in lands on the chain.
+  const [page, setPage] = useState<Page>('chain')
 
   const tick = useMarketTick()
 
@@ -208,72 +211,91 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
 
   if (accounts.loading || expiries.length === 0) return <Splash>Loading market…</Splash>
 
+  // Shared across both pages, so the nav, the account switcher and the feed
+  // badge stay put as you move between the chain and the bot.
+  const topBar = (
+    <TopBar
+      accounts={accounts.accounts}
+      selected={accounts.selected}
+      summary={summary}
+      email={email}
+      page={page}
+      onNavigate={setPage}
+      strategyArmed={strategy.armed}
+      onSelect={accounts.setSelectedId}
+      onCreate={accounts.createAccount}
+      onSetBalance={accounts.setStartingBalance}
+      onReset={async (id) => {
+        await accounts.resetAccount(id)
+        await trading.reload()
+      }}
+      onArchive={(id) => accounts.setArchived(id, true)}
+      onOpenAdmin={() => setAdminOpen(true)}
+      adminKeyword={ADMIN_KEYWORD}
+    />
+  )
+
   return (
     /* The page scrolls. The header, the expiries and the chain fill exactly one
        screen, and the panel grows downward from there rather than taking height
        off the chain — so a long list of positions is something you scroll to, not
        something that squeezes the book. */
     <div className="flex flex-col">
-      <div className="flex h-screen flex-col">
-        <TopBar
-          accounts={accounts.accounts}
-          selected={accounts.selected}
-          summary={summary}
-          email={email}
-          onSelect={accounts.setSelectedId}
-          onCreate={accounts.createAccount}
-          onSetBalance={accounts.setStartingBalance}
-          onReset={async (id) => {
-            await accounts.resetAccount(id)
-            await trading.reload()
-          }}
-          onArchive={(id) => accounts.setArchived(id, true)}
-          onOpenAdmin={() => setAdminOpen(true)}
-          adminKeyword={ADMIN_KEYWORD}
-        />
+      {page === 'chain' ? (
+        <>
+          <div className="flex h-screen flex-col">
+            {topBar}
 
-        <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-line bg-surface px-2 py-1.5">
-          <span className="mr-1 shrink-0 text-[10px] tracking-wider text-ink-4 uppercase">
-            Expiry
-          </span>
-          {expiries.map((e) => (
-            <button
-              key={e.label}
-              onClick={() => setActiveExpiry(e.label)}
-              className={`shrink-0 rounded px-2.5 py-1 text-[12px] font-medium whitespace-nowrap transition-colors ${
-                e.label === activeExpiry
-                  ? 'border-[0.8px] border-brand-text text-brand-text'
-                  : 'text-ink-3 hover:bg-sub hover:text-ink'
-              }`}
-            >
-              {formatExpiry(e.label)}
-            </button>
-          ))}
+            <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-line bg-surface px-2 py-1.5">
+              <span className="mr-1 shrink-0 text-[10px] tracking-wider text-ink-4 uppercase">
+                Expiry
+              </span>
+              {expiries.map((e) => (
+                <button
+                  key={e.label}
+                  onClick={() => setActiveExpiry(e.label)}
+                  className={`shrink-0 rounded px-2.5 py-1 text-[12px] font-medium whitespace-nowrap transition-colors ${
+                    e.label === activeExpiry
+                      ? 'border-[0.8px] border-brand-text text-brand-text'
+                      : 'text-ink-3 hover:bg-sub hover:text-ink'
+                  }`}
+                >
+                  {formatExpiry(e.label)}
+                </button>
+              ))}
+            </div>
+
+            {/* Fills what the header and the expiries leave of the screen, and keeps
+                it — the panel below can no longer take height off it. */}
+            <div className="flex min-h-0 flex-1 flex-col">
+              {expiry && (
+                <OptionChain expiry={expiry} positions={trading.positions} onPick={openTicket} />
+              )}
+            </div>
+          </div>
+
+          {/* As tall as its rows, the way Delta's is: a page of twenty shows twenty.
+              Uncapped, because it grows below the fold now rather than upward into
+              the chain, and the page scrolls to reach it. */}
+          <div className="flex flex-col">
+            <BottomPanel
+              positions={trading.positions}
+              fills={trading.fills}
+              productsBySymbol={productsBySymbol}
+              onClosePosition={(pos, product) => trading.closePosition(pos, product)}
+              onSetTpSl={trading.setTpSl}
+              onPickSymbol={(product) => openTicket(product, 'buy', null)}
+            />
+          </div>
+        </>
+      ) : (
+        <div className="flex min-h-screen flex-col">
+          {topBar}
+          <div className="min-h-0 flex-1">
+            <StrategyTab strategy={strategy} />
+          </div>
         </div>
-
-        {/* Fills what the header and the expiries leave of the screen, and keeps
-            it — the panel below can no longer take height off it. */}
-        <div className="flex min-h-0 flex-1 flex-col">
-          {expiry && (
-            <OptionChain expiry={expiry} positions={trading.positions} onPick={openTicket} />
-          )}
-        </div>
-      </div>
-
-      {/* As tall as its rows, the way Delta's is: a page of twenty shows twenty.
-          Uncapped, because it grows below the fold now rather than upward into
-          the chain, and the page scrolls to reach it. */}
-      <div className="flex flex-col">
-        <BottomPanel
-          positions={trading.positions}
-          fills={trading.fills}
-          productsBySymbol={productsBySymbol}
-          strategy={strategy}
-          onClosePosition={(pos, product) => trading.closePosition(pos, product)}
-          onSetTpSl={trading.setTpSl}
-          onPickSymbol={(product) => openTicket(product, 'buy', null)}
-        />
-      </div>
+      )}
 
       {ticket && (
         <OrderTicket

@@ -6,11 +6,18 @@ import { pnlClass, signedUsd, usd } from '../lib/format'
 import { supabase } from '../lib/supabase'
 import { Logo } from './Logo'
 
+export type Page = 'chain' | 'strategy'
+
 interface Props {
   accounts: Account[]
   selected: Account | null
   summary: AccountSummary
   email: string | undefined
+  /** The page showing now, and how to switch. The strategy link pulses a dot
+   *  while the bot is armed, so it reads as running from any page. */
+  page: Page
+  onNavigate: (page: Page) => void
+  strategyArmed: boolean
   onSelect: (id: string) => void
   onCreate: (name: string, startingBalance: number) => Promise<void>
   /**
@@ -30,6 +37,9 @@ export function TopBar({
   selected,
   summary,
   email,
+  page,
+  onNavigate,
+  strategyArmed,
   onSelect,
   onCreate,
   onSetBalance,
@@ -104,6 +114,18 @@ export function TopBar({
           Paper
         </span>
       </div>
+
+      {/* The pages. Two for now — the chain and the bot — read as the section
+          nav, in the same weight the expiry pills use below. */}
+      <nav className="ml-3 flex items-center gap-1">
+        <NavLink label="Option Chain" active={page === 'chain'} onClick={() => onNavigate('chain')} />
+        <NavLink
+          label="Auto Strategy"
+          active={page === 'strategy'}
+          armed={strategyArmed}
+          onClick={() => onNavigate('strategy')}
+        />
+      </nav>
 
       <div className="ml-auto flex items-center gap-5 text-[12px]">
         <Stat label="Balance" value={usd(summary.balance)} />
@@ -373,6 +395,35 @@ export function TopBar({
         )}
       </div>
     </header>
+  )
+}
+
+function NavLink({
+  label,
+  active,
+  armed = false,
+  onClick,
+}: {
+  label: string
+  active: boolean
+  armed?: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`relative rounded px-3 py-1.5 text-[13px] font-medium transition-colors ${
+        active ? 'bg-raised-2 text-ink' : 'text-ink-3 hover:text-ink'
+      }`}
+    >
+      {label}
+      {armed && (
+        <span
+          className="absolute top-1 right-1 h-1.5 w-1.5 animate-pulse rounded-full bg-brand-text"
+          aria-label="strategy armed"
+        />
+      )}
+    </button>
   )
 }
 
