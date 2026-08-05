@@ -189,6 +189,38 @@ export async function fetchTickers(underlying = UNDERLYING): Promise<Ticker[]> {
 }
 
 // ---------------------------------------------------------------------------
+// Candle history
+// ---------------------------------------------------------------------------
+
+/** One OHLC bar. `time` is the bar's open, in Unix seconds; a 1h bar covers
+ *  `[time, time + 3600)`. Delta serves the index with no volume. */
+export interface Candle {
+  time: number
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number | null
+}
+
+/**
+ * The candle history the strategy reads. We chart the spot index the header
+ * already tracks (`.DEXAUTUSD`) rather than the perpetual, so a green bar here
+ * means the very price shown up top rose over the hour — the two never disagree.
+ * Delta returns newest-first; we sort oldest-first so `.at(-1)` is the latest.
+ */
+export async function fetchCandles(
+  resolution: string,
+  start: number,
+  end: number,
+  symbol: string = SPOT_INDEX,
+): Promise<Candle[]> {
+  const q = `resolution=${resolution}&symbol=${encodeURIComponent(symbol)}&start=${start}&end=${end}`
+  const rows = await getJson<Candle[]>(`/v2/history/candles?${q}`)
+  return [...rows].sort((a, b) => a.time - b.time)
+}
+
+// ---------------------------------------------------------------------------
 // WebSocket stream
 // ---------------------------------------------------------------------------
 

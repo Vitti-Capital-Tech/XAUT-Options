@@ -8,6 +8,7 @@ import { AdminPanel } from './components/AdminPanel'
 import { useAuth } from './hooks/useAuth'
 import { useAccounts } from './hooks/useAccounts'
 import { useTrading } from './hooks/useTrading'
+import { useAutoStrategy } from './hooks/useAutoStrategy'
 import { useKeywordTrigger } from './hooks/useKeywordTrigger'
 import { market, useMarketTick } from './lib/marketStore'
 import {
@@ -112,6 +113,19 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
   }, [productsBySymbol, trading])
 
   const expiry = expiries.find((e) => e.label === activeExpiry) ?? null
+
+  // ---- Auto strategy -------------------------------------------------------
+  // Reads the active expiry's strikes and the live spot to place its own market
+  // orders. market.spot is read through the tick above so its readout stays live.
+  const strategy = useAutoStrategy({
+    accountId: accounts.selectedId,
+    expiry,
+    spot: market.spot,
+    positions: trading.positions,
+    productsBySymbol,
+    placeOrder: trading.placeOrder,
+    closePosition: trading.closePosition,
+  })
 
   // ---- Live stream ---------------------------------------------------------
   const [stream] = useState(() => new MarketStream())
@@ -254,6 +268,7 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
           positions={trading.positions}
           fills={trading.fills}
           productsBySymbol={productsBySymbol}
+          strategy={strategy}
           onClosePosition={(pos, product) => trading.closePosition(pos, product)}
           onSetTpSl={trading.setTpSl}
           onPickSymbol={(product) => openTicket(product, 'buy', null)}

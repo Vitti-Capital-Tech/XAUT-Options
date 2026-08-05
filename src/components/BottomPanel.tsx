@@ -5,13 +5,16 @@ import { market, useMarketTick } from '../lib/marketStore'
 import { shortImRate, valuePosition, type PositionRow } from '../engine/paper'
 import type { FillRow } from '../hooks/useTrading'
 import { dateTimeParts, ivShort, pct, pnlClass, price } from '../lib/format'
+import { StrategyTab } from './StrategyTab'
+import type { StrategyApi } from '../hooks/useAutoStrategy'
 
-type Tab = 'positions' | 'history'
+type Tab = 'positions' | 'history' | 'strategy'
 
 interface Props {
   positions: PositionRow[]
   fills: FillRow[]
   productsBySymbol: Map<string, Product>
+  strategy: StrategyApi
   onClosePosition: (pos: PositionRow, product: Product) => Promise<void>
   onSetTpSl: (positionId: string, takeProfit: number | null, stopLoss: number | null) => Promise<void>
   onPickSymbol: (product: Product) => void
@@ -25,15 +28,19 @@ export function BottomPanel({
   positions,
   fills,
   productsBySymbol,
+  strategy,
   onClosePosition,
   onSetTpSl,
   onPickSymbol,
 }: Props) {
   const [tab, setTab] = useState<Tab>('positions')
 
-  const tabs: { key: Tab; label: string; count: number }[] = [
+  // The strategy tab carries no count; a dot instead reports whether it is
+  // armed, which is the one thing worth knowing without opening it.
+  const tabs: { key: Tab; label: string; count: number; armed?: boolean }[] = [
     { key: 'positions', label: 'Positions', count: positions.length },
     { key: 'history', label: 'Trade History', count: fills.length },
+    { key: 'strategy', label: 'Auto Strategy', count: -1, armed: strategy.armed },
   ]
 
   return (
@@ -52,9 +59,16 @@ export function BottomPanel({
               }`}
             >
               {/* Delta writes the count in parentheses beside the label, in the
-                  same ink, rather than as a chip of its own. */}
+                  same ink, rather than as a chip of its own. The strategy tab
+                  has no count; it shows a live dot when the bot is armed. */}
               {t.label}
               {t.count > 0 && <span className="num ml-1 text-ink-3">({t.count})</span>}
+              {t.armed && (
+                <span
+                  className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-brand-text align-middle"
+                  aria-label="armed"
+                />
+              )}
               {/* The brand rule sits on the border line itself, the width of the
                   tab, the way theirs does. */}
               {active && <span className="absolute inset-x-0 -bottom-px h-0.5 bg-brand-text" />}
@@ -74,6 +88,7 @@ export function BottomPanel({
           />
         )}
         {tab === 'history' && <HistoryTable fills={fills} />}
+        {tab === 'strategy' && <StrategyTab strategy={strategy} />}
       </div>
     </div>
   )
