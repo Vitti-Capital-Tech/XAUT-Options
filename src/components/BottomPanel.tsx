@@ -397,7 +397,7 @@ function PositionsTable({
             <Money value={totals.margin} />
           </Td>
           <Td className={`font-semibold ${pnlClass(totals.unrealized)}`}>
-            <Money value={totals.unrealized} signed />
+            <Money value={totals.unrealized} signed suffix="inherit" />
           </Td>
           <Td className="font-semibold text-ink">{totals.delta.toFixed(4)}</Td>
           <Td className="font-semibold text-ink">{totals.gamma.toFixed(6)}</Td>
@@ -448,7 +448,7 @@ function PositionsTable({
                 title={`${lots} ${lots === 1 ? 'contract' : 'contracts'}`}
               >
                 {isLong ? '+' : ''}
-                {(pos.net_qty * cv).toFixed(3)} <span className="text-ink-2">{UNDERLYING}</span>
+                {(pos.net_qty * cv).toFixed(3)} {UNDERLYING}
               </Td>
               <Td className="text-ink">
                 <Money value={spot * cv * lots} />
@@ -486,7 +486,7 @@ function PositionsTable({
               </Td>
               <Td className={pnlClass(v.unrealized)}>
                 <div className="font-semibold">
-                  <Money value={v.unrealized} signed />
+                  <Money value={v.unrealized} signed suffix="inherit" />
                 </div>
                 <div className="text-[10px]">{pct(v.unrealizedPct)}</div>
               </Td>
@@ -651,6 +651,25 @@ function TpSlDialog({
     const slNum = sl.trim() === '' ? null : Number(sl)
     if (tpNum !== null && !(tpNum > 0)) return setError('Take-profit must be a positive price')
     if (slNum !== null && !(slNum > 0)) return setError('Stop-loss must be a positive price')
+
+    // A level on the side the index has already passed would fire on the very
+    // next poll and close the position seconds after saving — which reads as the
+    // row vanishing. Refuse it, and say which way it has to go.
+    if (spot > 0) {
+      const tpArmed = tpNum !== null && (bullish ? spot >= tpNum : spot <= tpNum)
+      const slArmed = slNum !== null && (bullish ? spot <= slNum : spot >= slNum)
+      if (tpArmed) {
+        return setError(
+          `Take-profit ${price(tpNum)} is already past the index (${price(spot)}) — it would close at once. Put it ${bullish ? 'above' : 'below'} the index.`,
+        )
+      }
+      if (slArmed) {
+        return setError(
+          `Stop-loss ${price(slNum)} is already past the index (${price(spot)}) — it would close at once. Put it ${bullish ? 'below' : 'above'} the index.`,
+        )
+      }
+    }
+
     setBusy(true)
     setError(null)
     try {
@@ -840,9 +859,13 @@ const greekCell = (v: number | null, dp: number) => (v === null ? '—' : v.toFi
 function Money({
   value,
   signed = false,
+  // The dimmed grey suits a white value; a coloured value (P&L) wants its USD
+  // the same colour, so the whole figure reads as one.
+  suffix = 'dim',
 }: {
   value: number | string | null | undefined
   signed?: boolean
+  suffix?: 'dim' | 'inherit'
 }) {
   const n = typeof value === 'string' ? Number(value) : value
   if (n === null || n === undefined || !Number.isFinite(n)) return <span className="text-ink-4">—</span>
@@ -852,7 +875,7 @@ function Money({
   return (
     <>
       {sign}
-      {num} <span className="text-ink-2">USD</span>
+      {num} <span className={suffix === 'dim' ? 'text-ink-2' : undefined}>USD</span>
     </>
   )
 }
