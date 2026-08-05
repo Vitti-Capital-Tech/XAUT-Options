@@ -689,7 +689,6 @@ function TpSlDialog({
 
           <TpSlBlock
             title="Take Profit"
-            titleClass="text-pos"
             value={tp}
             onChange={setTp}
             dist={distPct(tp)}
@@ -700,7 +699,6 @@ function TpSlDialog({
 
           <TpSlBlock
             title="Stop Loss"
-            titleClass="text-neg"
             value={sl}
             onChange={setSl}
             dist={distPct(sl)}
@@ -726,23 +724,24 @@ function TpSlDialog({
  *  its distance readout, and the percentage presets beneath. */
 function TpSlBlock({
   title,
-  titleClass,
   value,
   onChange,
   dist,
   onPct,
 }: {
   title: string
-  titleClass: string
   value: string
   onChange: (v: string) => void
   dist: number | null
   onPct: (pct: number) => void
 }) {
+  // Delta reads the box as a plain percent — 0% when unset, 0.89% otherwise —
+  // rather than a dash, and trims the trailing zeros.
+  const pctLabel = `${parseFloat((dist ?? 0).toFixed(2))}%`
   return (
     <div>
       <div className="mb-1.5 flex items-center justify-between">
-        <span className={`text-[13px] font-bold ${titleClass}`}>{title}</span>
+        <span className="text-[13px] font-bold text-ink">{title}</span>
         <span className="rounded border border-brand-text/50 px-2 py-0.5 text-[10px] font-semibold text-brand-text">
           Market
         </span>
@@ -759,7 +758,7 @@ function TpSlBlock({
           className="num min-w-0 flex-1 bg-raised px-2.5 py-2 text-right text-sm text-ink placeholder:text-ink-4 focus:outline-none"
         />
         <span className="num flex w-14 items-center justify-center border-l border-raised-3 bg-raised-2 text-[11px] text-ink-3">
-          {dist === null ? '—' : `${dist.toFixed(2)}%`}
+          {pctLabel}
         </span>
       </div>
 
