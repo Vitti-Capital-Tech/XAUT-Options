@@ -46,10 +46,9 @@ export function BottomPanel({
   ]
 
   return (
-    /* h-full so the height chain stays definite all the way down: the pager is
-       pinned by a flex column, and a flex column cannot pin anything inside a
-       parent whose own height is decided by its content. */
-    <div className="flex h-full min-h-0 flex-col border-t border-line bg-surface">
+    /* No h-full: the panel is as tall as whichever table is showing, and shrinks
+       only when that table would exceed the cap its parent sets. */
+    <div className="flex min-h-0 flex-col border-t border-line bg-surface">
       <div className="flex shrink-0 items-center gap-1 border-b border-line px-2">
         {tabs.map((t) => (
           <button
@@ -70,9 +69,9 @@ export function BottomPanel({
         ))}
       </div>
 
-      {/* Each table owns its own scrolling now, so its pager can sit pinned
-          under it rather than scrolling away below the rows. */}
-      <div className="min-h-0 flex-1 overflow-hidden">
+      {/* Sizes to the table rather than filling the panel — min-h-0 so it can
+          still give way if the cap above bites. */}
+      <div className="flex min-h-0 flex-col">
         {tab === 'positions' && (
           <PositionsTable
             positions={positions}
@@ -198,7 +197,10 @@ function Paged<T>({
   rows: T[]
   children: (visible: T[]) => React.ReactNode
 }) {
-  const [size, setSize] = useState(20)
+  // Ten rather than Delta's twenty, chosen so that a default page fits without
+  // scrolling — which is the whole point of sizing to the rows. Larger pages are
+  // there to be picked deliberately.
+  const [size, setSize] = useState(10)
   const [page, setPage] = useState(0)
 
   const pages = Math.max(1, Math.ceil(rows.length / size))
@@ -208,8 +210,10 @@ function Paged<T>({
   const start = current * size
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="no-scrollbar min-h-0 flex-1 overflow-auto">
+    <div className="flex min-h-0 flex-col">
+      {/* No flex-1: the rows decide the height. overflow-auto is the escape
+          hatch for a page of a hundred, not the normal case. */}
+      <div className="no-scrollbar min-h-0 overflow-auto">
         {children(rows.slice(start, start + size))}
       </div>
 

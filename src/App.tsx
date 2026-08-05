@@ -212,25 +212,27 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
         ))}
       </div>
 
-      {/* Chain takes the space it needs; the panel is a fixed-height footer. */}
+      {/* The chain takes whatever the panel leaves. */}
       <div className="flex min-h-0 flex-1 flex-col">
         {expiry && (
           <OptionChain expiry={expiry} positions={trading.positions} onPick={openTicket} />
         )}
       </div>
 
-      <div className="h-72 shrink-0">
-        <div className="flex h-full flex-col">
-          <BottomPanel
-            positions={trading.positions}
-            openOrders={trading.openOrders}
-            fills={trading.fills}
-            productsBySymbol={productsBySymbol}
-            onClosePosition={(pos, product) => trading.closePosition(pos, product)}
-            onCancelOrder={trading.cancelOrder}
-            onPickSymbol={(product) => openTicket(product, 'buy', null)}
-          />
-        </div>
+      {/* The panel is as tall as its rows, the way Delta's is — a page of ten
+          shows ten rows, not ten rows inside a box of a fixed size. Capped so
+          that a page of a hundred cannot take the chain off the screen; past the
+          cap the rows scroll, which is the only case where they do. */}
+      <div className="flex max-h-[60vh] shrink-0 flex-col">
+        <BottomPanel
+          positions={trading.positions}
+          openOrders={trading.openOrders}
+          fills={trading.fills}
+          productsBySymbol={productsBySymbol}
+          onClosePosition={(pos, product) => trading.closePosition(pos, product)}
+          onCancelOrder={trading.cancelOrder}
+          onPickSymbol={(product) => openTicket(product, 'buy', null)}
+        />
       </div>
 
       {ticket && (
