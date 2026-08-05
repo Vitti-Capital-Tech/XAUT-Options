@@ -46,7 +46,10 @@ export function BottomPanel({
   ]
 
   return (
-    <div className="flex min-h-0 flex-col border-t border-line bg-surface">
+    /* h-full so the height chain stays definite all the way down: the pager is
+       pinned by a flex column, and a flex column cannot pin anything inside a
+       parent whose own height is decided by its content. */
+    <div className="flex h-full min-h-0 flex-col border-t border-line bg-surface">
       <div className="flex shrink-0 items-center gap-1 border-b border-line px-2">
         {tabs.map((t) => (
           <button
@@ -67,7 +70,9 @@ export function BottomPanel({
         ))}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto">
+      {/* Each table owns its own scrolling now, so its pager can sit pinned
+          under it rather than scrolling away below the rows. */}
+      <div className="min-h-0 flex-1 overflow-hidden">
         {tab === 'positions' && (
           <PositionsTable
             positions={positions}
@@ -95,15 +100,91 @@ function Empty({ children }: { children: React.ReactNode }) {
   return <div className="px-4 py-8 text-center text-xs text-ink-4">{children}</div>
 }
 
+/**
+ * Sticky lives on the `thead` rather than on each cell, so a table can pin more
+ * than one row — the positions table pins its totals above its labels.
+ */
 function Th({ children, align = 'right' }: { children: React.ReactNode; align?: 'left' | 'right' }) {
   return (
     <th
-      className={`sticky top-0 z-10 bg-raised px-2.5 py-1.5 text-[10px] font-semibold tracking-wider text-ink-3 uppercase ${
+      className={`bg-raised px-2.5 py-1.5 text-[10px] font-semibold tracking-wider text-ink-3 uppercase ${
         align === 'left' ? 'text-left' : 'text-right'
       }`}
     >
       {children}
     </th>
+  )
+}
+
+/**
+ * Rows, then the pager beneath them. Delta pages every one of these tables.
+ *
+ * The page size and the page live here so that switching tabs does not carry a
+ * page number over to a table that may not have that many rows.
+ */
+function Paged<T>({
+  rows,
+  children,
+}: {
+  rows: T[]
+  children: (visible: T[]) => React.ReactNode
+}) {
+  const [size, setSize] = useState(20)
+  const [page, setPage] = useState(0)
+
+  const pages = Math.max(1, Math.ceil(rows.length / size))
+  // Clamped rather than reset: deleting the last row of the last page should
+  // land you on the new last page, not back at the beginning.
+  const current = Math.min(page, pages - 1)
+  const start = current * size
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="min-h-0 flex-1 overflow-auto">
+        {children(rows.slice(start, start + size))}
+      </div>
+
+      {rows.length > 0 && (
+        <div className="flex shrink-0 items-center justify-center gap-3 border-t border-line px-3 py-1.5 text-[11px] text-ink-3">
+          <select
+            value={size}
+            onChange={(e) => {
+              setSize(Number(e.target.value))
+              setPage(0)
+            }}
+            aria-label="Rows per page"
+            className="num rounded border border-raised-3 bg-raised px-1.5 py-0.5 text-[11px] text-ink-2 focus:border-ink-3 focus:outline-none"
+          >
+            {[10, 20, 50, 100].map((n) => (
+              <option key={n} value={n}>
+                {n}/ Page
+              </option>
+            ))}
+          </select>
+
+          <button
+            onClick={() => setPage(current - 1)}
+            disabled={current === 0}
+            aria-label="Previous page"
+            className="rounded px-1.5 hover:text-ink disabled:opacity-30 disabled:hover:text-ink-3"
+          >
+            ‹
+          </button>
+          <span className="num">
+            {start + 1} - {Math.min(rows.length, start + size)}
+            <span className="text-ink-4"> of {rows.length}</span>
+          </span>
+          <button
+            onClick={() => setPage(current + 1)}
+            disabled={current >= pages - 1}
+            aria-label="Next page"
+            className="rounded px-1.5 hover:text-ink disabled:opacity-30 disabled:hover:text-ink-3"
+          >
+            ›
+          </button>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -217,8 +298,30 @@ function PositionsTable({
   // it in one cell rather than spread over two. Cashflows and Share are theirs
   // and not wanted. The greeks and the totals row are ours.
   return (
+    <Paged rows={positions}>
+      {(visible) => (
     <table className="w-full text-[12px]">
-      <thead>
+      <thead className="sticky top-0 z-10">
+        {/* Above the labels, not below the rows. Once the table pages, a footer
+            total sits under one page and reads as that page's — these are the
+            whole book's, every position, whichever page is showing. */}
+        <tr className="border-b border-line bg-raised-2">
+          <Td align="left" className="text-[10px] font-semibold tracking-wider text-ink-2 uppercase">
+            Σ Total · {positions.length}
+          </Td>
+          <Td />
+          <Td className="text-ink-2">{usd(totals.notional)}</Td>
+          <Td colSpan={3} />
+          <Td className="text-ink-2">{usd(totals.margin, 4)}</Td>
+          <Td className={`font-semibold ${pnlClass(totals.unrealized)}`}>
+            {signedUsd(totals.unrealized, 4)}
+          </Td>
+          <Td className="font-semibold text-ink">{totals.delta.toFixed(4)}</Td>
+          <Td className="font-semibold text-ink">{totals.gamma.toFixed(6)}</Td>
+          <Td className="font-semibold text-ink">{totals.vega.toFixed(4)}</Td>
+          <Td className="font-semibold text-ink">{totals.theta.toFixed(4)}</Td>
+          <Td />
+        </tr>
         <tr>
           <Th align="left">Symbol</Th>
           <Th>Size</Th>
@@ -236,7 +339,7 @@ function PositionsTable({
         </tr>
       </thead>
       <tbody>
-        {positions.map((pos) => {
+        {visible.map((pos) => {
           const ticker = market.get(pos.symbol)
           const product = productsBySymbol.get(pos.symbol)
           const v = valuePosition(pos, ticker, spot, product ? shortImRate(product) : undefined)
@@ -320,28 +423,9 @@ function PositionsTable({
         })}
       </tbody>
 
-      <tfoot>
-        <tr className="border-t border-line bg-raised">
-          <Td align="left" className="text-[10px] font-semibold tracking-wider text-ink-3 uppercase">
-            Total · {positions.length}
-          </Td>
-          {/* Sizes in different contracts do not add up, and neither do an entry,
-              an index or a mark. Notional, margin, UPNL and the greeks do. */}
-          <Td />
-          <Td className="text-ink-2">{usd(totals.notional)}</Td>
-          <Td colSpan={3} />
-          <Td className="text-ink-2">{usd(totals.margin, 4)}</Td>
-          <Td className={`font-semibold ${pnlClass(totals.unrealized)}`}>
-            {signedUsd(totals.unrealized, 4)}
-          </Td>
-          <Td className="font-semibold text-ink">{totals.delta.toFixed(4)}</Td>
-          <Td className="font-semibold text-ink">{totals.gamma.toFixed(6)}</Td>
-          <Td className="font-semibold text-ink">{totals.vega.toFixed(4)}</Td>
-          <Td className="font-semibold text-ink">{totals.theta.toFixed(4)}</Td>
-          <Td />
-        </tr>
-      </tfoot>
     </table>
+      )}
+    </Paged>
   )
 }
 
@@ -392,8 +476,10 @@ function OrdersTable({
   }
 
   return (
+    <Paged rows={orders}>
+      {(visible) => (
     <table className="w-full text-[12px]">
-      <thead>
+      <thead className="sticky top-0 z-10">
         <tr>
           <Th align="left">Time</Th>
           <Th align="left">Instrument</Th>
@@ -406,7 +492,7 @@ function OrdersTable({
         </tr>
       </thead>
       <tbody>
-        {orders.map((o) => {
+        {visible.map((o) => {
           const ticker = market.get(o.symbol)
           const limit = Number(o.limit_price)
           // How far the relevant side of the book has to travel to fill this order.
@@ -458,6 +544,8 @@ function OrdersTable({
         })}
       </tbody>
     </table>
+      )}
+    </Paged>
   )
 }
 
@@ -467,8 +555,10 @@ function HistoryTable({ fills }: { fills: FillRow[] }) {
   if (fills.length === 0) return <Empty>No trades yet.</Empty>
 
   return (
+    <Paged rows={fills}>
+      {(visible) => (
     <table className="w-full text-[12px]">
-      <thead>
+      <thead className="sticky top-0 z-10">
         <tr>
           <Th align="left">Time</Th>
           <Th align="left">Instrument</Th>
@@ -483,7 +573,7 @@ function HistoryTable({ fills }: { fills: FillRow[] }) {
         </tr>
       </thead>
       <tbody>
-        {fills.map((f) => {
+        {visible.map((f) => {
           const realized = Number(f.realized_pnl)
           return (
             <tr key={f.id} className="border-b border-line hover:bg-raised">
@@ -519,5 +609,7 @@ function HistoryTable({ fills }: { fills: FillRow[] }) {
         })}
       </tbody>
     </table>
+      )}
+    </Paged>
   )
 }
