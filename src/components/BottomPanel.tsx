@@ -448,7 +448,7 @@ function PositionsTable({
                 title={`${lots} ${lots === 1 ? 'contract' : 'contracts'}`}
               >
                 {isLong ? '+' : ''}
-                {(pos.net_qty * cv).toFixed(3)} <span className="text-ink-4">{UNDERLYING}</span>
+                {(pos.net_qty * cv).toFixed(3)} <span className="text-ink-2">{UNDERLYING}</span>
               </Td>
               <Td className="text-ink">
                 <Money value={spot * cv * lots} />
@@ -852,7 +852,7 @@ function Money({
   return (
     <>
       {sign}
-      {num} <span className="text-ink-4">USD</span>
+      {num} <span className="text-ink-2">USD</span>
     </>
   )
 }
