@@ -1,10 +1,20 @@
 import { useState } from 'react'
 import type { Product, Ticker } from '../lib/delta'
-import { formatExpiry } from '../lib/delta'
+import { UNDERLYING, formatExpiry } from '../lib/delta'
 import { market, useMarketTick } from '../lib/marketStore'
 import { shortImRate, valuePosition, type OrderRow, type PositionRow } from '../engine/paper'
 import type { FillRow } from '../hooks/useTrading'
-import { compact, dateTime, pct, pnlClass, price, signedUsd, timeOfDay, usd } from '../lib/format'
+import {
+  compact,
+  dateTime,
+  ivShort,
+  pct,
+  pnlClass,
+  price,
+  signedUsd,
+  timeOfDay,
+  usd,
+} from '../lib/format'
 
 type Tab = 'positions' | 'orders' | 'history'
 
@@ -102,15 +112,18 @@ function Td({
   align = 'right',
   className = '',
   colSpan,
+  title,
 }: {
   children?: React.ReactNode
   align?: 'left' | 'right'
   className?: string
   colSpan?: number
+  title?: string
 }) {
   return (
     <td
       colSpan={colSpan}
+      title={title}
       className={`num px-2.5 py-1.5 ${align === 'left' ? 'text-left' : 'text-right'} ${className}`}
     >
       {children}
@@ -187,7 +200,7 @@ function PositionsTable({
       const v = valuePosition(pos, t, spot, imRateFor(pos.symbol))
       const g = positionGreeks(pos, t)
       return {
-        value: acc.value + (v.currentValue ?? 0),
+        notional: acc.notional + spot * Number(pos.contract_value) * Math.abs(pos.net_qty),
         unrealized: acc.unrealized + (v.unrealized ?? 0),
         margin: acc.margin + v.marginBlocked,
         delta: acc.delta + (g.delta ?? 0),
@@ -196,21 +209,25 @@ function PositionsTable({
         theta: acc.theta + (g.theta ?? 0),
       }
     },
-    { value: 0, unrealized: 0, margin: 0, delta: 0, gamma: 0, vega: 0, theta: 0 },
+    { notional: 0, unrealized: 0, margin: 0, delta: 0, gamma: 0, vega: 0, theta: 0 },
   )
 
+  // Columns follow Delta's positions table: symbol, size in the underlying,
+  // notional, entry, index, mark, margin, then UPNL with its percentage beneath
+  // it in one cell rather than spread over two. Cashflows and Share are theirs
+  // and not wanted. The greeks and the totals row are ours.
   return (
     <table className="w-full text-[12px]">
       <thead>
         <tr>
-          <Th align="left">Instrument</Th>
+          <Th align="left">Symbol</Th>
           <Th>Size</Th>
-          <Th>Entry</Th>
-          <Th>Mark</Th>
-          <Th>Value</Th>
-          <Th>Unrealized</Th>
-          <Th>%</Th>
+          <Th>Notional</Th>
+          <Th>Entry Price</Th>
+          <Th>Index Price</Th>
+          <Th>Mark Price</Th>
           <Th>Margin</Th>
+          <Th>UPNL</Th>
           <Th>Delta</Th>
           <Th>Gamma</Th>
           <Th>Vega</Th>
@@ -225,6 +242,8 @@ function PositionsTable({
           const v = valuePosition(pos, ticker, spot, product ? shortImRate(product) : undefined)
           const isLong = pos.net_qty > 0
           const g = positionGreeks(pos, ticker)
+          const cv = Number(pos.contract_value)
+          const lots = Math.abs(pos.net_qty)
 
           return (
             <tr key={pos.id} className="border-b border-line hover:bg-raised">
@@ -237,24 +256,43 @@ function PositionsTable({
                   onClick={product ? () => onPickSymbol(product) : undefined}
                 />
               </Td>
-              <Td className={isLong ? 'text-pos' : 'text-neg'}>
+              {/* Delta sizes in the underlying, not in contracts. The contract
+                  count is what you trade in, so it rides along in the title. */}
+              <Td
+                className={isLong ? 'text-pos' : 'text-neg'}
+                title={`${lots} ${lots === 1 ? 'contract' : 'contracts'}`}
+              >
                 {isLong ? '+' : ''}
-                {pos.net_qty}
+                {(pos.net_qty * cv).toFixed(3)} {UNDERLYING}
               </Td>
+              <Td className="text-ink-2">{usd(spot * cv * lots)}</Td>
               <Td className="text-ink">{price(pos.avg_entry_price)}</Td>
-              <Td className="text-ink" >
+              <Td className="text-ink-2">{price(spot)}</Td>
+              <Td>
                 {v.mark !== null ? (
-                  <span title="Delta's fair mark price">
-                    {price(v.mark)}
-                  </span>
+                  <>
+                    <div className="text-ink">{price(v.mark)}</div>
+                    <div className="text-[10px] text-ink-3">
+                      {ivShort(ticker?.quotes?.mark_iv)}
+                    </div>
+                  </>
                 ) : (
-                  <span className="text-ink-4" title="No quote on the exit side">—</span>
+                  <span className="text-ink-3" title="No mark published">
+                    —
+                  </span>
                 )}
               </Td>
-              <Td className="text-ink-2">{usd(v.currentValue, 4)}</Td>
-              <Td className={`font-semibold ${pnlClass(v.unrealized)}`}>{signedUsd(v.unrealized, 4)}</Td>
-              <Td className={pnlClass(v.unrealized)}>{pct(v.unrealizedPct)}</Td>
-              <Td className="text-ink-2">{usd(v.marginBlocked, 4)}</Td>
+              {/* Delta shows no margin against a long, because buying one debits
+                  the premium outright. Ours blocks that premium instead, so the
+                  figure is real here and reduces what is available. */}
+              <Td className="text-ink-2">
+                {usd(v.marginBlocked, 4)}
+                {isLong && <div className="text-[10px] text-ink-3">premium</div>}
+              </Td>
+              <Td className={pnlClass(v.unrealized)}>
+                <div className="font-semibold">{signedUsd(v.unrealized, 4)}</div>
+                <div className="text-[10px]">{pct(v.unrealizedPct)}</div>
+              </Td>
               <Td className="text-ink-2">{greekCell(g.delta, 4)}</Td>
               <Td className="text-ink-2">{greekCell(g.gamma, 6)}</Td>
               <Td className="text-ink-2">{greekCell(g.vega, 4)}</Td>
@@ -287,14 +325,15 @@ function PositionsTable({
           <Td align="left" className="text-[10px] font-semibold tracking-wider text-ink-3 uppercase">
             Total · {positions.length}
           </Td>
-          {/* Size, entry, mark and the percentage do not sum to anything. */}
+          {/* Sizes in different contracts do not add up, and neither do an entry,
+              an index or a mark. Notional, margin, UPNL and the greeks do. */}
+          <Td />
+          <Td className="text-ink-2">{usd(totals.notional)}</Td>
           <Td colSpan={3} />
-          <Td className="text-ink-2">{usd(totals.value, 4)}</Td>
+          <Td className="text-ink-2">{usd(totals.margin, 4)}</Td>
           <Td className={`font-semibold ${pnlClass(totals.unrealized)}`}>
             {signedUsd(totals.unrealized, 4)}
           </Td>
-          <Td />
-          <Td className="text-ink-2">{usd(totals.margin, 4)}</Td>
           <Td className="font-semibold text-ink">{totals.delta.toFixed(4)}</Td>
           <Td className="font-semibold text-ink">{totals.gamma.toFixed(6)}</Td>
           <Td className="font-semibold text-ink">{totals.vega.toFixed(4)}</Td>
