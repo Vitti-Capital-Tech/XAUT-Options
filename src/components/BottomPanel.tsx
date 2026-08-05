@@ -119,17 +119,19 @@ function Th({
   children,
   align = 'right',
   walled = false,
+  className = '',
 }: {
   children: React.ReactNode
   align?: 'left' | 'right' | 'center'
   /** Ruled off on both sides and lifted, as the chain walls the strike column. */
   walled?: boolean
+  className?: string
 }) {
   return (
     <th
       className={`bg-raised px-2.5 py-1.5 text-[10px] font-semibold tracking-wider text-ink-3 uppercase ${alignClass(
         align,
-      )} ${walled ? WALL : ''}`}
+      )} ${walled ? WALL : ''} ${className}`}
     >
       {children}
     </th>
@@ -393,7 +395,7 @@ function PositionsTable({
           <Td className="font-semibold text-ink">{totals.delta.toFixed(4)}</Td>
           <Td className="font-semibold text-ink">{totals.gamma.toFixed(6)}</Td>
           <Td className="font-semibold text-ink">{totals.vega.toFixed(4)}</Td>
-          <Td className="font-semibold text-ink">{totals.theta.toFixed(4)}</Td>
+          <Td className="pr-5 font-semibold text-ink">{totals.theta.toFixed(4)}</Td>
           <Td walled />
         </tr>
         <tr>
@@ -408,7 +410,7 @@ function PositionsTable({
           <Th>Delta</Th>
           <Th>Gamma</Th>
           <Th>Vega</Th>
-          <Th>Theta</Th>
+          <Th className="pr-5">Theta</Th>
           <Th align="center" walled>Action</Th>
         </tr>
       </thead>
@@ -471,7 +473,7 @@ function PositionsTable({
               <Td className="text-ink-2">{greekCell(g.delta, 4)}</Td>
               <Td className="text-ink-2">{greekCell(g.gamma, 6)}</Td>
               <Td className="text-ink-2">{greekCell(g.vega, 4)}</Td>
-              <Td className="text-ink-2">{greekCell(g.theta, 4)}</Td>
+              <Td className="pr-5 text-ink-2">{greekCell(g.theta, 4)}</Td>
               <Td align="center" walled>
                 <KillButton
                   disabled={!product || closing === pos.id}
