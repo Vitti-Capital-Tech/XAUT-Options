@@ -107,18 +107,18 @@ function Empty({ children }: { children: React.ReactNode }) {
 function Th({
   children,
   align = 'right',
-  pinned = false,
+  walled = false,
 }: {
   children: React.ReactNode
   align?: 'left' | 'right'
-  /** Held against the right edge while the rest of the table scrolls under it. */
-  pinned?: boolean
+  /** Ruled off on both sides, the way the chain walls the strike column. */
+  walled?: boolean
 }) {
   return (
     <th
       className={`bg-raised px-2.5 py-1.5 text-[10px] font-semibold tracking-wider text-ink-3 uppercase ${
         align === 'left' ? 'text-left' : 'text-right'
-      } ${pinned ? 'sticky right-0 z-10 border-l border-line' : ''}`}
+      } ${walled ? 'border-x border-line' : ''}`}
     >
       {children}
     </th>
@@ -254,7 +254,7 @@ function Td({
   className = '',
   colSpan,
   title,
-  pinned = false,
+  walled = false,
 }: {
   children?: React.ReactNode
   align?: 'left' | 'right'
@@ -262,18 +262,18 @@ function Td({
   colSpan?: number
   title?: string
   /**
-   * Held against the right edge. Needs an opaque background from the caller,
-   * since what it is holding still against is the rest of the row sliding
-   * beneath it — a transparent cell would let that show through.
+   * Ruled off on both sides, the way the chain walls the strike column. Not
+   * pinned: it scrolls with the table like every other column, and the rule is
+   * the whole of what sets it apart.
    */
-  pinned?: boolean
+  walled?: boolean
 }) {
   return (
     <td
       colSpan={colSpan}
       title={title}
       className={`num px-2.5 py-1.5 ${align === 'left' ? 'text-left' : 'text-right'} ${
-        pinned ? 'sticky right-0 z-[5] border-l border-line' : ''
+        walled ? 'border-x border-line' : ''
       } ${className}`}
     >
       {children}
@@ -389,7 +389,7 @@ function PositionsTable({
           <Td className="font-semibold text-ink">{totals.gamma.toFixed(6)}</Td>
           <Td className="font-semibold text-ink">{totals.vega.toFixed(4)}</Td>
           <Td className="font-semibold text-ink">{totals.theta.toFixed(4)}</Td>
-          <Td pinned className="bg-raised-2" />
+          <Td walled />
         </tr>
         <tr>
           <Th align="left">Symbol</Th>
@@ -404,7 +404,7 @@ function PositionsTable({
           <Th>Gamma</Th>
           <Th>Vega</Th>
           <Th>Theta</Th>
-          <Th align="right" pinned>Action</Th>
+          <Th align="right" walled>Action</Th>
         </tr>
       </thead>
       <tbody>
@@ -469,7 +469,7 @@ function PositionsTable({
               <Td className="text-ink-2">{greekCell(g.gamma, 6)}</Td>
               <Td className="text-ink-2">{greekCell(g.vega, 4)}</Td>
               <Td className="text-ink-2">{greekCell(g.theta, 4)}</Td>
-              <Td align="right" pinned className="bg-surface">
+              <Td align="right" walled>
                 <KillButton
                   disabled={!product || closing === pos.id}
                   busy={closing === pos.id}
@@ -555,7 +555,7 @@ function OrdersTable({
           <Th>Qty</Th>
           <Th>Limit</Th>
           <Th>Distance</Th>
-          <Th align="right" pinned>Action</Th>
+          <Th align="right" walled>Action</Th>
         </tr>
       </thead>
       <tbody>
@@ -590,7 +590,7 @@ function OrdersTable({
               <Td className={gap !== null && gap <= 0 ? 'text-pos' : 'text-ink-3'}>
                 {gap === null ? '—' : gap <= 0 ? 'crossing' : price(gap)}
               </Td>
-              <Td align="right" pinned className="bg-surface">
+              <Td align="right" walled>
                 <KillButton
                   disabled={cancelling === o.id || !productsBySymbol.has(o.symbol)}
                   busy={cancelling === o.id}
