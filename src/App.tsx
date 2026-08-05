@@ -252,11 +252,9 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
       <div className="flex flex-col">
         <BottomPanel
           positions={trading.positions}
-          openOrders={trading.openOrders}
           fills={trading.fills}
           productsBySymbol={productsBySymbol}
           onClosePosition={(pos, product) => trading.closePosition(pos, product)}
-          onCancelOrder={trading.cancelOrder}
           onPickSymbol={(product) => openTicket(product, 'buy', null)}
         />
       </div>

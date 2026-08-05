@@ -2,46 +2,35 @@ import { useState } from 'react'
 import type { Product, Ticker } from '../lib/delta'
 import { UNDERLYING } from '../lib/delta'
 import { market, useMarketTick } from '../lib/marketStore'
-import { shortImRate, valuePosition, type OrderRow, type PositionRow } from '../engine/paper'
+import { shortImRate, valuePosition, type PositionRow } from '../engine/paper'
 import type { FillRow } from '../hooks/useTrading'
-import {
-  compact,
-  dateTime,
-  ivShort,
-  pct,
-  pnlClass,
-  price,
-  signedUsd,
-  timeOfDay,
-  usd,
-} from '../lib/format'
+import { compact, dateTime, ivShort, pct, pnlClass, price, signedUsd, usd } from '../lib/format'
 
-type Tab = 'positions' | 'orders' | 'history'
+type Tab = 'positions' | 'history'
 
 interface Props {
   positions: PositionRow[]
-  openOrders: OrderRow[]
   fills: FillRow[]
   productsBySymbol: Map<string, Product>
   onClosePosition: (pos: PositionRow, product: Product) => Promise<void>
-  onCancelOrder: (orderId: string) => Promise<void>
   onPickSymbol: (product: Product) => void
 }
 
+// No Open Orders tab: the ticket is market-only, so nothing ever rests. The
+// browser fill engine still resolves any limit order left in the database from
+// before, it simply has no tab of its own now — a position is closed from its
+// own row, which is the only order anyone places here.
 export function BottomPanel({
   positions,
-  openOrders,
   fills,
   productsBySymbol,
   onClosePosition,
-  onCancelOrder,
   onPickSymbol,
 }: Props) {
   const [tab, setTab] = useState<Tab>('positions')
 
   const tabs: { key: Tab; label: string; count: number }[] = [
     { key: 'positions', label: 'Positions', count: positions.length },
-    { key: 'orders', label: 'Open Orders', count: openOrders.length },
     { key: 'history', label: 'Trade History', count: fills.length },
   ]
 
@@ -79,13 +68,6 @@ export function BottomPanel({
             productsBySymbol={productsBySymbol}
             onClosePosition={onClosePosition}
             onPickSymbol={onPickSymbol}
-          />
-        )}
-        {tab === 'orders' && (
-          <OrdersTable
-            orders={openOrders}
-            productsBySymbol={productsBySymbol}
-            onCancelOrder={onCancelOrder}
           />
         )}
         {tab === 'history' && <HistoryTable fills={fills} />}
@@ -527,97 +509,6 @@ function positionGreeks(pos: PositionRow, ticker: Ticker | undefined) {
 }
 
 const greekCell = (v: number | null, dp: number) => (v === null ? '—' : v.toFixed(dp))
-
-// ---------------------------------------------------------------------------
-
-function OrdersTable({
-  orders,
-  productsBySymbol,
-  onCancelOrder,
-}: {
-  orders: OrderRow[]
-  productsBySymbol: Map<string, Product>
-  onCancelOrder: (orderId: string) => Promise<void>
-}) {
-  useMarketTick()
-  const [cancelling, setCancelling] = useState<string | null>(null)
-
-  if (orders.length === 0) {
-    return (
-      <Empty>
-        No open orders. The ticket places market orders only, so nothing rests here — any
-        limit order left from before can still be cancelled from this tab.
-      </Empty>
-    )
-  }
-
-  return (
-    <Paged rows={orders}>
-      {(visible) => (
-    <table className="w-full text-[12px]">
-      <thead className="sticky top-0 z-10">
-        <tr>
-          <Th align="left">Time</Th>
-          <Th align="left">Instrument</Th>
-          <Th align="left">Side</Th>
-          <Th align="left">Type</Th>
-          <Th>Qty</Th>
-          <Th>Limit</Th>
-          <Th>Distance</Th>
-          <Th align="center" wall="end">Action</Th>
-        </tr>
-      </thead>
-      <tbody>
-        {visible.map((o) => {
-          const ticker = market.get(o.symbol)
-          const limit = Number(o.limit_price)
-          // How far the relevant side of the book has to travel to fill this order.
-          const reference =
-            o.side === 'buy' ? ticker?.quotes?.best_ask : ticker?.quotes?.best_bid
-          const gap = reference ? (o.side === 'buy' ? Number(reference) - limit : limit - Number(reference)) : null
-
-          return (
-            <tr key={o.id} className="border-b border-line hover:bg-raised">
-              <Td align="left" className="text-ink-3">{timeOfDay(o.created_at)}</Td>
-              <Td align="left">
-                <Instrument symbol={o.symbol} accent={o.side === 'buy' ? 'pos' : 'neg'} />
-              </Td>
-              <Td align="left" className={o.side === 'buy' ? 'text-pos' : 'text-neg'}>
-                {o.side.toUpperCase()}
-              </Td>
-              <Td align="left" className="text-ink-2 capitalize">
-                {o.order_type}
-                {o.reduce_only && <span className="ml-1 text-[10px] text-brand-text">RO</span>}
-              </Td>
-              <Td className="text-ink">{o.qty}</Td>
-              <Td className="text-ink">{price(o.limit_price)}</Td>
-              <Td className={gap !== null && gap <= 0 ? 'text-pos' : 'text-ink-3'}>
-                {gap === null ? '—' : gap <= 0 ? 'crossing' : price(gap)}
-              </Td>
-              <Td align="center" wall="end">
-                <KillButton
-                  disabled={cancelling === o.id || !productsBySymbol.has(o.symbol)}
-                  busy={cancelling === o.id}
-                  onClick={async () => {
-                    setCancelling(o.id)
-                    try {
-                      await onCancelOrder(o.id)
-                    } finally {
-                      setCancelling(null)
-                    }
-                  }}
-                  title="Cancel this order"
-                />
-              </Td>
-            </tr>
-          )
-        })}
-      </tbody>
-    </table>
-      )}
-    </Paged>
-  )
-}
 
 // ---------------------------------------------------------------------------
 
