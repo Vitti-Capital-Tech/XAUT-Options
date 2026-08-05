@@ -275,7 +275,9 @@ function Td({
     <td
       colSpan={colSpan}
       title={title}
-      className={`num px-3 py-2.5 ${alignClass(align)} ${wall ? WALL[wall] : ''} ${className}`}
+      className={`num px-3 py-2.5 whitespace-nowrap ${alignClass(align)} ${
+        wall ? WALL[wall] : ''
+      } ${className}`}
     >
       {children}
     </td>
@@ -303,7 +305,10 @@ function Instrument({
       onClick={onClick}
       disabled={!onClick}
       title={symbol}
-      className="flex items-center justify-center gap-2 enabled:hover:underline"
+      /* inline-flex, not flex: a block-level button sizes to fit and then sits
+         wherever the box model puts it, which text-align cannot reach — that is
+         what stranded this at the left of a centred column. */
+      className="inline-flex items-center justify-center gap-2 align-middle enabled:hover:underline"
     >
       <span
         aria-hidden
@@ -897,22 +902,39 @@ function HistoryTable({ fills }: { fills: FillRow[] }) {
   return (
     <Paged rows={fills}>
       {(visible) => (
-    <table className="w-full text-[13px]">
+    <table className="w-full table-fixed text-[13px]">
+      {/* Seven columns is a third of what Delta's order history carries, so a
+          table this wide has slack — and auto layout gives it to whichever cell
+          holds the longest string. That is what took Symbol out to a quarter of
+          the row and opened the void between Side and Execution Price.
+
+          Fixed shares instead, each column's widest content plus an equal cut of
+          what is left over, so the air falls between the columns evenly rather
+          than pooling in whichever one happens to hold a long header. */}
+      <colgroup>
+        <col className="w-[20%]" />
+        <col className="w-[12%]" />
+        <col className="w-[11%]" />
+        <col className="w-[12%]" />
+        <col className="w-[15%]" />
+        <col className="w-[15%]" />
+        <col className="w-[15%]" />
+      </colgroup>
       <thead className="sticky top-0 z-10">
         {/* Delta's order-history order, less the columns that never vary on a
             fills ledger. Symbol and Time are walled, as the positions table
             walls its symbol and action, so the row reads between two edges.
-            Each label sits over its own figures: left where the cell reads as
-            text, right where it reads as a number — Delta hangs Symbol and Time
-            on the left of their columns, not down the middle of them. */}
+            Every column centres over its own figures: with columns this wide,
+            ranging the figures to one edge left more air inside a column than
+            between them, which read as the wrong grouping. */}
         <tr>
-          <Th align="left" wall="start">Symbol</Th>
-          <Th>Qty (Lot)</Th>
-          <Th align="left">Side</Th>
-          <Th>Execution Price</Th>
-          <Th>Size</Th>
-          <Th>Realized PnL</Th>
-          <Th align="left" wall="end">Time</Th>
+          <Th align="center" wall="start">Symbol</Th>
+          <Th align="center">Qty (Lot)</Th>
+          <Th align="center">Side</Th>
+          <Th align="center">Execution Price</Th>
+          <Th align="center">Size</Th>
+          <Th align="center">Realized PnL</Th>
+          <Th align="center" wall="end">Time</Th>
         </tr>
       </thead>
       <tbody>
@@ -923,24 +945,24 @@ function HistoryTable({ fills }: { fills: FillRow[] }) {
           const at = dateTimeParts(f.created_at)
           return (
             <tr key={f.id} className="border-b border-line hover:bg-raised">
-              <Td align="left" wall="start">
+              <Td align="center" wall="start">
                 <Instrument symbol={f.symbol} accent={buy ? 'pos' : 'neg'} />
               </Td>
-              <Td className="text-ink">{f.qty}</Td>
+              <Td align="center" className="text-ink">{f.qty}</Td>
               {/* Title case, as Delta writes a side — `Sell`, not a shouted
                   SELL. The colour already says which way it went. */}
-              <Td align="left" className={buy ? 'text-pos' : 'text-neg'}>
+              <Td align="center" className={buy ? 'text-pos' : 'text-neg'}>
                 {buy ? 'Buy' : 'Sell'}
               </Td>
-              <Td className="text-ink">{price(f.price)}</Td>
-              <Td className={buy ? 'text-pos' : 'text-neg'}>
+              <Td align="center" className="text-ink">{price(f.price)}</Td>
+              <Td align="center" className={buy ? 'text-pos' : 'text-neg'}>
                 {buy ? '+' : '-'}
                 {size.toFixed(3)} {UNDERLYING}
               </Td>
-              <Td className={realized === 0 ? 'text-ink-4' : pnlClass(realized)}>
+              <Td align="center" className={realized === 0 ? 'text-ink-4' : pnlClass(realized)}>
                 {realized === 0 ? '—' : <Money value={realized} signed suffix="inherit" />}
               </Td>
-              <Td align="left" wall="end" className="leading-tight text-ink-2">
+              <Td align="center" wall="end" className="leading-tight text-ink-2">
                 <div>{at.date}</div>
                 <div>{at.time}</div>
               </Td>
