@@ -13,6 +13,7 @@ interface Props {
   fills: FillRow[]
   productsBySymbol: Map<string, Product>
   onClosePosition: (pos: PositionRow, product: Product) => Promise<void>
+  onSetTpSl: (positionId: string, takeProfit: number | null, stopLoss: number | null) => Promise<void>
   onPickSymbol: (product: Product) => void
 }
 
@@ -25,6 +26,7 @@ export function BottomPanel({
   fills,
   productsBySymbol,
   onClosePosition,
+  onSetTpSl,
   onPickSymbol,
 }: Props) {
   const [tab, setTab] = useState<Tab>('positions')
@@ -67,6 +69,7 @@ export function BottomPanel({
             positions={positions}
             productsBySymbol={productsBySymbol}
             onClosePosition={onClosePosition}
+            onSetTpSl={onSetTpSl}
             onPickSymbol={onPickSymbol}
           />
         )}
@@ -312,15 +315,19 @@ function PositionsTable({
   positions,
   productsBySymbol,
   onClosePosition,
+  onSetTpSl,
   onPickSymbol,
 }: {
   positions: PositionRow[]
   productsBySymbol: Map<string, Product>
   onClosePosition: (pos: PositionRow, product: Product) => Promise<void>
+  onSetTpSl: (positionId: string, takeProfit: number | null, stopLoss: number | null) => Promise<void>
   onPickSymbol: (product: Product) => void
 }) {
   useMarketTick()
   const [closing, setClosing] = useState<string | null>(null)
+  // The position whose TP/SL is being edited, in a dialog over the table.
+  const [editing, setEditing] = useState<PositionRow | null>(null)
   const spot = market.spot
 
   if (positions.length === 0) return <Empty>No open positions. Click a bid or ask on the chain to trade.</Empty>
@@ -356,6 +363,15 @@ function PositionsTable({
   // it in one cell rather than spread over two. Cashflows and Share are theirs
   // and not wanted. The greeks and the totals row are ours.
   return (
+    <>
+      {editing && (
+        <TpSlDialog
+          position={editing}
+          spot={spot}
+          onClose={() => setEditing(null)}
+          onSave={onSetTpSl}
+        />
+      )}
     <Paged rows={positions}>
       {(visible) => (
     <table className="w-full text-[12px]">
@@ -373,7 +389,8 @@ function PositionsTable({
           </Td>
           <Td />
           <Td className="text-ink-2">{usd(totals.notional)}</Td>
-          <Td colSpan={3} />
+          {/* entry · index · mark · TP/SL — none of them sum. */}
+          <Td colSpan={4} />
           <Td className="text-ink-2">{usd(totals.margin, 4)}</Td>
           <Td className={`font-semibold ${pnlClass(totals.unrealized)}`}>
             {signedUsd(totals.unrealized, 4)}
@@ -391,6 +408,7 @@ function PositionsTable({
           <Th>Entry Price</Th>
           <Th>Index Price</Th>
           <Th>Mark Price</Th>
+          <Th align="center">TP / SL</Th>
           <Th>Margin</Th>
           <Th>UPNL</Th>
           <Th>Delta</Th>
@@ -445,6 +463,13 @@ function PositionsTable({
                   </span>
                 )}
               </Td>
+              <Td align="center">
+                <TpSlCell
+                  takeProfit={pos.take_profit}
+                  stopLoss={pos.stop_loss}
+                  onEdit={() => setEditing(pos)}
+                />
+              </Td>
               {/* Delta shows no margin against a long, because buying one debits
                   the premium outright. Ours blocks that premium instead, so the
                   figure is real here and reduces what is available. */}
@@ -484,6 +509,156 @@ function PositionsTable({
     </table>
       )}
     </Paged>
+    </>
+  )
+}
+
+/**
+ * The TP/SL cell — two small lines, each a level or a dash, with a pencil to
+ * arm them. Delta shows the same TP:/SL: stack; the pencil opens the editor.
+ */
+function TpSlCell({
+  takeProfit,
+  stopLoss,
+  onEdit,
+}: {
+  takeProfit: string | null
+  stopLoss: string | null
+  onEdit: () => void
+}) {
+  const line = (label: string, v: string | null, tone: string) => (
+    <div className="flex items-baseline justify-center gap-1 text-[10px] leading-tight">
+      <span className="text-ink-4">{label}</span>
+      <span className={v ? tone : 'text-ink-4'}>{v ? price(v) : '—'}</span>
+    </div>
+  )
+  return (
+    <button
+      type="button"
+      onClick={onEdit}
+      title="Set take-profit / stop-loss"
+      className="mx-auto flex items-center gap-1.5 rounded px-1.5 py-0.5 hover:bg-raised-2"
+    >
+      <div>
+        {line('TP', takeProfit, 'text-pos')}
+        {line('SL', stopLoss, 'text-neg')}
+      </div>
+      <span className="text-[10px] text-ink-4">✎</span>
+    </button>
+  )
+}
+
+/**
+ * Arms the index-price levels. The trigger direction is the position's, and the
+ * dialog says which way each fires so a level set the wrong side is obvious
+ * before it is saved rather than after it never triggers.
+ */
+function TpSlDialog({
+  position,
+  spot,
+  onClose,
+  onSave,
+}: {
+  position: PositionRow
+  spot: number
+  onClose: () => void
+  onSave: (positionId: string, takeProfit: number | null, stopLoss: number | null) => Promise<void>
+}) {
+  const [tp, setTp] = useState(position.take_profit ?? '')
+  const [sl, setSl] = useState(position.stop_loss ?? '')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const isLong = position.net_qty > 0
+  const bullish = (position.contract_type === 'call_options') === isLong
+
+  const save = async () => {
+    const tpNum = tp.trim() === '' ? null : Number(tp)
+    const slNum = sl.trim() === '' ? null : Number(sl)
+    if (tpNum !== null && !(tpNum > 0)) return setError('Take-profit must be a positive price')
+    if (slNum !== null && !(slNum > 0)) return setError('Stop-loss must be a positive price')
+    setBusy(true)
+    setError(null)
+    try {
+      await onSave(position.id, tpNum, slNum)
+      onClose()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save levels')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-sm rounded-lg border border-raised-3 bg-surface p-4 shadow-delta-lg"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-1 text-sm font-semibold text-ink">Take Profit / Stop Loss</div>
+        <div className="num mb-3 text-[11px] text-ink-3">
+          {position.symbol} · index {price(spot)}
+        </div>
+
+        <label className="mb-3 block">
+          <div className="mb-1 flex items-baseline justify-between">
+            <span className="text-[12px] font-medium text-pos">Take Profit</span>
+            <span className="text-[10px] text-ink-4">
+              fires when index {bullish ? 'rises to' : 'falls to'}
+            </span>
+          </div>
+          <input
+            type="number"
+            value={tp}
+            onChange={(e) => setTp(e.target.value)}
+            placeholder="none"
+            className="num w-full rounded border border-raised-3 bg-raised px-2 py-1.5 text-right text-sm text-ink focus:border-ink-3 focus:outline-none"
+          />
+        </label>
+
+        <label className="block">
+          <div className="mb-1 flex items-baseline justify-between">
+            <span className="text-[12px] font-medium text-neg">Stop Loss</span>
+            <span className="text-[10px] text-ink-4">
+              fires when index {bullish ? 'falls to' : 'rises to'}
+            </span>
+          </div>
+          <input
+            type="number"
+            value={sl}
+            onChange={(e) => setSl(e.target.value)}
+            placeholder="none"
+            className="num w-full rounded border border-raised-3 bg-raised px-2 py-1.5 text-right text-sm text-ink focus:border-ink-3 focus:outline-none"
+          />
+        </label>
+
+        <p className="mt-3 text-[10px] text-ink-4">
+          Watched server-side and closed at market when hit — it fires whether or not this tab is
+          open. Leave a field blank to clear that side.
+        </p>
+
+        {error && <p className="mt-2 text-[11px] text-neg">{error}</p>}
+
+        <div className="mt-3 flex gap-2">
+          <button
+            onClick={save}
+            disabled={busy}
+            className="flex-1 rounded bg-brand py-2 text-sm font-semibold text-white hover:bg-brand-hover disabled:opacity-40"
+          >
+            {busy ? 'Saving…' : 'Save'}
+          </button>
+          <button
+            onClick={onClose}
+            className="rounded border border-raised-3 px-4 py-2 text-sm text-ink-2 hover:border-ink-3"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 

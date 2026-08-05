@@ -255,6 +255,7 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
           fills={trading.fills}
           productsBySymbol={productsBySymbol}
           onClosePosition={(pos, product) => trading.closePosition(pos, product)}
+          onSetTpSl={trading.setTpSl}
           onPickSymbol={(product) => openTicket(product, 'buy', null)}
         />
       </div>

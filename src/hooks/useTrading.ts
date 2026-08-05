@@ -31,7 +31,7 @@ export interface FillRow {
 }
 
 const POSITION_COLS =
-  'id, account_id, symbol, product_id, contract_type, strike_price, expiry_label, contract_value, net_qty, avg_entry_price, realized_pnl'
+  'id, account_id, symbol, product_id, contract_type, strike_price, expiry_label, contract_value, net_qty, avg_entry_price, realized_pnl, take_profit, stop_loss'
 const ORDER_COLS =
   'id, account_id, symbol, product_id, contract_type, strike_price, expiry_label, contract_value, side, order_type, qty, limit_price, status, avg_fill_price, filled_qty, reduce_only, created_at'
 const FILL_COLS =
@@ -211,6 +211,24 @@ export function useTrading(accountId: string | null, onAccountChanged: () => voi
     [reload],
   )
 
+  /**
+   * Arm or clear a position's take-profit / stop-loss. The levels are index
+   * prices; the server-side cron watches them and fires the close. Pass null to
+   * clear a side.
+   */
+  const setTpSl = useCallback(
+    async (positionId: string, takeProfit: number | null, stopLoss: number | null) => {
+      const { error } = await supabase.rpc('set_position_tpsl', {
+        p_position_id: positionId,
+        p_take_profit: takeProfit,
+        p_stop_loss: stopLoss,
+      })
+      if (error) throw new Error(error.message)
+      await reload()
+    },
+    [reload],
+  )
+
   /** Flatten a position with an opposing market order. */
   const closePosition = useCallback(
     async (pos: PositionRow, product: Product, lots?: number) => {
@@ -291,6 +309,7 @@ export function useTrading(accountId: string | null, onAccountChanged: () => voi
     placeOrder,
     cancelOrder,
     closePosition,
+    setTpSl,
     registerProducts,
   }
 }

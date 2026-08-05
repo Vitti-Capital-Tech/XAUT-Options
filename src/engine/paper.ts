@@ -51,6 +51,9 @@ export interface PositionRow {
   net_qty: number
   avg_entry_price: string
   realized_pnl: string
+  /** Index-price exit levels, armed server-side. Null when unset. */
+  take_profit: string | null
+  stop_loss: string | null
 }
 
 export interface OrderRow {
