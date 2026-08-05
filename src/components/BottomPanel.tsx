@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { Product, Ticker } from '../lib/delta'
-import { UNDERLYING, formatExpiry } from '../lib/delta'
+import { UNDERLYING } from '../lib/delta'
 import { market, useMarketTick } from '../lib/marketStore'
 import { shortImRate, valuePosition, type OrderRow, type PositionRow } from '../engine/paper'
 import type { FillRow } from '../hooks/useTrading'
@@ -104,7 +104,9 @@ function Empty({ children }: { children: React.ReactNode }) {
  *
  * No background of its own, so the row's hover still runs underneath.
  */
-const WALL = 'border-x border-line shadow-[-7px_0_16px_-7px_#000000cc]'
+// A tight shadow that sits at the rule rather than reaching back across the
+// column before it — a wider one washed over the Theta figures next to it.
+const WALL = 'border-x border-line shadow-[-2px_0_5px_-3px_#000000aa]'
 
 /**
  * Sticky lives on the `thead` rather than on each cell, so a table can pin more
@@ -288,38 +290,34 @@ function Td({
   )
 }
 
-/** `C-XAUT-4040-300726` rendered as a compact, readable instrument label. */
+/**
+ * The full symbol behind a coloured bar, the way Delta prints it —
+ * `C-XAUT-4050-020826`, not a reformatting of it, because that string is what a
+ * trader reads across the terminal and the API. The bar is the accent: green
+ * where the row is long or a call, red where it is short or a put.
+ */
 function Instrument({
   symbol,
-  contractType,
-  strike,
-  expiryLabel,
+  accent,
   onClick,
 }: {
   symbol: string
-  contractType: string
-  strike: string | number
-  expiryLabel: string
+  accent: 'pos' | 'neg'
   onClick?: () => void
 }) {
-  const isCall = contractType === 'call_options'
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={!onClick}
       title={symbol}
-      className="flex items-center gap-1.5 text-left enabled:hover:underline"
+      className="flex items-center gap-2 text-left enabled:hover:underline"
     >
-      <span className="num font-medium text-ink">{Number(strike).toLocaleString()}</span>
       <span
-        className={`rounded px-1 py-px text-[10px] font-bold ${
-          isCall ? 'bg-pos-muted text-pos' : 'bg-neg-muted text-neg'
-        }`}
-      >
-        {isCall ? 'C' : 'P'}
-      </span>
-      <span className="text-[10px] text-ink-3">{formatExpiry(expiryLabel)}</span>
+        aria-hidden
+        className={`h-3.5 w-[3px] shrink-0 rounded-full ${accent === 'pos' ? 'bg-pos' : 'bg-neg'}`}
+      />
+      <span className="num font-medium text-ink">{symbol}</span>
     </button>
   )
 }
@@ -429,9 +427,7 @@ function PositionsTable({
               <Td align="left">
                 <Instrument
                   symbol={pos.symbol}
-                  contractType={pos.contract_type}
-                  strike={pos.strike_price}
-                  expiryLabel={pos.expiry_label}
+                  accent={isLong ? 'pos' : 'neg'}
                   onClick={product ? () => onPickSymbol(product) : undefined}
                 />
               </Td>
@@ -578,12 +574,7 @@ function OrdersTable({
             <tr key={o.id} className="border-b border-line hover:bg-raised">
               <Td align="left" className="text-ink-3">{timeOfDay(o.created_at)}</Td>
               <Td align="left">
-                <Instrument
-                  symbol={o.symbol}
-                  contractType={o.contract_type}
-                  strike={o.strike_price}
-                  expiryLabel={o.expiry_label}
-                />
+                <Instrument symbol={o.symbol} accent={o.side === 'buy' ? 'pos' : 'neg'} />
               </Td>
               <Td align="left" className={o.side === 'buy' ? 'text-pos' : 'text-neg'}>
                 {o.side.toUpperCase()}
@@ -652,18 +643,7 @@ function HistoryTable({ fills }: { fills: FillRow[] }) {
             <tr key={f.id} className="border-b border-line hover:bg-raised">
               <Td align="left" className="text-ink-3">{dateTime(f.created_at)}</Td>
               <Td align="left">
-                <span className="num font-medium text-ink">
-                  {Number(f.strike_price).toLocaleString()}
-                </span>
-                <span
-                  className={`ml-1.5 rounded px-1 py-px text-[10px] font-bold ${
-                    f.contract_type === 'call_options'
-                      ? 'bg-pos-muted text-pos'
-                      : 'bg-neg-muted text-neg'
-                  }`}
-                >
-                  {f.contract_type === 'call_options' ? 'C' : 'P'}
-                </span>
+                <Instrument symbol={f.symbol} accent={f.side === 'buy' ? 'pos' : 'neg'} />
               </Td>
               <Td align="left" className={f.side === 'buy' ? 'text-pos' : 'text-neg'}>
                 {f.side.toUpperCase()}
