@@ -324,8 +324,6 @@ function Book({
               {side === 'put' && (
                 <StrikeCell
                   strike={strike}
-                  expiry={expiry}
-                  positionBySymbol={positionBySymbol}
                   // The strike is ruled alongside whichever book was clicked,
                   // and closes that book's box off on its far side.
                   ruledFrom={selected?.strike === strike ? selected.side : null}
@@ -364,20 +362,11 @@ function Book({
  */
 function StrikeCell({
   strike,
-  expiry,
-  positionBySymbol,
   ruledFrom,
 }: {
   strike: number
-  expiry: Expiry
-  positionBySymbol: Map<string, PositionRow>
   ruledFrom: BookSide | null
 }) {
-  const call = expiry.calls.get(strike)
-  const put = expiry.puts.get(strike)
-  const held =
-    (call && positionBySymbol.has(call.symbol)) || (put && positionBySymbol.has(put.symbol))
-
   const rule =
     ruledFrom === 'call'
       ? 'border-x border-l-line border-r-brand-text border-y-[0.8px] border-y-brand-text'
@@ -387,10 +376,8 @@ function StrikeCell({
 
   return (
     <div
-      className={`strike-spine num flex items-center justify-center gap-1 self-stretch text-[12px] font-bold text-ink ${rule}`}
+      className={`strike-spine num flex items-center justify-center self-stretch text-[12px] font-bold text-ink ${rule}`}
     >
-      {/* Not Delta's — a marker so held strikes stay findable. */}
-      {held && <span className="text-[10px] text-brand-text">●</span>}
       {price(strike, 0)}
     </div>
   )
