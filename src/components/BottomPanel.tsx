@@ -4,7 +4,7 @@ import { UNDERLYING } from '../lib/delta'
 import { market, useMarketTick } from '../lib/marketStore'
 import { shortImRate, valuePosition, type PositionRow } from '../engine/paper'
 import type { FillRow } from '../hooks/useTrading'
-import { dateTime, ivShort, pct, pnlClass, price } from '../lib/format'
+import { dateTimeParts, ivShort, pct, pnlClass, price } from '../lib/format'
 
 type Tab = 'positions' | 'history'
 
@@ -112,9 +112,12 @@ function Th({
   wall?: 'start' | 'end'
   className?: string
 }) {
+  /* Delta labels a table the way the chain's header does and no differently:
+     12px, secondary ink, Title Case, regular weight. No small-caps, no letter
+     spacing — those made the labels shout over the figures they name. */
   return (
     <th
-      className={`bg-raised px-2.5 py-1.5 text-[10px] font-semibold tracking-wider text-ink-3 uppercase ${alignClass(
+      className={`bg-raised px-3 py-2 text-[12px] font-normal whitespace-nowrap text-ink-2 ${alignClass(
         align,
       )} ${wall ? WALL[wall] : ''} ${className}`}
     >
@@ -266,11 +269,13 @@ function Td({
    */
   wall?: 'start' | 'end'
 }) {
+  /* Delta's rows breathe: 12px of gutter and 10px above and below, so a
+     two-line cell makes a taller row rather than a squeeze. */
   return (
     <td
       colSpan={colSpan}
       title={title}
-      className={`num px-2.5 py-1.5 ${alignClass(align)} ${wall ? WALL[wall] : ''} ${className}`}
+      className={`num px-3 py-2.5 ${alignClass(align)} ${wall ? WALL[wall] : ''} ${className}`}
     >
       {children}
     </td>
@@ -383,7 +388,7 @@ function PositionsTable({
           <Td
             align="left"
             wall="start"
-            className="text-[10px] font-semibold tracking-wider text-ink-2 uppercase"
+            className="text-[12px] font-semibold text-ink-2"
           >
             Σ Total · {positions.length}
           </Td>
@@ -406,7 +411,7 @@ function PositionsTable({
           <Td wall="end" />
         </tr>
         <tr>
-          <Th align="center" wall="start">Symbol</Th>
+          <Th align="left" wall="start">Symbol</Th>
           <Th>Size</Th>
           <Th>Notional</Th>
           <Th>Entry Price</Th>
@@ -434,7 +439,7 @@ function PositionsTable({
 
           return (
             <tr key={pos.id} className="border-b border-line hover:bg-raised">
-              <Td align="center" wall="start">
+              <Td align="left" wall="start">
                 <Instrument
                   symbol={pos.symbol}
                   accent={isLong ? 'pos' : 'neg'}
@@ -896,15 +901,18 @@ function HistoryTable({ fills }: { fills: FillRow[] }) {
       <thead className="sticky top-0 z-10">
         {/* Delta's order-history order, less the columns that never vary on a
             fills ledger. Symbol and Time are walled, as the positions table
-            walls its symbol and action, so the row reads between two edges. */}
+            walls its symbol and action, so the row reads between two edges.
+            Each label sits over its own figures: left where the cell reads as
+            text, right where it reads as a number — Delta hangs Symbol and Time
+            on the left of their columns, not down the middle of them. */}
         <tr>
-          <Th align="center" wall="start">Symbol</Th>
+          <Th align="left" wall="start">Symbol</Th>
           <Th>Qty (Lot)</Th>
           <Th align="left">Side</Th>
           <Th>Execution Price</Th>
           <Th>Size</Th>
           <Th>Realized PnL</Th>
-          <Th align="center" wall="end">Time</Th>
+          <Th align="left" wall="end">Time</Th>
         </tr>
       </thead>
       <tbody>
@@ -912,25 +920,29 @@ function HistoryTable({ fills }: { fills: FillRow[] }) {
           const realized = Number(f.realized_pnl)
           const buy = f.side === 'buy'
           const size = f.qty * Number(f.contract_value)
+          const at = dateTimeParts(f.created_at)
           return (
             <tr key={f.id} className="border-b border-line hover:bg-raised">
-              <Td align="center" wall="start">
+              <Td align="left" wall="start">
                 <Instrument symbol={f.symbol} accent={buy ? 'pos' : 'neg'} />
               </Td>
               <Td className="text-ink">{f.qty}</Td>
+              {/* Title case, as Delta writes a side — `Sell`, not a shouted
+                  SELL. The colour already says which way it went. */}
               <Td align="left" className={buy ? 'text-pos' : 'text-neg'}>
-                {f.side.toUpperCase()}
+                {buy ? 'Buy' : 'Sell'}
               </Td>
               <Td className="text-ink">{price(f.price)}</Td>
               <Td className={buy ? 'text-pos' : 'text-neg'}>
                 {buy ? '+' : '-'}
-                {size.toFixed(3)} <span className="text-ink-2">{UNDERLYING}</span>
+                {size.toFixed(3)} {UNDERLYING}
               </Td>
               <Td className={realized === 0 ? 'text-ink-4' : pnlClass(realized)}>
                 {realized === 0 ? '—' : <Money value={realized} signed suffix="inherit" />}
               </Td>
-              <Td align="center" wall="end" className="text-ink-3">
-                {dateTime(f.created_at)}
+              <Td align="left" wall="end" className="leading-tight text-ink-2">
+                <div>{at.date}</div>
+                <div>{at.time}</div>
               </Td>
             </tr>
           )

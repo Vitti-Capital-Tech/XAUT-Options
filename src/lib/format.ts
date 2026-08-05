@@ -83,6 +83,19 @@ export function dateTime(iso: string): string {
   return `${d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })} ${d.toLocaleTimeString('en-GB', { hour12: false })}`
 }
 
+/**
+ * The same stamp in the two lines Delta stacks in a Time column — `05 Aug` over
+ * `5:30:01 PM`. Twelve-hour, as theirs is, because that is what an Indian desk
+ * reads the clock in.
+ */
+export function dateTimeParts(iso: string): { date: string; time: string } {
+  const d = new Date(iso)
+  return {
+    date: d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }),
+    time: d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit' }),
+  }
+}
+
 /** Tailwind text colour for a signed number. */
 export function pnlClass(v: number | null | undefined): string {
   if (v === null || v === undefined || !Number.isFinite(v) || v === 0) return 'text-zinc-400'
