@@ -735,9 +735,9 @@ function TpSlBlock({
   dist: number | null
   onPct: (pct: number) => void
 }) {
-  // Delta reads the box as a plain percent — 0% when unset, 0.89% otherwise —
-  // rather than a dash, and trims the trailing zeros.
-  const pctLabel = `${parseFloat((dist ?? 0).toFixed(2))}%`
+  // The percent shown in the editable box — 0 when unset, the distance from the
+  // index otherwise, trailing zeros trimmed.
+  const pctValue = parseFloat((dist ?? 0).toFixed(2))
   return (
     <div>
       <div className="mb-1.5 flex items-center justify-between">
@@ -749,30 +749,42 @@ function TpSlBlock({
 
       <div className="mb-1 text-[11px] text-ink-3">Trigger Price</div>
 
-      <div className="flex items-stretch overflow-hidden rounded border border-raised-3 focus-within:border-ink-3">
+      {/* One control: the price on top, and a strip beneath holding the four
+          presets and the editable percent — the box on the right, as Delta has
+          it, where typing a percent sets the trigger that far off the index. */}
+      <div className="overflow-hidden rounded border border-raised-3 focus-within:border-ink-3">
         <input
           type="number"
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder="Trigger Price USD"
-          className="num min-w-0 flex-1 bg-raised px-2.5 py-2 text-right text-sm text-ink placeholder:text-ink-4 focus:outline-none"
+          className="num w-full bg-raised px-2.5 py-2 text-right text-sm text-ink placeholder:text-ink-4 focus:outline-none"
         />
-        <span className="num flex w-14 items-center justify-center border-l border-raised-3 bg-raised-2 text-[11px] text-ink-3">
-          {pctLabel}
-        </span>
-      </div>
-
-      <div className="mt-1.5 flex gap-1">
-        {[5, 10, 15, 20].map((p) => (
-          <button
-            key={p}
-            type="button"
-            onClick={() => onPct(p)}
-            className="num flex-1 rounded bg-sub py-1 text-[11px] text-ink-3 hover:bg-raised-2 hover:text-ink"
-          >
-            {p}%
-          </button>
-        ))}
+        <div className="flex border-t border-raised-3 text-[11px]">
+          {[5, 10, 15, 20].map((p) => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => onPct(p)}
+              className="num flex-1 border-r border-raised-3 bg-sub py-1 text-ink-3 hover:bg-raised-2 hover:text-ink"
+            >
+              {p}%
+            </button>
+          ))}
+          <div className="flex w-16 items-center justify-center gap-0.5 bg-raised-2 text-ink">
+            <input
+              type="number"
+              value={Number.isFinite(pctValue) ? pctValue : 0}
+              onChange={(e) => {
+                const n = Number(e.target.value)
+                if (Number.isFinite(n)) onPct(n)
+              }}
+              aria-label={`${title} distance percent`}
+              className="num w-9 bg-transparent text-right focus:outline-none"
+            />
+            <span className="text-ink-3">%</span>
+          </div>
+        </div>
       </div>
     </div>
   )
