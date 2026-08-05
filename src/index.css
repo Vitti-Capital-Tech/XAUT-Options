@@ -143,6 +143,17 @@ body {
   width: 0;
 }
 
+/* The panel's tables are paged, so a bar alongside them is a second answer to a
+   question pagination already answers. Wheel, trackpad and keys still scroll —
+   only the drawn bar goes. */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
 /* The strike is pinned to the head of the puts pane and casts a shadow over
    the columns sliding under it, so it reads as the chain's centre line rather
    than as that pane's first column. */

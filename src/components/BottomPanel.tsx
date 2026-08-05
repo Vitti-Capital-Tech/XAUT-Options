@@ -101,6 +101,15 @@ function Empty({ children }: { children: React.ReactNode }) {
 }
 
 /**
+ * A ruled, lifted column — what the chain does to the strike, applied to the
+ * action column here. The shadow falls leftward, over the columns it sits beside,
+ * which is what makes it read as standing on the table rather than in it.
+ *
+ * No background of its own, so the row's hover still runs underneath.
+ */
+const WALL = 'border-x border-line shadow-[-7px_0_16px_-7px_#000000cc]'
+
+/**
  * Sticky lives on the `thead` rather than on each cell, so a table can pin more
  * than one row — the positions table pins its totals above its labels.
  */
@@ -111,14 +120,14 @@ function Th({
 }: {
   children: React.ReactNode
   align?: 'left' | 'right'
-  /** Ruled off on both sides, the way the chain walls the strike column. */
+  /** Ruled off on both sides and lifted, as the chain walls the strike column. */
   walled?: boolean
 }) {
   return (
     <th
       className={`bg-raised px-2.5 py-1.5 text-[10px] font-semibold tracking-wider text-ink-3 uppercase ${
         align === 'left' ? 'text-left' : 'text-right'
-      } ${walled ? 'border-x border-line' : ''}`}
+      } ${walled ? WALL : ''}`}
     >
       {children}
     </th>
@@ -200,7 +209,7 @@ function Paged<T>({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div className="no-scrollbar min-h-0 flex-1 overflow-auto">
         {children(rows.slice(start, start + size))}
       </div>
 
@@ -262,9 +271,8 @@ function Td({
   colSpan?: number
   title?: string
   /**
-   * Ruled off on both sides, the way the chain walls the strike column. Not
-   * pinned: it scrolls with the table like every other column, and the rule is
-   * the whole of what sets it apart.
+   * Ruled off on both sides and lifted, as the chain walls the strike column.
+   * Not pinned: it scrolls with the table like everything else.
    */
   walled?: boolean
 }) {
@@ -273,7 +281,7 @@ function Td({
       colSpan={colSpan}
       title={title}
       className={`num px-2.5 py-1.5 ${align === 'left' ? 'text-left' : 'text-right'} ${
-        walled ? 'border-x border-line' : ''
+        walled ? WALL : ''
       } ${className}`}
     >
       {children}
