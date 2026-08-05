@@ -924,11 +924,11 @@ function HistoryTable({ fills }: { fills: FillRow[] }) {
         {/* Delta's order-history order, less the columns that never vary on a
             fills ledger. Symbol and Time are walled, as the positions table
             walls its symbol and action, so the row reads between two edges.
-            Every column centres over its own figures: with columns this wide,
-            ranging the figures to one edge left more air inside a column than
-            between them, which read as the wrong grouping. */}
+            Every column centres over its own figures but Symbol, which hangs
+            left the way Delta hangs it — the row reads from a fixed left edge,
+            and a centred symbol wandered with the length of each contract. */}
         <tr>
-          <Th align="center" wall="start">Symbol</Th>
+          <Th align="left" wall="start">Symbol</Th>
           <Th align="center">Qty (Lot)</Th>
           <Th align="center">Side</Th>
           <Th align="center">Execution Price</Th>
@@ -945,7 +945,7 @@ function HistoryTable({ fills }: { fills: FillRow[] }) {
           const at = dateTimeParts(f.created_at)
           return (
             <tr key={f.id} className="border-b border-line hover:bg-raised">
-              <Td align="center" wall="start">
+              <Td align="left" wall="start">
                 <Instrument symbol={f.symbol} accent={buy ? 'pos' : 'neg'} />
               </Td>
               <Td align="center" className="text-ink">{f.qty}</Td>
