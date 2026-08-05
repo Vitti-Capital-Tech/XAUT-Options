@@ -694,7 +694,6 @@ function TpSlDialog({
             onChange={setTp}
             dist={distPct(tp)}
             onPct={(p) => setTp(stepFrom(p, 'tp'))}
-            hint={`fires when index ${bullish ? 'rises to' : 'falls to'} it`}
           />
 
           <div className="border-t border-dashed border-line" />
@@ -706,13 +705,7 @@ function TpSlDialog({
             onChange={setSl}
             dist={distPct(sl)}
             onPct={(p) => setSl(stepFrom(p, 'sl'))}
-            hint={`fires when index ${bullish ? 'falls to' : 'rises to'} it`}
           />
-
-          <p className="text-[10px] text-ink-4">
-            Watched server-side and closed at market when hit — it fires whether or not this tab is
-            open. Clear a field to remove that side.
-          </p>
 
           {error && <p className="text-[11px] text-neg">{error}</p>}
 
@@ -738,7 +731,6 @@ function TpSlBlock({
   onChange,
   dist,
   onPct,
-  hint,
 }: {
   title: string
   titleClass: string
@@ -746,7 +738,6 @@ function TpSlBlock({
   onChange: (v: string) => void
   dist: number | null
   onPct: (pct: number) => void
-  hint: string
 }) {
   return (
     <div>
@@ -756,6 +747,8 @@ function TpSlBlock({
           Market
         </span>
       </div>
+
+      <div className="mb-1 text-[11px] text-ink-3">Trigger Price</div>
 
       <div className="flex items-stretch overflow-hidden rounded border border-raised-3 focus-within:border-ink-3">
         <input
@@ -782,8 +775,6 @@ function TpSlBlock({
           </button>
         ))}
       </div>
-
-      <div className="mt-1 text-[10px] text-ink-4">{hint}</div>
     </div>
   )
 }
