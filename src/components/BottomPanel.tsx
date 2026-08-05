@@ -313,7 +313,7 @@ function Instrument({
       onClick={onClick}
       disabled={!onClick}
       title={symbol}
-      className="flex items-center gap-2 text-left enabled:hover:underline"
+      className="flex items-center justify-center gap-2 enabled:hover:underline"
     >
       <span
         aria-hidden
@@ -403,7 +403,7 @@ function PositionsTable({
           <Td wall="end" />
         </tr>
         <tr>
-          <Th align="left" wall="start">Symbol</Th>
+          <Th align="center" wall="start">Symbol</Th>
           <Th>Size</Th>
           <Th>Notional</Th>
           <Th>Entry Price</Th>
@@ -430,7 +430,7 @@ function PositionsTable({
 
           return (
             <tr key={pos.id} className="border-b border-line hover:bg-raised">
-              <Td align="left" wall="start">
+              <Td align="center" wall="start">
                 <Instrument
                   symbol={pos.symbol}
                   accent={isLong ? 'pos' : 'neg'}
