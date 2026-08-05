@@ -374,7 +374,7 @@ function PositionsTable({
       )}
     <Paged rows={positions}>
       {(visible) => (
-    <table className="w-full text-[12px]">
+    <table className="w-full text-[13px]">
       <thead className="sticky top-0 z-10">
         {/* Above the labels, not below the rows. Once the table pages, a footer
             total sits under one page and reads as that page's — these are the
@@ -388,12 +388,16 @@ function PositionsTable({
             Σ Total · {positions.length}
           </Td>
           <Td />
-          <Td className="text-ink-2">{usd(totals.notional)}</Td>
-          {/* entry · index · mark · TP/SL — none of them sum. */}
+          <Td className="text-ink">
+            <Money value={totals.notional} />
+          </Td>
+          {/* entry · TP/SL · index · mark — none of them sum. */}
           <Td colSpan={4} />
-          <Td className="text-ink-2">{usd(totals.margin, 4)}</Td>
+          <Td className="text-ink">
+            <Money value={totals.margin} />
+          </Td>
           <Td className={`font-semibold ${pnlClass(totals.unrealized)}`}>
-            {signedUsd(totals.unrealized, 4)}
+            <Money value={totals.unrealized} signed />
           </Td>
           <Td className="font-semibold text-ink">{totals.delta.toFixed(4)}</Td>
           <Td className="font-semibold text-ink">{totals.gamma.toFixed(6)}</Td>
@@ -444,9 +448,11 @@ function PositionsTable({
                 title={`${lots} ${lots === 1 ? 'contract' : 'contracts'}`}
               >
                 {isLong ? '+' : ''}
-                {(pos.net_qty * cv).toFixed(3)} {UNDERLYING}
+                {(pos.net_qty * cv).toFixed(3)} <span className="text-ink-4">{UNDERLYING}</span>
               </Td>
-              <Td className="text-ink-2">{usd(spot * cv * lots)}</Td>
+              <Td className="text-ink">
+                <Money value={spot * cv * lots} />
+              </Td>
               <Td className="text-ink">{price(pos.avg_entry_price)}</Td>
               <Td align="center">
                 <TpSlCell
@@ -456,7 +462,7 @@ function PositionsTable({
                   onClear={() => void onSetTpSl(pos.id, null, null)}
                 />
               </Td>
-              <Td className="text-ink-2">{price(spot)}</Td>
+              <Td className="text-ink">{price(spot)}</Td>
               <Td>
                 {v.mark !== null ? (
                   <>
@@ -474,12 +480,14 @@ function PositionsTable({
               {/* Delta shows no margin against a long, because buying one debits
                   the premium outright. Ours blocks that premium instead, so the
                   figure is real here and reduces what is available. */}
-              <Td className="text-ink-2">
-                {usd(v.marginBlocked, 4)}
+              <Td className="text-ink">
+                <Money value={v.marginBlocked} />
                 {isLong && <div className="text-[10px] text-ink-3">premium</div>}
               </Td>
               <Td className={pnlClass(v.unrealized)}>
-                <div className="font-semibold">{signedUsd(v.unrealized, 4)}</div>
+                <div className="font-semibold">
+                  <Money value={v.unrealized} signed />
+                </div>
                 <div className="text-[10px]">{pct(v.unrealizedPct)}</div>
               </Td>
               <Td className="text-ink-2">{greekCell(g.delta, 4)}</Td>
@@ -822,6 +830,32 @@ function positionGreeks(pos: PositionRow, ticker: Ticker | undefined) {
 }
 
 const greekCell = (v: number | null, dp: number) => (v === null ? '—' : v.toFixed(dp))
+
+/**
+ * A monetary value the way Delta writes it in this table: the number, then a
+ * dimmed USD, rather than a $ prefix. Two decimals on ordinary sizes; more only
+ * where the value is under a dollar, so a few-cent option premium is not
+ * flattened to 0.00. `signed` prepends a + on gains, for the P&L column.
+ */
+function Money({
+  value,
+  signed = false,
+}: {
+  value: number | string | null | undefined
+  signed?: boolean
+}) {
+  const n = typeof value === 'string' ? Number(value) : value
+  if (n === null || n === undefined || !Number.isFinite(n)) return <span className="text-ink-4">—</span>
+  const dp = n !== 0 && Math.abs(n) < 1 ? 4 : 2
+  const num = Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp })
+  const sign = n < 0 ? '-' : signed ? '+' : ''
+  return (
+    <>
+      {sign}
+      {num} <span className="text-ink-4">USD</span>
+    </>
+  )
+}
 
 // ---------------------------------------------------------------------------
 
