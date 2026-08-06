@@ -117,12 +117,6 @@ body {
   appearance: textfield;
 }
 
-/* The native clock glyph a time input draws clashes with the terminal and is not
-   worth its space — hide it and let the field be typed or arrowed. */
-input[type='time']::-webkit-calendar-picker-indicator {
-  display: none;
-}
-
 /* Divider matching Delta's translucent-white rule. */
 .divider-b {
   border-bottom: 1px solid #ffffff14;

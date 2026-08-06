@@ -14,16 +14,6 @@ export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
 
   return (
     <div className="flex flex-wrap items-center gap-x-6 gap-y-4 border-b border-line bg-raised px-5 py-3.5">
-      {/* Run / pause. The switch carries the state colour; the word says it plainly. */}
-      <div className="flex items-center gap-3">
-        <RunSwitch on={armed} onChange={setArmed} disabled={!hasAccount} />
-        <span className={`text-[15px] font-semibold ${armed ? 'text-pos' : 'text-ink-3'}`}>
-          {armed ? 'Running' : 'Paused'}
-        </span>
-      </div>
-
-      <Divider />
-
       <Field label="Strike">
         <Select
           value={config.moneyness}
@@ -50,12 +40,21 @@ export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
       </Field>
 
       <Field label="Window · IST">
-        <div className="flex h-9 items-center gap-2 rounded-md border border-raised-3 bg-surface px-3 transition-colors focus-within:border-brand-text hover:border-ink-3">
-          <TimeInput value={config.windowStart} onChange={(v) => setConfig({ windowStart: v })} />
+        <div className="flex items-center gap-2">
+          <TimePicker value={config.windowStart} onChange={(v) => setConfig({ windowStart: v })} />
           <span className="text-ink-4">–</span>
-          <TimeInput value={config.windowEnd} onChange={(v) => setConfig({ windowEnd: v })} />
+          <TimePicker value={config.windowEnd} onChange={(v) => setConfig({ windowEnd: v })} />
         </div>
       </Field>
+
+      {/* Run / pause, held to the right so the controls read left-to-right and
+          the switch sits on its own. */}
+      <div className="ml-auto flex items-center gap-3">
+        <span className={`text-[15px] font-semibold ${armed ? 'text-pos' : 'text-ink-3'}`}>
+          {armed ? 'Running' : 'Paused'}
+        </span>
+        <RunSwitch on={armed} onChange={setArmed} disabled={!hasAccount} />
+      </div>
     </div>
   )
 }
@@ -108,15 +107,7 @@ function Select<T extends string>({
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const onDown = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
-  }, [open])
+  useOutsideClose(ref, open, () => setOpen(false))
 
   const current = options.find((o) => o.value === value)
 
@@ -130,16 +121,7 @@ function Select<T extends string>({
         }`}
       >
         <span className="num">{current?.label}</span>
-        <svg
-          width="10"
-          height="10"
-          viewBox="0 0 12 12"
-          fill="none"
-          className={`shrink-0 text-ink-3 transition-transform ${open ? 'rotate-180' : ''}`}
-          aria-hidden
-        >
-          <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
+        <Chevron open={open} />
       </button>
 
       {open && (
@@ -168,8 +150,145 @@ function Select<T extends string>({
   )
 }
 
-function Divider() {
-  return <span className="hidden h-9 w-px shrink-0 bg-line sm:block" aria-hidden />
+const ROW_H = 28
+const HOURS = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'))
+const MINUTES = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0'))
+
+/**
+ * A dark time picker, so the field carries a clock without the native popup's
+ * white chrome. The button shows HH:MM and a clock; a click opens two scroll
+ * columns — hours and minutes — that centre on the current value.
+ */
+function TimePicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  const hourCol = useRef<HTMLDivElement>(null)
+  const minCol = useRef<HTMLDivElement>(null)
+  useOutsideClose(ref, open, () => setOpen(false))
+
+  const m = /^(\d{1,2}):(\d{2})$/.exec(value)
+  const hh = m ? m[1].padStart(2, '0') : '00'
+  const mm = m ? m[2] : '00'
+
+  // Centre each column on its current value when the picker opens.
+  useEffect(() => {
+    if (!open) return
+    const centre = (col: HTMLDivElement | null, idx: number) => {
+      if (col) col.scrollTop = idx * ROW_H - col.clientHeight / 2 + ROW_H / 2
+    }
+    centre(hourCol.current, Number(hh))
+    centre(minCol.current, Number(mm))
+  }, [open, hh, mm])
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className={`flex h-9 items-center gap-2 rounded-md border bg-surface px-2.5 text-[13px] text-ink transition-colors hover:border-ink-3 ${
+          open ? 'border-brand-text' : 'border-raised-3'
+        }`}
+      >
+        <span className="num">
+          {hh}:{mm}
+        </span>
+        <ClockIcon />
+      </button>
+
+      {open && (
+        <div className="absolute z-30 mt-1 flex overflow-hidden rounded-md border border-raised-3 bg-raised shadow-delta-lg">
+          <TimeColumn
+            colRef={hourCol}
+            items={HOURS}
+            selected={hh}
+            onPick={(h) => onChange(`${h}:${mm}`)}
+          />
+          <span className="w-px bg-line" />
+          <TimeColumn
+            colRef={minCol}
+            items={MINUTES}
+            selected={mm}
+            onPick={(min) => onChange(`${hh}:${min}`)}
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function TimeColumn({
+  colRef,
+  items,
+  selected,
+  onPick,
+}: {
+  colRef: React.RefObject<HTMLDivElement | null>
+  items: string[]
+  selected: string
+  onPick: (v: string) => void
+}) {
+  return (
+    <div ref={colRef} className="max-h-[168px] w-12 overflow-y-auto py-1">
+      {items.map((it) => {
+        const active = it === selected
+        return (
+          <button
+            key={it}
+            type="button"
+            onClick={() => onPick(it)}
+            style={{ height: ROW_H }}
+            className={`num flex w-full items-center justify-center text-[12px] transition-colors ${
+              active ? 'bg-raised-2 font-semibold text-brand-text' : 'text-ink-2 hover:bg-raised-2 hover:text-ink'
+            }`}
+          >
+            {it}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+
+/** Close a popover on a click outside its ref while it is open. */
+function useOutsideClose(
+  ref: React.RefObject<HTMLElement | null>,
+  open: boolean,
+  close: () => void,
+) {
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) close()
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [ref, open, close])
+}
+
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg
+      width="10"
+      height="10"
+      viewBox="0 0 12 12"
+      fill="none"
+      className={`shrink-0 text-ink-3 transition-transform ${open ? 'rotate-180' : ''}`}
+      aria-hidden
+    >
+      <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function ClockIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" className="shrink-0 text-ink-3" aria-hidden>
+      <circle cx="8" cy="8" r="6.25" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M8 4.75V8L10.25 9.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -180,17 +299,6 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       </span>
       {children}
     </div>
-  )
-}
-
-function TimeInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  return (
-    <input
-      type="time"
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="num w-[52px] bg-transparent text-center text-[13px] text-ink focus:outline-none"
-    />
   )
 }
 
