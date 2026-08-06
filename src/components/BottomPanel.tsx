@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { Product, Ticker } from '../lib/delta'
 import { UNDERLYING } from '../lib/delta'
 import { market, useMarketTick } from '../lib/marketStore'
-import { shortImRate, valuePosition, type PositionRow } from '../engine/paper'
+import { shortImRate, valuePosition, type PositionRow, type TriggerSource } from '../engine/paper'
 import type { FillRow } from '../hooks/useTrading'
 import { dateTimeParts, ivShort, pct, pnlClass, price } from '../lib/format'
 
@@ -13,7 +13,12 @@ interface Props {
   fills: FillRow[]
   productsBySymbol: Map<string, Product>
   onClosePosition: (pos: PositionRow, product: Product) => Promise<void>
-  onSetTpSl: (positionId: string, takeProfit: number | null, stopLoss: number | null) => Promise<void>
+  onSetTpSl: (
+    positionId: string,
+    takeProfit: number | null,
+    stopLoss: number | null,
+    trigger: TriggerSource,
+  ) => Promise<void>
   onPickSymbol: (product: Product) => void
 }
 
@@ -331,7 +336,12 @@ function PositionsTable({
   positions: PositionRow[]
   productsBySymbol: Map<string, Product>
   onClosePosition: (pos: PositionRow, product: Product) => Promise<void>
-  onSetTpSl: (positionId: string, takeProfit: number | null, stopLoss: number | null) => Promise<void>
+  onSetTpSl: (
+    positionId: string,
+    takeProfit: number | null,
+    stopLoss: number | null,
+    trigger: TriggerSource,
+  ) => Promise<void>
   onPickSymbol: (product: Product) => void
 }) {
   useMarketTick()
@@ -468,8 +478,9 @@ function PositionsTable({
                 <TpSlCell
                   takeProfit={pos.take_profit}
                   stopLoss={pos.stop_loss}
+                  trigger={pos.tpsl_trigger ?? 'index'}
                   onEdit={() => setEditing(pos)}
-                  onClear={() => void onSetTpSl(pos.id, null, null)}
+                  onClear={() => void onSetTpSl(pos.id, null, null, pos.tpsl_trigger ?? 'index')}
                 />
               </Td>
               <Td className="text-ink">{price(spot)}</Td>
@@ -540,11 +551,13 @@ function PositionsTable({
 function TpSlCell({
   takeProfit,
   stopLoss,
+  trigger,
   onEdit,
   onClear,
 }: {
   takeProfit: string | null
   stopLoss: string | null
+  trigger: TriggerSource
   onEdit: () => void
   onClear: () => void
 }) {
@@ -564,6 +577,13 @@ function TpSlCell({
             {stopLoss ? price(stopLoss) : '-'}
           </span>
         </div>
+        {/* Which price the levels watch, so a mark bracket is not misread as an
+            index one when the two carry such different numbers. */}
+        {armed && (
+          <div className="text-[9px] tracking-wider text-ink-4 uppercase">
+            on {trigger}
+          </div>
+        )}
       </div>
       <div className="flex items-center gap-1">
         <button
@@ -631,32 +651,59 @@ function TpSlDialog({
   position: PositionRow
   spot: number
   onClose: () => void
-  onSave: (positionId: string, takeProfit: number | null, stopLoss: number | null) => Promise<void>
+  onSave: (
+    positionId: string,
+    takeProfit: number | null,
+    stopLoss: number | null,
+    trigger: TriggerSource,
+  ) => Promise<void>
 }) {
+  useMarketTick() // keep the mark live while the dialog is open
   // Coerced to string: a numeric column can arrive as a number, and the render
   // path calls .trim() on these — an uncoerced number blanked the dialog the
   // moment it opened on an already-set level.
   const [tp, setTp] = useState(position.take_profit != null ? String(position.take_profit) : '')
   const [sl, setSl] = useState(position.stop_loss != null ? String(position.stop_loss) : '')
+  const [trigger, setTrigger] = useState<TriggerSource>(position.tpsl_trigger ?? 'index')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const isLong = position.net_qty > 0
   const bullish = (position.contract_type === 'call_options') === isLong
 
-  // A level's distance from the index, as a signed percent, so the input can
-  // show how far off it sits the way Delta's little box does.
-  const distPct = (v: string) => {
-    if (!spot || String(v).trim() === '') return null
-    const n = Number(v)
-    if (!Number.isFinite(n)) return null
-    return Math.abs((n - spot) / spot) * 100
+  const markRaw = market.get(position.symbol)?.mark_price
+  const mark = markRaw != null && markRaw !== '' ? Number(markRaw) : null
+
+  // The watched price, and whether its rise is the profitable direction. On the
+  // index that is the exposure's bullishness; on the mark — the option's own
+  // premium — it is simply being long, whichever leg it is.
+  const reference = trigger === 'mark' ? mark : spot
+  const up = trigger === 'mark' ? isLong : bullish
+  const refName = trigger === 'mark' ? 'mark' : 'index'
+
+  // Switching the reference changes the units entirely — a 4,200 index level is
+  // meaningless as a mark — so the levels reset rather than carry a wrong number.
+  const switchTrigger = (next: TriggerSource) => {
+    if (next === trigger) return
+    setTrigger(next)
+    setTp('')
+    setSl('')
+    setError(null)
   }
 
-  // Step the index by a percent in a side's firing direction.
+  // A level's distance from the reference, as a percent, for the little box.
+  const distPct = (v: string) => {
+    if (!reference || String(v).trim() === '') return null
+    const n = Number(v)
+    if (!Number.isFinite(n)) return null
+    return Math.abs((n - reference) / reference) * 100
+  }
+
+  // Step the reference by a percent in a side's firing direction.
   const stepFrom = (pct: number, side: 'tp' | 'sl') => {
-    const up = side === 'tp' ? bullish : !bullish
-    const level = spot * (1 + (up ? pct : -pct) / 100)
+    if (!reference) return ''
+    const rising = side === 'tp' ? up : !up
+    const level = reference * (1 + (rising ? pct : -pct) / 100)
     return level.toFixed(2)
   }
 
@@ -666,20 +713,20 @@ function TpSlDialog({
     if (tpNum !== null && !(tpNum > 0)) return setError('Take-profit must be a positive price')
     if (slNum !== null && !(slNum > 0)) return setError('Stop-loss must be a positive price')
 
-    // A level on the side the index has already passed would fire on the very
+    // A level on the side the reference has already passed would fire on the very
     // next poll and close the position seconds after saving — which reads as the
     // row vanishing. Refuse it, and say which way it has to go.
-    if (spot > 0) {
-      const tpArmed = tpNum !== null && (bullish ? spot >= tpNum : spot <= tpNum)
-      const slArmed = slNum !== null && (bullish ? spot <= slNum : spot >= slNum)
+    if (reference && reference > 0) {
+      const tpArmed = tpNum !== null && (up ? reference >= tpNum : reference <= tpNum)
+      const slArmed = slNum !== null && (up ? reference <= slNum : reference >= slNum)
       if (tpArmed) {
         return setError(
-          `Take-profit ${price(tpNum)} is already past the index (${price(spot)}) — it would close at once. Put it ${bullish ? 'above' : 'below'} the index.`,
+          `Take-profit ${price(tpNum)} is already past the ${refName} (${price(reference)}) — it would close at once. Put it ${up ? 'above' : 'below'} the ${refName}.`,
         )
       }
       if (slArmed) {
         return setError(
-          `Stop-loss ${price(slNum)} is already past the index (${price(spot)}) — it would close at once. Put it ${bullish ? 'below' : 'above'} the index.`,
+          `Stop-loss ${price(slNum)} is already past the ${refName} (${price(reference)}) — it would close at once. Put it ${up ? 'below' : 'above'} the ${refName}.`,
         )
       }
     }
@@ -687,7 +734,7 @@ function TpSlDialog({
     setBusy(true)
     setError(null)
     try {
-      await onSave(position.id, tpNum, slNum)
+      await onSave(position.id, tpNum, slNum, trigger)
       onClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save levels')
@@ -723,9 +770,33 @@ function TpSlDialog({
             <span className="text-ink-3">Entry Price</span>
             <span className="num text-ink">{price(position.avg_entry_price)}</span>
           </div>
-          <div className="flex items-baseline justify-between text-[12px]">
-            <span className="text-ink-3">Trigger Index</span>
-            <span className="num text-ink">Index {price(spot)}</span>
+
+          {/* Which price the levels watch. The index is the underlying; the mark
+              is the option's own premium — so switching flips both the numbers
+              you enter and the direction the levels fire in. */}
+          <div>
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="text-[12px] text-ink-3">Trigger price</span>
+              <div className="flex overflow-hidden rounded border border-raised-3 text-[11px]">
+                {(['index', 'mark'] as TriggerSource[]).map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => switchTrigger(t)}
+                    className={`px-2.5 py-1 capitalize transition-colors ${
+                      trigger === t ? 'bg-raised-2 text-ink' : 'text-ink-3 hover:text-ink'
+                    }`}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-baseline justify-between text-[12px]">
+              <span className="text-ink-3 capitalize">Current {refName}</span>
+              <span className="num text-ink">
+                {reference != null ? price(reference) : '—'}
+              </span>
+            </div>
           </div>
 
           <TpSlBlock

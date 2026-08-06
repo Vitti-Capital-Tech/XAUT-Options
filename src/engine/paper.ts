@@ -38,6 +38,8 @@ export function shortImRate(product: Product): number {
 
 export type Side = 'buy' | 'sell'
 export type OrderType = 'market' | 'limit'
+/** Which price a bracket's levels watch: the underlying index or the option mark. */
+export type TriggerSource = 'index' | 'mark'
 
 export interface PositionRow {
   id: string
@@ -51,9 +53,11 @@ export interface PositionRow {
   net_qty: number
   avg_entry_price: string
   realized_pnl: string
-  /** Index-price exit levels, armed server-side. Null when unset. */
+  /** Exit levels, armed server-side. Null when unset. Watched against the
+   *  index or the mark, per `tpsl_trigger`. */
   take_profit: string | null
   stop_loss: string | null
+  tpsl_trigger: TriggerSource
 }
 
 export interface OrderRow {
