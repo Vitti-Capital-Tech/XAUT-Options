@@ -967,6 +967,19 @@ function Money({
 
 // ---------------------------------------------------------------------------
 
+/**
+ * What kind of fill a row is, and the ink it reads in. Settlement and a plain
+ * trade are told from the fill's own flags; a bracket exit carries its reason.
+ * A take-profit reads positive and a stop-loss negative, since that is what they
+ * are, whatever the row's realized P&L happens to net to.
+ */
+function fillKind(f: FillRow): { label: string; cls: string } {
+  if (f.is_settlement) return { label: 'Settlement', cls: 'text-ink-3' }
+  if (f.close_reason === 'take_profit') return { label: 'Take Profit', cls: 'text-pos' }
+  if (f.close_reason === 'stop_loss') return { label: 'Stop Loss', cls: 'text-neg' }
+  return { label: 'Trade', cls: 'text-ink-2' }
+}
+
 function HistoryTable({ fills }: { fills: FillRow[] }) {
   if (fills.length === 0) return <Empty>No trades yet.</Empty>
 
@@ -983,13 +996,14 @@ function HistoryTable({ fills }: { fills: FillRow[] }) {
           what is left over, so the air falls between the columns evenly rather
           than pooling in whichever one happens to hold a long header. */}
       <colgroup>
-        <col className="w-[20%]" />
+        <col className="w-[18%]" />
+        <col className="w-[10%]" />
+        <col className="w-[9%]" />
         <col className="w-[12%]" />
-        <col className="w-[11%]" />
+        <col className="w-[13%]" />
+        <col className="w-[13%]" />
+        <col className="w-[13%]" />
         <col className="w-[12%]" />
-        <col className="w-[15%]" />
-        <col className="w-[15%]" />
-        <col className="w-[15%]" />
       </colgroup>
       <thead className="sticky top-0 z-10">
         {/* Delta's order-history order, less the columns that never vary on a
@@ -1002,6 +1016,7 @@ function HistoryTable({ fills }: { fills: FillRow[] }) {
           <Th align="left" wall="start">Symbol</Th>
           <Th align="center">Qty (XAUT)</Th>
           <Th align="center">Side</Th>
+          <Th align="center">Type</Th>
           <Th align="center">Execution Price</Th>
           <Th align="center">Size</Th>
           <Th align="center">Realized PnL</Th>
@@ -1013,6 +1028,7 @@ function HistoryTable({ fills }: { fills: FillRow[] }) {
           const realized = Number(f.realized_pnl)
           const buy = f.side === 'buy'
           const size = f.qty * Number(f.contract_value)
+          const kind = fillKind(f)
           const at = dateTimeParts(f.created_at)
           return (
             <tr key={f.id} className="border-b border-line hover:bg-raised">
@@ -1027,6 +1043,10 @@ function HistoryTable({ fills }: { fills: FillRow[] }) {
               <Td align="center" className={buy ? 'text-pos' : 'text-neg'}>
                 {buy ? 'Buy' : 'Sell'}
               </Td>
+              {/* Why the fill happened — a plain trade, a bracket exit, or an
+                  expiry settlement. This is the one thing the ledger could not
+                  say before. */}
+              <Td align="center" className={kind.cls}>{kind.label}</Td>
               <Td align="center" className="text-ink">{price(f.price)}</Td>
               <Td align="center" className={buy ? 'text-pos' : 'text-neg'}>
                 {buy ? '+' : '-'}

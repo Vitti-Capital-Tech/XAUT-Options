@@ -29,6 +29,10 @@ export interface FillRow {
   fee: string
   realized_pnl: string
   spot_at_fill: string | null
+  /** Expiry settlement, versus an ordinary or triggered fill. */
+  is_settlement: boolean
+  /** Why a triggered close fired — 'take_profit' | 'stop_loss'. Null otherwise. */
+  close_reason: string | null
   created_at: string
 }
 
@@ -37,7 +41,7 @@ const POSITION_COLS =
 const ORDER_COLS =
   'id, account_id, symbol, product_id, contract_type, strike_price, expiry_label, contract_value, side, order_type, qty, limit_price, status, avg_fill_price, filled_qty, reduce_only, created_at'
 const FILL_COLS =
-  'id, symbol, contract_type, strike_price, side, order_type, qty, price, contract_value, premium, notional, fee, realized_pnl, spot_at_fill, created_at'
+  'id, symbol, contract_type, strike_price, side, order_type, qty, price, contract_value, premium, notional, fee, realized_pnl, spot_at_fill, is_settlement, close_reason, created_at'
 
 export interface PlaceOrderArgs {
   product: Product
