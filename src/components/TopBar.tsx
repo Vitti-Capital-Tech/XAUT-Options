@@ -13,11 +13,9 @@ interface Props {
   selected: Account | null
   summary: AccountSummary
   email: string | undefined
-  /** The page showing now, and how to switch. The strategy link pulses a dot
-   *  while the bot is armed, so it reads as running from any page. */
+  /** The page showing now, and how to switch. */
   page: Page
   onNavigate: (page: Page) => void
-  strategyArmed: boolean
   onSelect: (id: string) => void
   onCreate: (name: string, startingBalance: number) => Promise<void>
   /**
@@ -39,7 +37,6 @@ export function TopBar({
   email,
   page,
   onNavigate,
-  strategyArmed,
   onSelect,
   onCreate,
   onSetBalance,
@@ -122,7 +119,6 @@ export function TopBar({
         <NavLink
           label="Auto Strategy"
           active={page === 'strategy'}
-          armed={strategyArmed}
           onClick={() => onNavigate('strategy')}
         />
       </nav>
@@ -401,28 +397,20 @@ export function TopBar({
 function NavLink({
   label,
   active,
-  armed = false,
   onClick,
 }: {
   label: string
   active: boolean
-  armed?: boolean
   onClick: () => void
 }) {
   return (
     <button
       onClick={onClick}
-      className={`relative rounded px-3 py-1.5 text-[13px] font-medium transition-colors ${
+      className={`rounded px-3 py-1.5 text-[13px] font-medium transition-colors ${
         active ? 'bg-raised-2 text-ink' : 'text-ink-3 hover:text-ink'
       }`}
     >
       {label}
-      {armed && (
-        <span
-          className="absolute top-1 right-1 h-1.5 w-1.5 animate-pulse rounded-full bg-brand-text"
-          aria-label="strategy armed"
-        />
-      )}
     </button>
   )
 }

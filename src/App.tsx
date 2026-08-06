@@ -242,7 +242,6 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
       email={email}
       page={page}
       onNavigate={setPage}
-      strategyArmed={strategy.armed}
       onSelect={accounts.setSelectedId}
       onCreate={accounts.createAccount}
       onSetBalance={accounts.setStartingBalance}
