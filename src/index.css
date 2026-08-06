@@ -117,6 +117,17 @@ body {
   appearance: textfield;
 }
 
+/* The clock glyph a time input draws is near-black by default, invisible on the
+   terminal's dark fields. Lighten it to the secondary ink so it reads. */
+input[type='time']::-webkit-calendar-picker-indicator {
+  filter: invert(0.65);
+  cursor: pointer;
+  opacity: 0.7;
+}
+input[type='time']::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+}
+
 /* Divider matching Delta's translucent-white rule. */
 .divider-b {
   border-bottom: 1px solid #ffffff14;

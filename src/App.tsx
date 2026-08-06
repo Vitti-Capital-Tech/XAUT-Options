@@ -319,6 +319,7 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
             positions={autoTrading.positions}
             fills={autoTrading.fills}
             productsBySymbol={productsBySymbol}
+            emptyPositions="No open positions yet. Set it Running and it sells on each closed 1h candle."
             onClosePosition={(pos, product) => autoTrading.closePosition(pos, product)}
             onSetTpSl={autoTrading.setTpSl}
             onPickSymbol={(product) => openTicket(product, 'buy', null)}

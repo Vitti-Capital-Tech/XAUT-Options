@@ -12,6 +12,9 @@ interface Props {
   positions: PositionRow[]
   fills: FillRow[]
   productsBySymbol: Map<string, Product>
+  /** What the Positions tab says when empty — the chain and the strategy reach
+   *  it by different routes, so each names its own. */
+  emptyPositions?: string
   onClosePosition: (pos: PositionRow, product: Product) => Promise<void>
   onSetTpSl: (
     positionId: string,
@@ -30,6 +33,7 @@ export function BottomPanel({
   positions,
   fills,
   productsBySymbol,
+  emptyPositions,
   onClosePosition,
   onSetTpSl,
   onPickSymbol,
@@ -73,6 +77,7 @@ export function BottomPanel({
           <PositionsTable
             positions={positions}
             productsBySymbol={productsBySymbol}
+            emptyPositions={emptyPositions}
             onClosePosition={onClosePosition}
             onSetTpSl={onSetTpSl}
             onPickSymbol={onPickSymbol}
@@ -329,12 +334,14 @@ function Instrument({
 function PositionsTable({
   positions,
   productsBySymbol,
+  emptyPositions,
   onClosePosition,
   onSetTpSl,
   onPickSymbol,
 }: {
   positions: PositionRow[]
   productsBySymbol: Map<string, Product>
+  emptyPositions?: string
   onClosePosition: (pos: PositionRow, product: Product) => Promise<void>
   onSetTpSl: (
     positionId: string,
@@ -350,7 +357,9 @@ function PositionsTable({
   const [editing, setEditing] = useState<PositionRow | null>(null)
   const spot = market.spot
 
-  if (positions.length === 0) return <Empty>No open positions. Click a bid or ask on the chain to trade.</Empty>
+  if (positions.length === 0) {
+    return <Empty>{emptyPositions ?? 'No open positions. Click a bid or ask on the chain to trade.'}</Empty>
+  }
 
   // Portfolio totals. Only the greeks and the money add up across rows — an
   // average entry or a percentage would not, so those columns stay blank in the
