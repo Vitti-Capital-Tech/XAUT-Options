@@ -88,11 +88,12 @@ interface Selection {
 /**
  * The option chain, laid out to match Delta Exchange's own.
  *
- * Deliberately absent, because Delta's chain does not have them: any
- * in-the-money row tint, and any highlight on the at-the-money strike cell.
- * Every one of their chain cells is transparent; the ATM row is marked only by
- * a brand-orange rule above and below it, and a strike clicked to select it
- * gets that same rule and nothing more.
+ * In-the-money rows carry a faint wash, per side — green where a call is in the
+ * money (its strike below spot), red where a put is (its strike above) — the way
+ * Delta tints them. It is barely there by design; the ATM row is still marked by
+ * the single brand-orange rule, and a clicked strike still takes that same rule
+ * and nothing more. The strike spine paints its own surface, so the wash stops
+ * cleanly at the centre line rather than bleeding across it.
  *
  * Click semantics follow their terminal — a bid is what you sell into, an ask is
  * what you buy from, and the clicked price seeds the order ticket. Everything
@@ -214,6 +215,7 @@ export function OptionChain({ expiry, positions, onPick }: Props) {
         <Book
           side="call"
           expiry={expiry}
+          spot={spot}
           spotRule={spotRule}
           selected={selected}
           onSelect={(strike) => setSelected({ strike, side: 'call' })}
@@ -231,6 +233,7 @@ export function OptionChain({ expiry, positions, onPick }: Props) {
         <Book
           side="put"
           expiry={expiry}
+          spot={spot}
           spotRule={spotRule}
           selected={selected}
           onSelect={(strike) => setSelected({ strike, side: 'put' })}
@@ -252,6 +255,7 @@ export function OptionChain({ expiry, positions, onPick }: Props) {
 function Book({
   side,
   expiry,
+  spot,
   spotRule,
   selected,
   onSelect,
@@ -263,6 +267,7 @@ function Book({
 }: {
   side: BookSide
   expiry: Expiry
+  spot: number
   spotRule: number | null
   selected: Selection | null
   onSelect: (strike: number) => void
@@ -302,6 +307,11 @@ function Book({
           const product = book.get(strike)
           const position = product ? positionBySymbol.get(product.symbol) : undefined
 
+          // A call is in the money below spot, a put above it. The wash is faint
+          // and side-coloured; hover still lifts the whole row over it.
+          const itm = spot > 0 && (side === 'call' ? strike < spot : strike > spot)
+          const tint = itm ? (side === 'call' ? 'bg-tint-pos' : 'bg-tint-neg') : ''
+
           return (
             <div
               key={strike}
@@ -312,7 +322,7 @@ function Book({
               // A clicked row is boxed top and bottom; the money is a single
               // rule laid above the strike spot has not reached. Row height is
               // Delta's: 43px.
-              className={`grid h-[43px] cursor-pointer items-center hover:bg-raised/50 ${
+              className={`grid h-[43px] cursor-pointer items-center ${tint} hover:bg-raised/50 ${
                 strike === ruled
                   ? 'border-y-[0.8px] border-brand-text'
                   : strike === spotRule
@@ -470,8 +480,28 @@ function ChainCell({ col, product, ticker, position, onPick }: CellProps) {
     case 'theta':
       return <Plain>{greek(g?.theta, 2)}</Plain>
 
-    case 'oi':
-      return <Plain>{usdCompact(ticker?.oi_value_usd)}</Plain>
+    case 'oi': {
+      const oi = usdCompact(ticker?.oi_value_usd)
+      // A held leg is flagged here, against the strike — an L for long, an S
+      // for short, in the position's colour — the way Delta marks the book you
+      // are in. Calls sit in the left pane and puts in the right, so the flag
+      // lands on the correct side of the strike without being told which.
+      if (!position || position.net_qty === 0) return <Plain>{oi}</Plain>
+      const long = position.net_qty > 0
+      return (
+        <div className="num flex items-center justify-end gap-1 px-2 text-right text-[12px] text-ink">
+          <span
+            className={`rounded-sm px-1 text-[9px] leading-tight font-bold ${
+              long ? 'bg-pos-muted text-pos' : 'bg-neg-muted text-neg'
+            }`}
+            title={`${long ? 'Long' : 'Short'} ${inUnderlying(position.net_qty, cv)} ${UNDERLYING}`}
+          >
+            {long ? 'L' : 'S'}
+          </span>
+          <span>{oi}</span>
+        </div>
+      )
+    }
     case 'oiChg':
       return <Plain>{usdCompact(ticker?.oi_change_usd_6h)}</Plain>
     case 'volume':
