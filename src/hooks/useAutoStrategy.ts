@@ -219,16 +219,19 @@ export function useAutoStrategy(deps: Deps): StrategyApi {
             push('trade', `Closed ${tracked.symbol}.`)
           }
         }
+        // config.qty is in the underlying; the engine takes lots. One lot is the
+        // contract value, so a XAUT amount is that many lots.
+        const lots = Math.max(1, Math.round(config.qty / Number(resolved.product.contract_value)))
         await placeOrder({
           product: resolved.product,
           side,
           orderType: 'market',
-          qty: config.qty,
+          qty: lots,
           limitPrice: null,
         })
         trackedRef.current = { symbol: desiredSym, side }
         persistTracked()
-        push('trade', `${side.toUpperCase()} ${config.qty} ${desiredSym} (${color} candle).`)
+        push('trade', `${side.toUpperCase()} ${config.qty} XAUT ${desiredSym} (${color} candle).`)
       } catch (err) {
         push('error', err instanceof Error ? err.message : 'Order failed.')
       } finally {

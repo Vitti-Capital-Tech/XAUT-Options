@@ -142,7 +142,7 @@ export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
                       signalSide === 'buy' ? 'bg-pos-muted text-pos' : 'bg-neg-muted text-neg'
                     }`}
                   >
-                    {signalSide.toUpperCase()} {config.qty}
+                    {signalSide.toUpperCase()} {config.qty} XAUT
                   </span>
                   <span className="num ml-2 text-ink">{target.product.symbol}</span>
                 </div>

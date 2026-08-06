@@ -929,7 +929,7 @@ function HistoryTable({ fills }: { fills: FillRow[] }) {
             and a centred symbol wandered with the length of each contract. */}
         <tr>
           <Th align="left" wall="start">Symbol</Th>
-          <Th align="center">Qty (Lot)</Th>
+          <Th align="center">Qty (XAUT)</Th>
           <Th align="center">Side</Th>
           <Th align="center">Execution Price</Th>
           <Th align="center">Size</Th>
@@ -948,7 +948,9 @@ function HistoryTable({ fills }: { fills: FillRow[] }) {
               <Td align="left" wall="start">
                 <Instrument symbol={f.symbol} accent={buy ? 'pos' : 'neg'} />
               </Td>
-              <Td align="center" className="text-ink">{f.qty}</Td>
+              {/* Quantity in the underlying now, not the lot count — the size
+                  and the qty are one unit apart no longer. */}
+              <Td align="center" className="text-ink">{size.toFixed(3)}</Td>
               {/* Title case, as Delta writes a side — `Sell`, not a shouted
                   SELL. The colour already says which way it went. */}
               <Td align="center" className={buy ? 'text-pos' : 'text-neg'}>

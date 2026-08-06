@@ -76,19 +76,26 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
   const bid = bestBid(ticker)
   const ask = bestAsk(ticker)
 
-  const qty = Number(qtyText)
+  // The field reads in the underlying now — one Qty is one XAUT — while the
+  // engine still counts lots, so we convert on the way down. One lot is the
+  // contract value (0.001 XAUT), which is also the smallest order; `effective`
+  // is what the rounded lot count actually comes to, in case a typed figure did
+  // not land on a whole lot.
   const lotSize = Number(product.contract_value)
+  const qtyXaut = Number(qtyText)
+  const lots = Number.isFinite(qtyXaut) ? Math.max(0, Math.round(qtyXaut / lotSize)) : 0
+  const effectiveXaut = lots * lotSize
 
   const preview = useMemo(
     () =>
-      previewOrder({ product, side, orderType: 'market', qty, limitPrice: null }, ticker, spot, position, available),
+      previewOrder({ product, side, orderType: 'market', qty: lots, limitPrice: null }, ticker, spot, position, available),
     // `market.spot` and the ticker mutate in place, so the tick from
     // useMarketTick above is what actually drives recomputation.
-    [product, side, qty, ticker, spot, position, available],
+    [product, side, lots, ticker, spot, position, available],
   )
 
   const netQty = position?.net_qty ?? 0
-  const signed = side === 'buy' ? qty : -qty
+  const signed = side === 'buy' ? lots : -lots
   const reduces = netQty !== 0 && Math.sign(netQty) !== Math.sign(signed)
 
   // What one lot costs in margin, so the percentage buttons can size against
@@ -114,27 +121,26 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
       : 0
 
   // The field's own stepper, so the chevrons can be grey rather than the white
-  // pair the browser draws. Never steps below one lot.
-  const step = (by: number) => {
-    const from = Number.isFinite(qty) ? Math.trunc(qty) : 1
-    setQtyText(String(Math.max(1, from + by)))
+  // pair the browser draws. Steps by one XAUT, and never below a single lot.
+  const step = (byXaut: number) => {
+    const from = Number.isFinite(qtyXaut) ? qtyXaut : 0
+    setQtyText(fmtQty(Math.max(lotSize, from + byXaut)))
   }
 
   const setPct = (p: number) => {
-    const n = Math.floor((maxLots * p) / 100)
-    // Never silently size to nothing: one lot, and let the preview say if it
-    // cannot be afforded, rather than leaving the field blank.
-    setQtyText(String(Math.max(1, n)))
+    // Size in lots against the balance, then show it back in the underlying.
+    const n = Math.max(1, Math.floor((maxLots * p) / 100))
+    setQtyText(fmtQty(n * lotSize))
   }
 
-  const canSubmit = !submitting && preview.error === null && Number.isInteger(qty) && qty > 0
+  const canSubmit = !submitting && preview.error === null && lots >= 1
 
   const submit = async () => {
     if (!canSubmit) return
     setSubmitting(true)
     setSubmitError(null)
     try {
-      await onSubmit({ product, side, orderType: 'market', qty, limitPrice: null })
+      await onSubmit({ product, side, orderType: 'market', qty: lots, limitPrice: null })
       onClose()
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : 'Order failed')
@@ -236,21 +242,21 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
             <div className="flex items-center rounded border border-raised-3 bg-raised focus-within:border-ink-3">
               <input
                 type="number"
-                min={1}
-                step={1}
+                min={lotSize}
+                step={lotSize}
                 value={qtyText}
                 onChange={(e) => setQtyText(e.target.value)}
                 onFocus={(e) => e.target.select()}
                 autoFocus
                 placeholder="Enter Quantity"
-                aria-label="Quantity"
+                aria-label="Quantity in XAUT"
                 className="num step-own min-w-0 flex-1 bg-transparent px-2.5 py-2 text-sm text-ink placeholder:text-ink-3 focus:outline-none"
               />
               <div className="flex flex-col justify-center">
                 <button
                   type="button"
                   onClick={() => step(1)}
-                  aria-label="One more lot"
+                  aria-label="Increase quantity"
                   className="px-1 text-[7px] leading-none text-ink-3 hover:text-ink"
                 >
                   ▲
@@ -258,17 +264,17 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
                 <button
                   type="button"
                   onClick={() => step(-1)}
-                  aria-label="One fewer lot"
+                  aria-label="Decrease quantity"
                   className="px-1 pt-0.5 text-[7px] leading-none text-ink-3 hover:text-ink"
                 >
                   ▼
                 </button>
               </div>
-              {/* Delta calls this quantity, and keeps 'lot' for the conversion
-                  line underneath. Same number either way — one lot is one
-                  contract — so the field takes their word for it. */}
+              {/* The quantity is in the underlying now, so the tag names it —
+                  Qty in XAUT — and the lot count it comes to is spelled out on
+                  the conversion line below. */}
               <span className="pr-2.5 pl-2 text-[11px] font-medium tracking-wider text-ink-3 uppercase">
-                Qty
+                XAUT
               </span>
             </div>
 
@@ -293,15 +299,15 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
               ))}
             </div>
 
-            {/* Two different facts — what this order comes to, and what one of
-                them is worth. At a quantity of one they print the same number,
-                so each has to say which it is. */}
+            {/* The order's size in the underlying — which is the quantity, once
+                snapped to a whole lot — and the lot count it becomes, since that
+                is what the book actually fills. */}
             <div className="mt-1.5 flex items-baseline justify-between text-[10px] text-ink-3">
               <span>
                 Size{' '}
                 <span className="num">
                   ≈{' '}
-                  {(qty > 0 ? qty * lotSize : 0).toLocaleString('en-US', {
+                  {effectiveXaut.toLocaleString('en-US', {
                     minimumFractionDigits: 3,
                     maximumFractionDigits: 3,
                   })}{' '}
@@ -309,7 +315,7 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
                 </span>
               </span>
               <span className="num">
-                1 QTY = {lotSize} {UNDERLYING}
+                = {lots.toLocaleString('en-US')} {lots === 1 ? 'lot' : 'lots'}
               </span>
             </div>
           </div>
@@ -329,7 +335,7 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
               <Row label="Position">
                 <span className={`num ${netQty > 0 ? 'text-pos' : 'text-neg'}`}>
                   {netQty > 0 ? '+' : ''}
-                  {netQty} @ {price(position!.avg_entry_price)}
+                  {(netQty * lotSize).toFixed(3)} {UNDERLYING} @ {price(position!.avg_entry_price)}
                 </span>
               </Row>
             )}
@@ -367,7 +373,7 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
           {netQty !== 0 && (
             <button
               onClick={() => {
-                setQtyText(String(Math.abs(netQty)))
+                setQtyText(fmtQty(Math.abs(netQty) * lotSize))
                 setSide(netQty > 0 ? 'sell' : 'buy')
               }}
               className="w-full rounded border border-brand-text py-1.5 text-[12px] text-brand-text hover:bg-brand-muted"
@@ -397,6 +403,12 @@ export function OrderTicket({ request, position, available, onClose, onSubmit }:
       </div>
     </div>
   )
+}
+
+/** A quantity for the field, trimmed of trailing zeros — 1.5, not 1.500, and
+ *  0.001 rather than 0.0010 — so the box reads like something typed. */
+function fmtQty(x: number): string {
+  return String(Number(x.toFixed(3)))
 }
 
 /** A label on the left, a figure on the right. Hinted labels take Delta's
