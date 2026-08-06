@@ -413,9 +413,10 @@ function StrikeCell({
 }
 
 /**
- * The L/S marker Delta hangs beside a strike you hold — a solid disc in the
- * position's colour with a white letter, green for long and red for short,
- * pinned to one edge of the spine and vertically centred. Absent when flat.
+ * The L/S marker Delta hangs beside a strike you hold — a solid rounded square
+ * in the position's colour with a white letter, green for long and red for
+ * short, pinned to one edge of the spine and vertically centred. Absent when
+ * flat.
  */
 function PosFlag({
   position,
@@ -428,7 +429,7 @@ function PosFlag({
   const long = position.net_qty > 0
   return (
     <span
-      className={`absolute top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full text-[9px] font-bold text-white ${className} ${
+      className={`absolute top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-[4px] text-[9px] font-bold text-white ${className} ${
         long ? 'bg-pos-solid' : 'bg-neg-solid'
       }`}
       title={`${long ? 'Long' : 'Short'} ${Math.abs(position.net_qty)} lot${Math.abs(position.net_qty) === 1 ? '' : 's'}`}
