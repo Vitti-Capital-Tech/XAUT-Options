@@ -6,9 +6,11 @@ import { MONEYNESS_ORDER, type Moneyness } from '../lib/strategy'
 import type { LogEntry, StrategyApi } from '../hooks/useAutoStrategy'
 
 /**
- * The auto-strategy tab: the rule set on the left, what it is about to do on the
- * right, and a running tape of what it has done beneath. It reads the same live
- * marks the chain does, so the target contract's premium ticks here too.
+ * The auto-strategy tab: the fixed rule and its knobs on the left, what it is
+ * about to sell on the right, and a running tape of what it has done beneath. It
+ * reads the same live marks the chain does, so the target contract's premium
+ * ticks here too. The positions and trade history it produces live in the panel
+ * below this, on the strategy's own account.
  */
 export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
   useMarketTick()
@@ -20,10 +22,11 @@ export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
     setArmed,
     latestClosed,
     color,
-    signalSide,
+    signalKind,
     target,
     inWindowNow,
     marketLive,
+    hasAccount,
     log,
     runNow,
   } = strategy
@@ -35,15 +38,29 @@ export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
     <div className="grid grid-cols-1 gap-4 p-4 text-[13px] lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
       {/* ---- left: the rule --------------------------------------------- */}
       <div className="space-y-4">
-        {/* Arm switch and what it is doing right now. */}
         <div className="flex items-center justify-between rounded-lg border border-line bg-raised p-3">
           <div>
             <div className="font-semibold text-ink">Auto strategy</div>
             <div className="mt-0.5 text-[11px] text-ink-3">
-              One market lot on each closed 1h candle. Runs only while this tab is open.
+              Sells one option on each closed 1h candle. Runs only while this tab is open.
             </div>
           </div>
-          <ArmSwitch armed={armed} onChange={setArmed} />
+          <ArmSwitch armed={armed} onChange={setArmed} disabled={!hasAccount} />
+        </div>
+
+        {/* The rule, stated — it is not configurable, so it reads rather than
+            toggles. */}
+        <div className="rounded-lg border border-line bg-raised p-3 text-[12px] leading-relaxed text-ink-2">
+          <Rule>
+            Red 1h candle → <span className="text-neg">sell a Call</span>
+          </Rule>
+          <Rule>
+            Green 1h candle → <span className="text-neg">sell a Put</span>
+          </Rule>
+          <Rule>
+            Stop loss at <span className="text-ink">2× entry</span> premium (100% loss), on the mark
+          </Rule>
+          <Rule>Each hour adds another short — positions accumulate</Rule>
         </div>
 
         <div className="flex flex-wrap gap-1.5">
@@ -52,31 +69,6 @@ export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
           <Pill on={inWindowNow} labelOn="In window" labelOff="Outside window" />
         </div>
 
-        {/* Option type */}
-        <Field label="Contract">
-          <Segmented
-            value={config.kind}
-            onChange={(kind) => setConfig({ kind })}
-            options={[
-              { value: 'call', label: 'Call', tone: 'pos' },
-              { value: 'put', label: 'Put', tone: 'neg' },
-            ]}
-          />
-        </Field>
-
-        {/* Candle → side */}
-        <Field label="Signal" hint="Which side a green 1h candle takes; red takes the other.">
-          <Segmented
-            value={config.bias}
-            onChange={(bias) => setConfig({ bias })}
-            options={[
-              { value: 'sell-on-green', label: 'Green → Sell' },
-              { value: 'buy-on-green', label: 'Green → Buy' },
-            ]}
-          />
-        </Field>
-
-        {/* Strike */}
         <Field label="Strike" hint="Distance from the money. ITM to 2, OTM to 5.">
           <div className="flex flex-wrap gap-1">
             {MONEYNESS_ORDER.map((m) => (
@@ -95,7 +87,23 @@ export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
           </div>
         </Field>
 
-        {/* Time window */}
+        <Field label="Quantity" hint="Underlying sold each fire.">
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={0.001}
+              step={0.001}
+              value={config.qty}
+              onChange={(e) => {
+                const n = Number(e.target.value)
+                if (Number.isFinite(n) && n > 0) setConfig({ qty: n })
+              }}
+              className="num step-own w-28 rounded border border-raised-3 bg-raised px-2.5 py-1.5 text-right text-[13px] text-ink focus:border-ink-3 focus:outline-none"
+            />
+            <span className="text-[12px] text-ink-3">XAUT / signal</span>
+          </div>
+        </Field>
+
         <Field label="Trading window" hint="Trades only fire inside this window (IST).">
           <div className="flex items-center gap-2">
             <TimeInput value={config.windowStart} onChange={(v) => setConfig({ windowStart: v })} />
@@ -132,17 +140,13 @@ export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
             <div className="text-ink-3">Loading candles…</div>
           )}
 
-          {/* The resulting order, spelled out. */}
+          {/* The resulting order, spelled out — always a sell. */}
           <div className="mt-3 border-t border-line pt-3">
-            {signalSide && target ? (
+            {signalKind && target ? (
               <div className="flex items-center justify-between">
                 <div>
-                  <span
-                    className={`rounded px-1.5 py-0.5 text-[11px] font-bold ${
-                      signalSide === 'buy' ? 'bg-pos-muted text-pos' : 'bg-neg-muted text-neg'
-                    }`}
-                  >
-                    {signalSide.toUpperCase()} {config.qty} XAUT
+                  <span className="rounded bg-neg-muted px-1.5 py-0.5 text-[11px] font-bold text-neg">
+                    SELL {config.qty} {signalKind === 'call' ? 'CALL' : 'PUT'}
                   </span>
                   <span className="num ml-2 text-ink">{target.product.symbol}</span>
                 </div>
@@ -165,15 +169,14 @@ export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
 
           <button
             onClick={runNow}
-            disabled={!signalSide || !target}
+            disabled={!signalKind || !target || !hasAccount}
             className="mt-3 w-full rounded border border-raised-3 py-1.5 text-[12px] text-ink-2 hover:border-ink-3 hover:text-ink disabled:opacity-30 disabled:hover:border-raised-3"
-            title="Place the current signal now, ignoring the window and the once-per-candle guard"
+            title="Sell the current signal now, ignoring the window and the once-per-candle guard"
           >
-            Run signal now
+            Sell signal now
           </button>
         </div>
 
-        {/* The tape */}
         <div className="rounded-lg border border-line bg-raised">
           <div className="border-b border-line px-3 py-2 text-[11px] tracking-wider text-ink-3 uppercase">
             Activity
@@ -197,6 +200,15 @@ export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
 
 // ---------------------------------------------------------------------------
 
+function Rule({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-2">
+      <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-ink-4" aria-hidden />
+      <span>{children}</span>
+    </div>
+  )
+}
+
 function LogRow({ entry }: { entry: LogEntry }) {
   const dot =
     entry.kind === 'trade'
@@ -216,13 +228,23 @@ function LogRow({ entry }: { entry: LogEntry }) {
   )
 }
 
-function ArmSwitch({ armed, onChange }: { armed: boolean; onChange: (on: boolean) => void }) {
+function ArmSwitch({
+  armed,
+  onChange,
+  disabled,
+}: {
+  armed: boolean
+  onChange: (on: boolean) => void
+  disabled?: boolean
+}) {
   return (
     <button
       role="switch"
       aria-checked={armed}
+      disabled={disabled}
+      title={disabled ? 'Create an auto account first' : undefined}
       onClick={() => onChange(!armed)}
-      className={`relative h-7 w-12 shrink-0 rounded-full border transition-colors ${
+      className={`relative h-7 w-12 shrink-0 rounded-full border transition-colors disabled:opacity-30 ${
         armed ? 'border-brand-text bg-brand' : 'border-raised-3 bg-raised-2'
       }`}
     >
@@ -246,7 +268,10 @@ function Pill({
   labelOff: string
   tone?: 'pos' | 'brand'
 }) {
-  const active = tone === 'brand' ? 'border-brand-text/50 bg-brand-muted text-brand-text' : 'border-pos/40 bg-pos-muted text-pos'
+  const active =
+    tone === 'brand'
+      ? 'border-brand-text/50 bg-brand-muted text-brand-text'
+      : 'border-pos/40 bg-pos-muted text-pos'
   return (
     <span
       className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${
@@ -274,41 +299,6 @@ function Field({
         {hint && <span className="text-[10px] text-ink-4">{hint}</span>}
       </div>
       {children}
-    </div>
-  )
-}
-
-function Segmented<T extends string>({
-  value,
-  onChange,
-  options,
-}: {
-  value: T
-  onChange: (v: T) => void
-  options: { value: T; label: string; tone?: 'pos' | 'neg' }[]
-}) {
-  return (
-    <div className="grid auto-cols-fr grid-flow-col overflow-hidden rounded border border-raised-3">
-      {options.map((o, i) => {
-        const active = o.value === value
-        const tone =
-          o.tone === 'pos'
-            ? 'bg-pos-muted text-pos'
-            : o.tone === 'neg'
-              ? 'bg-neg-muted text-neg'
-              : 'bg-raised-2 text-ink'
-        return (
-          <button
-            key={o.value}
-            onClick={() => onChange(o.value)}
-            className={`px-3 py-1.5 text-[12px] font-medium transition-colors ${
-              i > 0 ? 'border-l border-raised-3' : ''
-            } ${active ? tone : 'text-ink-3 hover:text-ink'}`}
-          >
-            {o.label}
-          </button>
-        )
-      })}
     </div>
   )
 }

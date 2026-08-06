@@ -1,31 +1,39 @@
 import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
+/** Manual accounts belong to the option chain, auto accounts to the strategy. */
+export type AccountKind = 'manual' | 'auto'
+
 export interface Account {
   id: string
   name: string
   starting_balance: string
   cash_balance: string
   is_archived: boolean
+  kind: AccountKind
   created_at: string
 }
 
-const COLS = 'id, name, starting_balance, cash_balance, is_archived, created_at'
+const COLS = 'id, name, starting_balance, cash_balance, is_archived, kind, created_at'
 const SELECTED_KEY = 'delta-paper.selected-account'
 
 /**
- * The user's paper sub-accounts, plus which one is active.
+ * The user's paper sub-accounts of one kind, plus which one is active. The chain
+ * and the strategy each call this with their own kind, so the two books keep
+ * separate account lists, balances and selections.
  *
  * Archived accounts are loaded too — the terminal filters them out, but the
  * admin panel needs to see them in order to restore or delete them.
  *
- * A first account is created automatically so a new user lands on a usable
- * dashboard instead of an empty-state dead end.
+ * A first account is created automatically so a page lands on a usable book
+ * instead of an empty-state dead end.
  */
-export function useAccounts(userId: string | undefined) {
+export function useAccounts(userId: string | undefined, kind: AccountKind = 'manual') {
+  // Remember the selection per kind, so switching pages does not cross the two.
+  const selectedKey = `${SELECTED_KEY}.${kind}`
   const [allAccounts, setAllAccounts] = useState<Account[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(() =>
-    localStorage.getItem(SELECTED_KEY),
+    localStorage.getItem(selectedKey),
   )
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -35,6 +43,7 @@ export function useAccounts(userId: string | undefined) {
     const { data, error: err } = await supabase
       .from('accounts')
       .select(COLS)
+      .eq('kind', kind)
       .order('created_at', { ascending: true })
 
     if (err) {
@@ -45,11 +54,11 @@ export function useAccounts(userId: string | undefined) {
 
     let rows = (data ?? []) as Account[]
 
-    // Only auto-create when there is genuinely nothing, archived included.
+    // Only auto-create when this kind has genuinely nothing, archived included.
     if (rows.length === 0) {
       const { data: created, error: createErr } = await supabase
         .from('accounts')
-        .insert({ user_id: userId, name: 'Primary', starting_balance: 10000, cash_balance: 10000 })
+        .insert({ user_id: userId, name: 'Primary', starting_balance: 10000, cash_balance: 10000, kind })
         .select(COLS)
         .single()
       if (createErr) {
@@ -69,15 +78,15 @@ export function useAccounts(userId: string | undefined) {
     setSelectedId((current) =>
       current && active.some((r) => r.id === current) ? current : (active[0]?.id ?? null),
     )
-  }, [userId])
+  }, [userId, kind])
 
   useEffect(() => {
     void load()
   }, [load])
 
   useEffect(() => {
-    if (selectedId) localStorage.setItem(SELECTED_KEY, selectedId)
-  }, [selectedId])
+    if (selectedId) localStorage.setItem(selectedKey, selectedId)
+  }, [selectedId, selectedKey])
 
   const createAccount = useCallback(
     async (name: string, startingBalance: number) => {
@@ -89,6 +98,7 @@ export function useAccounts(userId: string | undefined) {
           name: name.trim(),
           starting_balance: startingBalance,
           cash_balance: startingBalance,
+          kind,
         })
         .select(COLS)
         .single()
@@ -96,7 +106,7 @@ export function useAccounts(userId: string | undefined) {
       setAllAccounts((prev) => [...prev, data as Account])
       setSelectedId((data as Account).id)
     },
-    [userId],
+    [userId, kind],
   )
 
   const renameAccount = useCallback(

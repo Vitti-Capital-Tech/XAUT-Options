@@ -36,8 +36,12 @@ export default function App() {
 // ---------------------------------------------------------------------------
 
 function Terminal({ userId, email }: { userId: string; email: string | undefined }) {
-  const accounts = useAccounts(userId)
-  const trading = useTrading(accounts.selectedId, accounts.reload)
+  // Two independent books, one per page: the chain trades manual accounts, the
+  // strategy trades auto accounts. Same tables, partitioned by account kind.
+  const manualAccounts = useAccounts(userId, 'manual')
+  const autoAccounts = useAccounts(userId, 'auto')
+  const manualTrading = useTrading(manualAccounts.selectedId, manualAccounts.reload)
+  const autoTrading = useTrading(autoAccounts.selectedId, autoAccounts.reload)
 
   const [expiries, setExpiries] = useState<Expiry[]>([])
   const [activeExpiry, setActiveExpiry] = useState<string | null>(null)
@@ -48,6 +52,10 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
   const [adminOpen, setAdminOpen] = useState(false)
   // Which top-level page is showing. Signing in lands on the chain.
   const [page, setPage] = useState<Page>('chain')
+
+  // The book the header, ticket and admin panel act on — whichever page is up.
+  const accounts = page === 'chain' ? manualAccounts : autoAccounts
+  const trading = page === 'chain' ? manualTrading : autoTrading
 
   const tick = useMarketTick()
 
@@ -110,24 +118,26 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
     return m
   }, [expiries])
 
-  // The fill engine needs product metadata (contract value, fee rates) by symbol.
+  // The fill engine needs product metadata (contract value, fee rates) by symbol
+  // — for both books, since either can hold a position needing a fill.
   useEffect(() => {
-    trading.registerProducts([...productsBySymbol.values()])
-  }, [productsBySymbol, trading])
+    const products = [...productsBySymbol.values()]
+    manualTrading.registerProducts(products)
+    autoTrading.registerProducts(products)
+  }, [productsBySymbol, manualTrading, autoTrading])
 
   const expiry = expiries.find((e) => e.label === activeExpiry) ?? null
 
   // ---- Auto strategy -------------------------------------------------------
-  // Reads the active expiry's strikes and the live spot to place its own market
-  // orders. market.spot is read through the tick above so its readout stays live.
+  // Always trades the auto account, whichever page is showing — it fires on the
+  // clock, not on the tab you are looking at. Each sale's stop is armed on the
+  // auto book server-side.
   const strategy = useAutoStrategy({
-    accountId: accounts.selectedId,
+    accountId: autoAccounts.selectedId,
     expiry,
     spot: market.spot,
-    positions: trading.positions,
-    productsBySymbol,
-    placeOrder: trading.placeOrder,
-    closePosition: trading.closePosition,
+    placeOrder: autoTrading.placeOrder,
+    setTpSl: autoTrading.setTpSl,
   })
 
   // ---- Live stream ---------------------------------------------------------
@@ -150,10 +160,21 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
       for (const p of expiry.calls.values()) symbols.add(p.symbol)
       for (const p of expiry.puts.values()) symbols.add(p.symbol)
     }
-    for (const p of trading.positions) symbols.add(p.symbol)
-    for (const o of trading.openOrders) symbols.add(o.symbol)
+    // Both books' holdings, so P&L, limit fills and the strategy's marks keep
+    // ticking on either page.
+    for (const p of manualTrading.positions) symbols.add(p.symbol)
+    for (const o of manualTrading.openOrders) symbols.add(o.symbol)
+    for (const p of autoTrading.positions) symbols.add(p.symbol)
+    for (const o of autoTrading.openOrders) symbols.add(o.symbol)
     stream.setSymbols([...symbols])
-  }, [stream, expiry, trading.positions, trading.openOrders])
+  }, [
+    stream,
+    expiry,
+    manualTrading.positions,
+    manualTrading.openOrders,
+    autoTrading.positions,
+    autoTrading.openOrders,
+  ])
 
   // ---- Account summary ----------------------------------------------------
   const tickerFor = useCallback((symbol: string) => market.get(symbol), [])
@@ -291,9 +312,17 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
       ) : (
         <div className="flex min-h-screen flex-col">
           {topBar}
-          <div className="min-h-0 flex-1">
-            <StrategyTab strategy={strategy} />
-          </div>
+          <StrategyTab strategy={strategy} />
+          {/* The strategy's own book — its positions and trade history, on the
+              auto account, entirely separate from the chain's. */}
+          <BottomPanel
+            positions={autoTrading.positions}
+            fills={autoTrading.fills}
+            productsBySymbol={productsBySymbol}
+            onClosePosition={(pos, product) => autoTrading.closePosition(pos, product)}
+            onSetTpSl={autoTrading.setTpSl}
+            onPickSymbol={(product) => openTicket(product, 'buy', null)}
+          />
         </div>
       )}
 

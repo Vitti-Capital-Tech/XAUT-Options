@@ -2,21 +2,19 @@
  * The auto-strategy's pure logic, with no React and no I/O, so the strike maths
  * and the time window can be reasoned about on their own.
  *
- * The rule is small: read the last closed 1h candle of the spot index; a green
- * bar takes one side and a red bar the other, per the chosen bias. The order is
- * one lot, market, of a call or a put picked by moneyness off the current spot,
- * fired only inside a time-of-day window. Everything here computes that; the
- * hook does the fetching, the clock and the placing.
+ * The rule is fixed: read the last closed 1h candle of the spot index and sell
+ * an option — a red bar sells a call, a green bar sells a put — one order,
+ * market, of the strike picked by moneyness off the current spot, fired only
+ * inside a time-of-day window, with a stop at twice the entry premium. Everything
+ * here computes that; the hook does the fetching, the clock and the placing.
  */
 
 import type { Candle, Expiry, Product } from './delta'
-import type { Side } from '../engine/paper'
 
 export type OptionKind = 'call' | 'put'
 
-/** Which way a green candle leans. `sell-on-green` is the spec's first reading;
- *  `buy-on-green` is the "or vice-versa". Red always takes the other side. */
-export type Bias = 'sell-on-green' | 'buy-on-green'
+/** Loss stopped at 100% of the premium — the mark reaching twice the entry. */
+export const STOP_LOSS_MULTIPLE = 2
 
 /**
  * How far the traded strike sits from the money. ITM is capped at 2 and OTM at
@@ -37,10 +35,8 @@ export const MONEYNESS_ORDER: Moneyness[] = [
 ]
 
 export interface StrategyConfig {
-  kind: OptionKind
-  bias: Bias
   moneyness: Moneyness
-  /** Lots per fire. One, per the spec; kept a number so it can be raised later. */
+  /** Underlying units sold per fire (XAUT). Converted to lots at placement. */
   qty: number
   /** Trading window, inclusive, as `HH:MM` in IST. A window that wraps past
    *  midnight (start > end) is honoured. */
@@ -49,8 +45,6 @@ export interface StrategyConfig {
 }
 
 export const DEFAULT_CONFIG: StrategyConfig = {
-  kind: 'call',
-  bias: 'sell-on-green',
   moneyness: 'ATM',
   qty: 1,
   // All day by default, so the window filters nothing until the trader sets it.
@@ -59,7 +53,7 @@ export const DEFAULT_CONFIG: StrategyConfig = {
 }
 
 // ---------------------------------------------------------------------------
-// Candle → side
+// Candle → which option to sell
 // ---------------------------------------------------------------------------
 
 export type CandleColor = 'green' | 'red' | 'flat'
@@ -71,11 +65,15 @@ export function candleColor(c: Candle): CandleColor {
   return 'flat'
 }
 
-/** The order side a bar implies, or null for a flat bar — a doji is no signal. */
-export function sideFor(color: CandleColor, bias: Bias): Side | null {
-  if (color === 'flat') return null
-  const greenSide: Side = bias === 'sell-on-green' ? 'sell' : 'buy'
-  return color === 'green' ? greenSide : greenSide === 'buy' ? 'sell' : 'buy'
+/**
+ * The option a bar tells us to sell: a red (bearish) hour sells the call, a green
+ * (bullish) hour sells the put — fading the move's opposite wing. Flat is no
+ * signal. The side is always a sell.
+ */
+export function kindForColor(color: CandleColor): OptionKind | null {
+  if (color === 'red') return 'call'
+  if (color === 'green') return 'put'
+  return null
 }
 
 /**
