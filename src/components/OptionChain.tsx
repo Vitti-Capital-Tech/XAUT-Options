@@ -88,12 +88,15 @@ interface Selection {
 /**
  * The option chain, laid out to match Delta Exchange's own.
  *
- * In-the-money rows carry a faint wash, per side — green where a call is in the
- * money (its strike below spot), red where a put is (its strike above) — the way
- * Delta tints them. It is barely there by design; the ATM row is still marked by
- * the single brand-orange rule, and a clicked strike still takes that same rule
- * and nothing more. The strike spine paints its own surface, so the wash stops
- * cleanly at the centre line rather than bleeding across it.
+ * In-the-money rows are lifted to the raised surface, per side — a call below
+ * spot, a put above it — which is the neutral step Delta uses (measured off
+ * their chain at #22242c, our `raised`), not a colour. The ATM row is still
+ * marked by the single brand-orange rule, and a clicked strike still takes that
+ * same rule and nothing more.
+ *
+ * A held leg is flagged on the strike spine: an L for long, an S for short, on
+ * the strike's left for a call and its right for a put — the side each book
+ * sits on — in the position's colour.
  *
  * Click semantics follow their terminal — a bid is what you sell into, an ask is
  * what you buy from, and the clicked price seeds the order ticket. Everything
@@ -307,10 +310,16 @@ function Book({
           const product = book.get(strike)
           const position = product ? positionBySymbol.get(product.symbol) : undefined
 
-          // A call is in the money below spot, a put above it. The wash is faint
-          // and side-coloured; hover still lifts the whole row over it.
+          // Both legs at this strike, so the spine can flag a held call on its
+          // left and a held put on its right.
+          const callPos = positionBySymbol.get(expiry.calls.get(strike)?.symbol ?? '')
+          const putPos = positionBySymbol.get(expiry.puts.get(strike)?.symbol ?? '')
+
+          // A call is in the money below spot, a put above it. Delta lifts the
+          // in-the-money side to the raised surface — a neutral step, not a
+          // colour — so the row bg carries it and hover steps once further up.
           const itm = spot > 0 && (side === 'call' ? strike < spot : strike > spot)
-          const tint = itm ? (side === 'call' ? 'bg-tint-pos' : 'bg-tint-neg') : ''
+          const rowBg = itm ? 'bg-raised hover:bg-raised-2' : 'hover:bg-raised/50'
 
           return (
             <div
@@ -322,7 +331,7 @@ function Book({
               // A clicked row is boxed top and bottom; the money is a single
               // rule laid above the strike spot has not reached. Row height is
               // Delta's: 43px.
-              className={`grid h-[43px] cursor-pointer items-center ${tint} hover:bg-raised/50 ${
+              className={`grid h-[43px] cursor-pointer items-center ${rowBg} ${
                 strike === ruled
                   ? 'border-y-[0.8px] border-brand-text'
                   : strike === spotRule
@@ -334,6 +343,8 @@ function Book({
               {side === 'put' && (
                 <StrikeCell
                   strike={strike}
+                  callPos={callPos}
+                  putPos={putPos}
                   // The strike is ruled alongside whichever book was clicked,
                   // and closes that book's box off on its far side.
                   ruledFrom={selected?.strike === strike ? selected.side : null}
@@ -372,9 +383,13 @@ function Book({
  */
 function StrikeCell({
   strike,
+  callPos,
+  putPos,
   ruledFrom,
 }: {
   strike: number
+  callPos: PositionRow | undefined
+  putPos: PositionRow | undefined
   ruledFrom: BookSide | null
 }) {
   const rule =
@@ -386,10 +401,37 @@ function StrikeCell({
 
   return (
     <div
-      className={`strike-spine num flex items-center justify-center self-stretch text-[12px] font-bold text-ink ${rule}`}
+      className={`strike-spine num relative flex items-center justify-center self-stretch text-[12px] font-bold text-ink ${rule}`}
     >
+      {/* A held call flags the strike's left, a held put its right — the side
+          each book sits on. */}
+      <PosFlag position={callPos} className="left-1" />
       {price(strike, 0)}
+      <PosFlag position={putPos} className="right-1" />
     </div>
+  )
+}
+
+/** The L/S marker Delta hangs beside a strike you hold — green long, red short.
+ *  Absent when the leg is flat. */
+function PosFlag({
+  position,
+  className,
+}: {
+  position: PositionRow | undefined
+  className: string
+}) {
+  if (!position || position.net_qty === 0) return null
+  const long = position.net_qty > 0
+  return (
+    <span
+      className={`absolute rounded-sm px-1 text-[9px] leading-tight font-bold ${className} ${
+        long ? 'bg-pos-muted text-pos' : 'bg-neg-muted text-neg'
+      }`}
+      title={`${long ? 'Long' : 'Short'} ${Math.abs(position.net_qty)} lot${Math.abs(position.net_qty) === 1 ? '' : 's'}`}
+    >
+      {long ? 'L' : 'S'}
+    </span>
   )
 }
 
@@ -480,28 +522,8 @@ function ChainCell({ col, product, ticker, position, onPick }: CellProps) {
     case 'theta':
       return <Plain>{greek(g?.theta, 2)}</Plain>
 
-    case 'oi': {
-      const oi = usdCompact(ticker?.oi_value_usd)
-      // A held leg is flagged here, against the strike — an L for long, an S
-      // for short, in the position's colour — the way Delta marks the book you
-      // are in. Calls sit in the left pane and puts in the right, so the flag
-      // lands on the correct side of the strike without being told which.
-      if (!position || position.net_qty === 0) return <Plain>{oi}</Plain>
-      const long = position.net_qty > 0
-      return (
-        <div className="num flex items-center justify-end gap-1 px-2 text-right text-[12px] text-ink">
-          <span
-            className={`rounded-sm px-1 text-[9px] leading-tight font-bold ${
-              long ? 'bg-pos-muted text-pos' : 'bg-neg-muted text-neg'
-            }`}
-            title={`${long ? 'Long' : 'Short'} ${inUnderlying(position.net_qty, cv)} ${UNDERLYING}`}
-          >
-            {long ? 'L' : 'S'}
-          </span>
-          <span>{oi}</span>
-        </div>
-      )
-    }
+    case 'oi':
+      return <Plain>{usdCompact(ticker?.oi_value_usd)}</Plain>
     case 'oiChg':
       return <Plain>{usdCompact(ticker?.oi_change_usd_6h)}</Plain>
     case 'volume':
