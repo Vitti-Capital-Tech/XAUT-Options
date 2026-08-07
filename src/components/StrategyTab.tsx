@@ -33,7 +33,7 @@ export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
               const n = Number(e.target.value)
               if (Number.isFinite(n) && n > 0) setConfig({ qty: n })
             }}
-            className="num step-own w-20 bg-transparent px-2.5 text-right text-[13px] text-ink focus:outline-none"
+            className="num w-24 bg-transparent px-2.5 text-left text-[13px] text-ink focus:outline-none"
           />
           <span className="text-[11px] font-medium text-ink-3">XAUT</span>
         </div>
