@@ -91,11 +91,12 @@ export function useAutoStrategy(accountId: string | null): StrategyApi {
     }
   }, [accountId, applyRow])
 
-  // Keep every open tab in sync — re-read the row on an interval, skipping a
-  // tick right after a local edit so an in-flight write is not clobbered.
+  // Keep every open tab in sync. Realtime pushes a change the moment it lands;
+  // the interval is the fallback. Both skip a beat right after a local edit so
+  // an in-flight write is not clobbered by a stale read.
   useEffect(() => {
     if (!accountId) return
-    const id = setInterval(async () => {
+    const refetch = async () => {
       if (Date.now() - lastEditRef.current < 3000) return
       const { data } = await supabase
         .from('strategy_settings')
@@ -103,8 +104,20 @@ export function useAutoStrategy(accountId: string | null): StrategyApi {
         .eq('account_id', accountId)
         .maybeSingle()
       if (data) applyRow(data as Row)
-    }, SYNC_MS)
-    return () => clearInterval(id)
+    }
+    const id = setInterval(refetch, SYNC_MS)
+    const channel = supabase
+      .channel(`strategy-${accountId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'strategy_settings', filter: `account_id=eq.${accountId}` },
+        () => void refetch(),
+      )
+      .subscribe()
+    return () => {
+      clearInterval(id)
+      void supabase.removeChannel(channel)
+    }
   }, [accountId, applyRow])
 
   // Upsert, not update: a plain update silently no-ops if the row is somehow

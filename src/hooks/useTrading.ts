@@ -112,12 +112,38 @@ export function useTrading(accountId: string | null, onAccountChanged: () => voi
   // trigger a reload — the settlement cron closing an expiry, another tab or
   // device on the same paper account, an admin editing it. Without this, such a
   // change shows only after a trade here or a full reopen. reload() just re-reads
-  // from the database, so an extra pass is cheap and self-reconciling.
+  // from the database, so an extra pass is cheap and self-reconciling. This is
+  // the fallback; realtime below makes the same reload happen at once.
   useEffect(() => {
     if (!accountId) return
     const id = setInterval(() => void reload(), 15_000)
     return () => clearInterval(id)
   }, [accountId, reload])
+
+  // Realtime: the moment this account's positions, orders or fills change — from
+  // any session, the strategy cron, or settlement — re-read, so a parallel
+  // dashboard updates without a refresh. reload/onAccountChanged go through refs
+  // so the subscription is not torn down and rebuilt on every render.
+  const reloadRef = useRef(reload)
+  reloadRef.current = reload
+  const changedRef = useRef(onAccountChanged)
+  changedRef.current = onAccountChanged
+  useEffect(() => {
+    if (!accountId) return
+    const bump = () => {
+      void reloadRef.current()
+      changedRef.current()
+    }
+    const channel = supabase
+      .channel(`trading-${accountId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'positions', filter: `account_id=eq.${accountId}` }, bump)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'fills', filter: `account_id=eq.${accountId}` }, bump)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `account_id=eq.${accountId}` }, bump)
+      .subscribe()
+    return () => {
+      void supabase.removeChannel(channel)
+    }
+  }, [accountId])
 
   /** Run a fill against an existing order row. Returns the realized P&L. */
   const executeFill = useCallback(

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
 /** Manual accounts belong to the option chain, auto accounts to the strategy. */
@@ -83,6 +83,26 @@ export function useAccounts(userId: string | undefined, kind: AccountKind = 'man
   useEffect(() => {
     void load()
   }, [load])
+
+  // Realtime: a balance moving or an account being added/edited in one session
+  // reflects in every other at once, not on the next poll. load() through a ref
+  // so the subscription survives renders.
+  const loadRef = useRef(load)
+  loadRef.current = load
+  useEffect(() => {
+    if (!userId) return
+    const channel = supabase
+      .channel(`accounts-${userId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'accounts', filter: `user_id=eq.${userId}` },
+        () => void loadRef.current(),
+      )
+      .subscribe()
+    return () => {
+      void supabase.removeChannel(channel)
+    }
+  }, [userId])
 
   useEffect(() => {
     if (selectedId) localStorage.setItem(selectedKey, selectedId)
