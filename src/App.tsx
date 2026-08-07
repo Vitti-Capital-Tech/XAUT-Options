@@ -129,16 +129,10 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
   const expiry = expiries.find((e) => e.label === activeExpiry) ?? null
 
   // ---- Auto strategy -------------------------------------------------------
-  // Always trades the auto account, whichever page is showing — it fires on the
-  // clock, not on the tab you are looking at. Each sale's stop is armed on the
-  // auto book server-side.
-  const strategy = useAutoStrategy({
-    accountId: autoAccounts.selectedId,
-    expiry,
-    spot: market.spot,
-    placeOrder: autoTrading.placeOrder,
-    setTpSl: autoTrading.setTpSl,
-  })
+  // Just the settings the server-side engine watches (see 0008_strategy_engine):
+  // arming, strike, size and window for the selected auto account. The placing
+  // and the stops run on the server, so nothing here depends on the tab.
+  const strategy = useAutoStrategy(autoAccounts.selectedId)
 
   // ---- Live stream ---------------------------------------------------------
   const [stream] = useState(() => new MarketStream())
