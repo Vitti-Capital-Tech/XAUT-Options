@@ -119,6 +119,11 @@ export function useAutoStrategy(accountId: string | null): StrategyApi {
           { account_id: accountId, ...patch, updated_at: new Date().toISOString() },
           { onConflict: 'account_id' },
         )
+        .then(({ error }) => {
+          // Surface a rejected write rather than swallowing it — a silent failure
+          // here is exactly what makes an armed toggle spring back on refresh.
+          if (error) console.error('strategy_settings write failed:', error.message)
+        })
     },
     [accountId],
   )
