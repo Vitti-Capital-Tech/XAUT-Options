@@ -26,14 +26,16 @@ import { bestBid, markPrice, type PositionRow } from '../engine/paper'
 
 export type OptionKind = 'call' | 'put'
 
-/** Where a correction aims to land once the band has been breached. */
-export type TargetLanding =
-  /** The breached boundary exactly — the spec's worked example. */
-  | 'edge'
-  /** The breached boundary, pulled back inside by the buffer B. */
-  | 'buffer'
-  /** The midpoint of the band — more headroom, a larger single correction. */
-  | 'mid'
+/**
+ * Where a correction aims to land once the band has been breached — the two
+ * candidates Section 3.1 names, and only those.
+ *
+ * B is not a third rule: Section 3 defines it as the distance back from a
+ * breached edge to correct to *when the band is used as the landing point*, so
+ * it applies to 'edge'. Set B to 0 for 3.1's "land exactly on the breached
+ * boundary", which is what the worked example in 5.2 does.
+ */
+export type TargetLanding = 'edge' | 'mid'
 
 /** What draws down a side's roll budget: one corrective run, or each strike in it. */
 export type RollCounts = 'pass' | 'strike'
@@ -276,7 +278,6 @@ export function landingTarget(cfg: DeltaConfig, breach: Exclude<Breach, null>): 
   const mid = (cfg.bandLow + cfg.bandHigh) / 2
   if (cfg.targetLanding === 'mid') return mid
   const edge = breach === 'low' ? cfg.bandLow : cfg.bandHigh
-  if (cfg.targetLanding === 'edge') return edge
   const pulled = breach === 'low' ? edge + cfg.bandBuffer : edge - cfg.bandBuffer
   return breach === 'low' ? Math.min(pulled, mid) : Math.max(pulled, mid)
 }

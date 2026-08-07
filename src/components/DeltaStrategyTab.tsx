@@ -12,13 +12,15 @@ import { Field, NumInput, RunSwitch, Select, TimePicker } from './controls'
  *
  * Below the controls sits the readout — net portfolio delta against the band,
  * the roll budget each side has left, and the one line saying what the engine is
- * about to do. The positions and trade history it produces are in the panel
+ * about to do next. The positions and trade history it produces are in the panel
  * under this, on the strategy's own delta account.
  *
- * The nine items the spec leaves OPEN are settings here rather than blockers.
- * Each one is on screen with a default, so the choice is explicit and visible
- * instead of buried in an engine — target_landing, what counts as a roll, N, the
- * strike tie-break, expiry selection and the cycle frequency are all fields.
+ * The engine runs server-side on pg_cron, so the switch here arms it and it
+ * trades with the tab closed. Every default is the spec's own figure; the nine
+ * items the spec leaves OPEN are the controls with no number in the document —
+ * target_landing, what counts as a roll, N, the strike tie-break, expiry
+ * selection and the cycle frequency — so the choice is on screen rather than
+ * buried in an engine.
  */
 export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
   const { config, setConfig, armed, setArmed, session, hasAccount, plan, error } = strategy
@@ -58,7 +60,6 @@ export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
             onChange={(v) => setConfig({ targetLanding: v })}
             options={[
               { value: 'edge', label: 'Breached edge' },
-              { value: 'buffer', label: 'Edge − buffer' },
               { value: 'mid', label: 'Band midpoint' },
             ]}
           />
@@ -241,13 +242,6 @@ export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
       {error && (
         <div className="border-t border-line px-5 py-2 text-[12px] text-neg">Engine error — {error}</div>
       )}
-
-      <p className="border-t border-line px-5 py-2 text-[10px] leading-relaxed text-ink-4">
-        Paper only — every order here fills against the same simulated book the chain uses. The
-        engine runs in this tab: unlike the auto strategy it needs per-strike greeks off the live
-        feed, so it advances only while this page is open and Running. Not trading or investment
-        advice.
-      </p>
     </div>
   )
 }

@@ -143,15 +143,12 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
   const strategy = useAutoStrategy(autoAccounts.selectedId)
 
   // ---- Delta management strategy -------------------------------------------
-  // This one's engine does run here: every cycle prices the whole book off
-  // per-strike greeks from the live feed, which no server job has. It reads the
-  // delta account's positions and places into the same paper fill engine the
-  // ticket uses.
+  // Settings and a readout only. The cycle itself runs on pg_cron (see
+  // 0012_delta_strategy_engine), so the strategy trades with no tab open; the
+  // positions here are what it needs to show Δp against the band.
   const deltaStrategy = useDeltaStrategy(deltaAccounts.selectedId, {
     positions: deltaTrading.positions,
     expiries,
-    productsBySymbol,
-    placeOrder: deltaTrading.placeOrder,
   })
   const deltaExpiry = pickExpiry(expiries, deltaStrategy.config.expiryPick)
 
