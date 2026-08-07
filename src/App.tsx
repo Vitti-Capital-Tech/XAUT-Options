@@ -11,6 +11,7 @@ import { useAuth } from './hooks/useAuth'
 import { useAccounts } from './hooks/useAccounts'
 import { useTrading } from './hooks/useTrading'
 import { useAutoStrategy } from './hooks/useAutoStrategy'
+import { useDeltaStrategy } from './hooks/useDeltaStrategy'
 import { useKeywordTrigger } from './hooks/useKeywordTrigger'
 import { market, useMarketTick } from './lib/marketStore'
 import {
@@ -21,6 +22,7 @@ import {
   type Expiry,
   type Product,
 } from './lib/delta'
+import { pickExpiry } from './lib/deltaStrategy'
 import { shortImRate, summarizeAccount, type Side } from './engine/paper'
 import { supabaseConfigured } from './lib/supabase'
 import { ADMIN_KEYWORD } from './lib/admin'
@@ -37,12 +39,15 @@ export default function App() {
 // ---------------------------------------------------------------------------
 
 function Terminal({ userId, email }: { userId: string; email: string | undefined }) {
-  // Two independent books, one per page: the chain trades manual accounts, the
-  // strategy trades auto accounts. Same tables, partitioned by account kind.
+  // Three independent books, one per page: the chain trades manual accounts, the
+  // auto strategy trades auto accounts, the delta strategy trades delta ones.
+  // Same tables throughout, partitioned by account kind.
   const manualAccounts = useAccounts(userId, 'manual')
   const autoAccounts = useAccounts(userId, 'auto')
+  const deltaAccounts = useAccounts(userId, 'delta')
   const manualTrading = useTrading(manualAccounts.selectedId, manualAccounts.reload)
   const autoTrading = useTrading(autoAccounts.selectedId, autoAccounts.reload)
+  const deltaTrading = useTrading(deltaAccounts.selectedId, deltaAccounts.reload)
 
   const [expiries, setExpiries] = useState<Expiry[]>([])
   const [activeExpiry, setActiveExpiry] = useState<string | null>(null)
@@ -55,8 +60,9 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
   const [page, setPage] = useState<Page>('chain')
 
   // The book the header, ticket and admin panel act on — whichever page is up.
-  const accounts = page === 'chain' ? manualAccounts : autoAccounts
-  const trading = page === 'chain' ? manualTrading : autoTrading
+  const accounts =
+    page === 'chain' ? manualAccounts : page === 'strategy' ? autoAccounts : deltaAccounts
+  const trading = page === 'chain' ? manualTrading : page === 'strategy' ? autoTrading : deltaTrading
 
   const tick = useMarketTick()
 
@@ -125,7 +131,8 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
     const products = [...productsBySymbol.values()]
     manualTrading.registerProducts(products)
     autoTrading.registerProducts(products)
-  }, [productsBySymbol, manualTrading, autoTrading])
+    deltaTrading.registerProducts(products)
+  }, [productsBySymbol, manualTrading, autoTrading, deltaTrading])
 
   const expiry = expiries.find((e) => e.label === activeExpiry) ?? null
 
@@ -134,6 +141,19 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
   // arming, strike, size and window for the selected auto account. The placing
   // and the stops run on the server, so nothing here depends on the tab.
   const strategy = useAutoStrategy(autoAccounts.selectedId)
+
+  // ---- Delta management strategy -------------------------------------------
+  // This one's engine does run here: every cycle prices the whole book off
+  // per-strike greeks from the live feed, which no server job has. It reads the
+  // delta account's positions and places into the same paper fill engine the
+  // ticket uses.
+  const deltaStrategy = useDeltaStrategy(deltaAccounts.selectedId, {
+    positions: deltaTrading.positions,
+    expiries,
+    productsBySymbol,
+    placeOrder: deltaTrading.placeOrder,
+  })
+  const deltaExpiry = pickExpiry(expiries, deltaStrategy.config.expiryPick)
 
   // ---- Live stream ---------------------------------------------------------
   const [stream] = useState(() => new MarketStream())
@@ -151,16 +171,24 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
   // P&L and limit fills keep working while browsing a different expiry.
   useEffect(() => {
     const symbols = new Set<string>()
-    if (expiry) {
-      for (const p of expiry.calls.values()) symbols.add(p.symbol)
-      for (const p of expiry.puts.values()) symbols.add(p.symbol)
+    const addChain = (e: Expiry | null) => {
+      if (!e) return
+      for (const p of e.calls.values()) symbols.add(p.symbol)
+      for (const p of e.puts.values()) symbols.add(p.symbol)
     }
-    // Both books' holdings, so P&L, limit fills and the strategy's marks keep
-    // ticking on either page.
+    addChain(expiry)
+    // The delta strategy picks strikes by premium and by delta across its whole
+    // expiry, so that chain has to be streamed even while the chain page is
+    // showing a different one.
+    addChain(deltaExpiry)
+    // Every book's holdings, so P&L, limit fills and the strategies' marks keep
+    // ticking whichever page is up.
     for (const p of manualTrading.positions) symbols.add(p.symbol)
     for (const o of manualTrading.openOrders) symbols.add(o.symbol)
     for (const p of autoTrading.positions) symbols.add(p.symbol)
     for (const o of autoTrading.openOrders) symbols.add(o.symbol)
+    for (const p of deltaTrading.positions) symbols.add(p.symbol)
+    for (const o of deltaTrading.openOrders) symbols.add(o.symbol)
     stream.setSymbols([...symbols])
   }, [
     stream,
@@ -169,6 +197,9 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
     manualTrading.openOrders,
     autoTrading.positions,
     autoTrading.openOrders,
+    deltaTrading.positions,
+    deltaTrading.openOrders,
+    deltaExpiry,
   ])
 
   // ---- Account summary ----------------------------------------------------
@@ -319,10 +350,20 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
           />
         </div>
       ) : (
-        // Delta Management Strategy — configuration and spec, no engine yet.
         <div className="flex min-h-screen flex-col">
           {topBar}
-          <DeltaStrategyTab />
+          <DeltaStrategyTab strategy={deltaStrategy} />
+          {/* The delta strategy's own book, on the delta account — separate
+              again from both the chain's and the auto strategy's. */}
+          <BottomPanel
+            positions={deltaTrading.positions}
+            fills={deltaTrading.fills}
+            productsBySymbol={productsBySymbol}
+            emptyPositions="No open positions. Set it Running and it sells its first pairs at the session open."
+            onClosePosition={(pos, product) => deltaTrading.closePosition(pos, product)}
+            onSetTpSl={deltaTrading.setTpSl}
+            onPickSymbol={(product) => openTicket(product, 'buy', null)}
+          />
         </div>
       )}
 

@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
-/** Manual accounts belong to the option chain, auto accounts to the strategy. */
-export type AccountKind = 'manual' | 'auto'
+/**
+ * Manual accounts belong to the option chain, auto accounts to the auto
+ * strategy, delta accounts to the delta management strategy. One kind per page,
+ * so the three books never share a balance or a position.
+ */
+export type AccountKind = 'manual' | 'auto' | 'delta'
 
 export interface Account {
   id: string

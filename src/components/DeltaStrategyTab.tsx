@@ -1,182 +1,252 @@
-import { useEffect, useState } from 'react'
+import { useMarketTick } from '../lib/marketStore'
+import type { DeltaStrategyApi } from '../hooks/useDeltaStrategy'
+import { greek, price } from '../lib/format'
+import { Field, NumInput, RunSwitch, Select, TimePicker } from './controls'
 
 /**
- * The Delta Management Strategy — a configuration and specification surface, not
- * a running engine. It lays out every parameter from the rules spec as an
- * editable field and flags the items still OPEN, so the strategy can be pinned
- * down before any of it is automated. Nothing here trades; the values persist
- * locally so a half-finished setup survives a reload.
+ * The Delta Management Strategy's controls — the same shape of bar the auto
+ * strategy wears, with the parameters the rules spec actually names: the Sydney
+ * session, the delta band and where a correction lands in it, the ITM trigger
+ * and roll budget, the entry and floor premiums, and the delta range fresh
+ * out-of-the-money sells are picked from.
  *
- * The nine OPEN items (target_landing especially, which every sizing formula
- * depends on) must be fixed before an engine can be built against this.
+ * Below the controls sits the readout — net portfolio delta against the band,
+ * the roll budget each side has left, and the one line saying what the engine is
+ * about to do. The positions and trade history it produces are in the panel
+ * under this, on the strategy's own delta account.
+ *
+ * The nine items the spec leaves OPEN are settings here rather than blockers.
+ * Each one is on screen with a default, so the choice is explicit and visible
+ * instead of buried in an engine — target_landing, what counts as a roll, N, the
+ * strike tie-break, expiry selection and the cycle frequency are all fields.
  */
+export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
+  const { config, setConfig, armed, setArmed, session, hasAccount, plan, error } = strategy
+  // The plan is rebuilt on the engine's own cycle, but Δp moves with every tick;
+  // subscribing keeps the band meter honest between cycles.
+  useMarketTick()
 
-const STORE_KEY = 'delta-mgmt-strategy-config'
-
-interface Config {
-  sessionOpen: string
-  sessionClose: string
-  bandLow: number
-  bandHigh: number
-  buffer: number
-  itmTrigger: number
-  maxRolls: number
-  entryPremium: number
-  minPremium: number
-  bandDeltaLow: number
-  bandDeltaHigh: number
-  targetLanding: string // OPEN — kept as text so it can hold '' / a rule note
-  nPairs: string // OPEN — number or 'capital-scaled'
-}
-
-const DEFAULTS: Config = {
-  sessionOpen: '06:00',
-  sessionClose: '22:00',
-  bandLow: -1,
-  bandHigh: 1,
-  buffer: 0.4,
-  itmTrigger: 5,
-  maxRolls: 3,
-  entryPremium: 4,
-  minPremium: 2,
-  bandDeltaLow: 0.15,
-  bandDeltaHigh: 0.25,
-  targetLanding: '',
-  nPairs: '',
-}
-
-function load(): Config {
-  try {
-    const raw = localStorage.getItem(STORE_KEY)
-    if (raw) return { ...DEFAULTS, ...JSON.parse(raw) }
-  } catch {
-    // ignore a corrupt or unavailable store — fall back to defaults
-  }
-  return DEFAULTS
-}
-
-const OPEN_ITEMS = [
-  ['target_landing', 'The exact Δp value every correction (ITM roll and band correction) aims to land on — a single number, or a rule per side. Every sizing formula depends on it.'],
-  ['Definition of a “roll”', 'For the per-side counter — one triggering pass, or one increment per distinct strike touched within a pass.'],
-  ['N — entry pairs', 'How many call/put pairs to sell at daily entry, and whether it is fixed or scaled to capital/margin.'],
-  ['Strike tie-break', 'Which strike wins when more than one sits near the entry premium — nearest from above, from below, or absolute closest.'],
-  ['Expiry selection', 'Same expiry daily, or roll the nearest weekly/daily contract.'],
-  ['Cycle frequency', 'The intraday loop: tick-driven, or polled on an interval.'],
-  ['Exit-only re-entry', 'For a side that has gone exit-only and fully unwound — does band correction alone repopulate it, or does it need a deliberate re-entry sizing.'],
-  ['Capital / margin breaker', 'A hard circuit breaker distinct from the roll logic, for a gap through several strikes at once.'],
-  ['Simultaneous breach', 'When both sides breach the band and margin is limited — which side is corrected first.'],
-] as const
-
-export function DeltaStrategyTab() {
-  const [cfg, setCfg] = useState<Config>(load)
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORE_KEY, JSON.stringify(cfg))
-    } catch {
-      // a full or unavailable store is not worth interrupting the edit for
-    }
-  }, [cfg])
-
-  const set = <K extends keyof Config>(key: K, value: Config[K]) =>
-    setCfg((c) => ({ ...c, [key]: value }))
+  const dp = plan?.dp ?? null
+  const callsLeft = Math.max(0, config.maxRolls - session.rollsUsedCall)
+  const putsLeft = Math.max(0, config.maxRolls - session.rollsUsedPut)
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
-      <div className="mb-5 flex flex-wrap items-center gap-3">
-        <h1 className="text-lg font-bold text-ink">Delta Management Strategy</h1>
-        <span className="rounded-sm border border-brand-text/40 bg-brand-muted px-1.5 py-0.5 text-[9px] font-bold tracking-wider text-brand-text uppercase">
-          Draft
-        </span>
-      </div>
-      <p className="mb-6 max-w-2xl text-[12px] leading-relaxed text-ink-3">
-        A sell-only, delta-band strategy for XAUT options: sell symmetric call/put pairs at the
-        daily open, keep net portfolio delta inside the band by rolling in-the-money shorts, and
-        fall back to fresh out-of-the-money sells when nothing is left to roll. This screen defines
-        the parameters — it does not trade. The items marked OPEN must be fixed before an engine can
-        run against it.
-      </p>
+    <div className="border-b border-line bg-raised">
+      {/* Controls. One wrapping row, the way the auto strategy's is — there are
+          simply more of them here. */}
+      <div className="flex flex-wrap items-start gap-x-6 gap-y-4 px-5 py-3.5">
+        <Field label="Session · Sydney">
+          <div className="flex items-center gap-2">
+            <TimePicker value={config.sessionOpen} onChange={(v) => setConfig({ sessionOpen: v })} />
+            <span className="text-ink-4">–</span>
+            <TimePicker value={config.sessionClose} onChange={(v) => setConfig({ sessionClose: v })} />
+          </div>
+        </Field>
 
-      <div className="space-y-4">
-        <Section title="Session · Sydney (AEST/AEDT)">
-          <Grid>
-            <TimeField label="Open" value={cfg.sessionOpen} onChange={(v) => set('sessionOpen', v)} />
-            <TimeField label="Close" value={cfg.sessionClose} onChange={(v) => set('sessionClose', v)} />
-          </Grid>
-          <Note>
-            Sell the initial pairs at open; flatten every position at close and stand flat
-            overnight. Roll counters and touched flags reset each open.
-          </Note>
-        </Section>
+        <Field label="Band L / U">
+          <div className="flex items-center gap-2">
+            <NumInput value={config.bandLow} step={0.1} width="w-16" onChange={(v) => setConfig({ bandLow: v })} />
+            <span className="text-ink-4">–</span>
+            <NumInput value={config.bandHigh} step={0.1} width="w-16" onChange={(v) => setConfig({ bandHigh: v })} />
+          </div>
+        </Field>
 
-        <Section title="Delta band">
-          <Grid>
-            <NumField label="Lower (L)" value={cfg.bandLow} step={0.1} onChange={(v) => set('bandLow', v)} />
-            <NumField label="Upper (U)" value={cfg.bandHigh} step={0.1} onChange={(v) => set('bandHigh', v)} />
-            <NumField label="Buffer (B)" value={cfg.buffer} step={0.05} onChange={(v) => set('buffer', v)} />
-          </Grid>
-          <Note>Net portfolio delta Δp is kept inside [L, U]; the buffer is how far back from a breached edge a correction lands, if the band edge is used as the landing point.</Note>
-        </Section>
+        <Field label="Lands on">
+          <Select
+            value={config.targetLanding}
+            width="w-32"
+            onChange={(v) => setConfig({ targetLanding: v })}
+            options={[
+              { value: 'edge', label: 'Breached edge' },
+              { value: 'buffer', label: 'Edge − buffer' },
+              { value: 'mid', label: 'Band midpoint' },
+            ]}
+          />
+        </Field>
 
-        <Section title="Rolls & triggers">
-          <Grid>
-            <NumField label="ITM trigger (pts)" value={cfg.itmTrigger} step={1} onChange={(v) => set('itmTrigger', v)} />
-            <NumField label="Max rolls / side" value={cfg.maxRolls} step={1} onChange={(v) => set('maxRolls', v)} />
-          </Grid>
-          <Note>A short leg this far in the money is flagged for management. Once a side has used its rolls, it goes exit-only for the rest of the session.</Note>
-        </Section>
+        <Field label="Buffer B">
+          <NumInput
+            value={config.bandBuffer}
+            step={0.05}
+            min={0}
+            width="w-16"
+            onChange={(v) => setConfig({ bandBuffer: v })}
+          />
+        </Field>
 
-        <Section title="Premiums (USD)">
-          <Grid>
-            <NumField label="Entry premium" value={cfg.entryPremium} step={0.5} onChange={(v) => set('entryPremium', v)} />
-            <NumField label="Min premium (floor)" value={cfg.minPremium} step={0.5} onChange={(v) => set('minPremium', v)} />
-          </Grid>
-          <Note>Daily entries and roll replacements target the entry premium; nothing is ever sold below the floor.</Note>
-        </Section>
+        <Field label="ITM trigger">
+          <NumInput
+            value={config.itmTrigger}
+            step={1}
+            min={0}
+            unit="pts"
+            width="w-16"
+            onChange={(v) => setConfig({ itmTrigger: v })}
+          />
+        </Field>
 
-        <Section title="Band-correction delta">
-          <Grid>
-            <NumField label="Low" value={cfg.bandDeltaLow} step={0.05} onChange={(v) => set('bandDeltaLow', v)} />
-            <NumField label="High" value={cfg.bandDeltaHigh} step={0.05} onChange={(v) => set('bandDeltaHigh', v)} />
-          </Grid>
-          <Note>When no ITM legs remain to roll, correct the band with fresh OTM sells in this delta range — deliberately further out than the entry strikes, so each contract moves Δp less.</Note>
-        </Section>
+        <Field label="Max rolls / side">
+          <NumInput
+            value={config.maxRolls}
+            step={1}
+            min={0}
+            width="w-16"
+            onChange={(v) => setConfig({ maxRolls: Math.round(v) })}
+          />
+        </Field>
 
-        <Section title="Open — must be fixed before automation">
-          <Grid>
-            <TextField
-              label="target_landing"
-              open
-              value={cfg.targetLanding}
-              placeholder="e.g. 0, or -1 / +1 per side"
-              onChange={(v) => set('targetLanding', v)}
+        <Field label="A roll is">
+          <Select
+            value={config.rollCounts}
+            width="w-32"
+            onChange={(v) => setConfig({ rollCounts: v })}
+            options={[
+              { value: 'pass', label: 'One pass' },
+              { value: 'strike', label: 'Per strike' },
+            ]}
+          />
+        </Field>
+
+        <Field label="Entry / floor $">
+          <div className="flex items-center gap-2">
+            <NumInput
+              value={config.entryPremium}
+              step={0.5}
+              min={0}
+              width="w-16"
+              onChange={(v) => setConfig({ entryPremium: v })}
             />
-            <TextField
-              label="N — entry pairs"
-              open
-              value={cfg.nPairs}
-              placeholder="e.g. 3, or capital-scaled"
-              onChange={(v) => set('nPairs', v)}
+            <span className="text-ink-4">/</span>
+            <NumInput
+              value={config.minPremium}
+              step={0.5}
+              min={0}
+              width="w-16"
+              onChange={(v) => setConfig({ minPremium: v })}
             />
-          </Grid>
+          </div>
+        </Field>
 
-          <ul className="mt-3 space-y-2">
-            {OPEN_ITEMS.map(([name, detail]) => (
-              <li key={name} className="flex gap-2 text-[12px] leading-snug">
-                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-text" />
-                <span>
-                  <span className="font-semibold text-ink">{name}</span>
-                  <span className="text-ink-3"> — {detail}</span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        </Section>
+        <Field label="Band Δ range">
+          <div className="flex items-center gap-2">
+            <NumInput
+              value={config.bandDeltaLow}
+              step={0.05}
+              min={0}
+              width="w-16"
+              onChange={(v) => setConfig({ bandDeltaLow: v })}
+            />
+            <span className="text-ink-4">–</span>
+            <NumInput
+              value={config.bandDeltaHigh}
+              step={0.05}
+              min={0}
+              width="w-16"
+              onChange={(v) => setConfig({ bandDeltaHigh: v })}
+            />
+          </div>
+        </Field>
+
+        <Field label="N pairs">
+          <NumInput
+            value={config.pairs}
+            step={1}
+            min={0}
+            width="w-16"
+            onChange={(v) => setConfig({ pairs: Math.round(v) })}
+          />
+        </Field>
+
+        <Field label="Tie-break">
+          <Select
+            value={config.tieBreak}
+            width="w-32"
+            onChange={(v) => setConfig({ tieBreak: v })}
+            options={[
+              { value: 'closest', label: 'Absolute closest' },
+              { value: 'above', label: 'Nearest above' },
+              { value: 'below', label: 'Nearest below' },
+            ]}
+          />
+        </Field>
+
+        <Field label="Expiry">
+          <Select
+            value={config.expiryPick}
+            width="w-28"
+            onChange={(v) => setConfig({ expiryPick: v })}
+            options={[
+              { value: 'nearest', label: 'Nearest' },
+              { value: 'next', label: 'Next out' },
+            ]}
+          />
+        </Field>
+
+        <Field label="Cycle">
+          <NumInput
+            value={config.cycleSeconds}
+            step={5}
+            min={5}
+            unit="s"
+            width="w-16"
+            onChange={(v) => setConfig({ cycleSeconds: Math.round(v) })}
+          />
+        </Field>
+
+        {/* Run / pause, held to the right so the controls read left-to-right and
+            the switch sits on its own — the same place the auto strategy's is. */}
+        <div className="ml-auto flex items-center gap-3 self-center">
+          <span className={`text-[15px] font-semibold ${armed ? 'text-pos' : 'text-ink-3'}`}>
+            {armed ? 'Running' : 'Paused'}
+          </span>
+          <RunSwitch
+            on={armed}
+            onChange={setArmed}
+            disabled={!hasAccount}
+            title={
+              hasAccount
+                ? armed
+                  ? 'Pause the delta strategy'
+                  : 'Run the delta strategy'
+                : 'Create a delta account first'
+            }
+          />
+        </div>
       </div>
 
-      <p className="mt-6 text-[10px] text-ink-4">
-        Working rules specification, not trading or investment advice. Parameters are illustrative
-        and must be reviewed and fixed by the strategy owner before any live or automated use.
+      {/* Readout. Where Δp sits, what the session has spent, and the next move. */}
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-3 border-t border-line px-5 py-2.5">
+        <Readout label="Net Δp" tone={plan?.breach ? 'warn' : 'ok'}>
+          {dp === null ? '—' : greek(dp, 2)}
+        </Readout>
+        <Readout label="Band">
+          {price(config.bandLow, 2)} – {price(config.bandHigh, 2)}
+        </Readout>
+        <Readout label="ITM queue">{plan ? plan.queue.length : '—'}</Readout>
+        <Readout label="Rolls left C / P" tone={callsLeft === 0 || putsLeft === 0 ? 'warn' : 'ok'}>
+          {callsLeft} / {putsLeft}
+        </Readout>
+        <Readout label="Session">{plan ? phaseLabel(plan.phase) : '—'}</Readout>
+
+        <BandMeter low={config.bandLow} high={config.bandHigh} dp={dp} />
+
+        <div className="ml-auto flex min-w-0 items-center gap-2">
+          <span className="shrink-0 text-[10px] font-semibold tracking-[0.14em] text-ink-3 uppercase">
+            Next
+          </span>
+          <span className="truncate text-[12px] text-ink-2">{plan?.reason ?? 'Starting up…'}</span>
+        </div>
+      </div>
+
+      {error && (
+        <div className="border-t border-line px-5 py-2 text-[12px] text-neg">Engine error — {error}</div>
+      )}
+
+      <p className="border-t border-line px-5 py-2 text-[10px] leading-relaxed text-ink-4">
+        Paper only — every order here fills against the same simulated book the chain uses. The
+        engine runs in this tab: unlike the auto strategy it needs per-strike greeks off the live
+        feed, so it advances only while this page is open and Running. Not trading or investment
+        advice.
       </p>
     </div>
   )
@@ -184,101 +254,53 @@ export function DeltaStrategyTab() {
 
 // ---------------------------------------------------------------------------
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Readout({
+  label,
+  children,
+  tone = 'ok',
+}: {
+  label: string
+  children: React.ReactNode
+  tone?: 'ok' | 'warn'
+}) {
   return (
-    <section className="rounded-lg border border-line bg-raised p-4">
-      <h2 className="mb-3 text-[10px] font-semibold tracking-[0.14em] text-ink-3 uppercase">
-        {title}
-      </h2>
-      {children}
-    </section>
-  )
-}
-
-function Grid({ children }: { children: React.ReactNode }) {
-  return <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{children}</div>
-}
-
-function FieldShell({ label, open, children }: { label: string; open?: boolean; children: React.ReactNode }) {
-  return (
-    <label className="flex flex-col gap-1">
-      <span className="flex items-center gap-1.5 text-[10px] font-medium text-ink-3">
-        {label}
-        {open && (
-          <span className="rounded-sm bg-brand-muted px-1 text-[8px] font-bold tracking-wider text-brand-text uppercase">
-            Open
-          </span>
-        )}
+    <div className="flex flex-col gap-0.5">
+      <span className="text-[9px] font-semibold tracking-[0.14em] text-ink-3 uppercase">{label}</span>
+      <span className={`num text-[13px] font-semibold ${tone === 'warn' ? 'text-brand-text' : 'text-ink'}`}>
+        {children}
       </span>
-      {children}
-    </label>
+    </div>
   )
 }
 
-const inputCls =
-  'num w-full rounded-md border border-raised-3 bg-surface px-2.5 py-1.5 text-left text-[13px] text-ink focus:border-ink-3 focus:outline-none'
+/**
+ * Δp against its band, as a bar. The band fills the width and the marker is
+ * clamped to the ends, so a breach reads as pinned to an edge rather than
+ * disappearing off it.
+ */
+function BandMeter({ low, high, dp }: { low: number; high: number; dp: number | null }) {
+  const span = high - low
+  const frac = dp === null || !(span > 0) ? null : Math.min(1, Math.max(0, (dp - low) / span))
+  const breached = dp !== null && (dp < low || dp > high)
 
-function NumField({
-  label,
-  value,
-  step,
-  onChange,
-}: {
-  label: string
-  value: number
-  step: number
-  onChange: (v: number) => void
-}) {
   return (
-    <FieldShell label={label}>
-      <input
-        type="number"
-        step={step}
-        value={value}
-        onChange={(e) => {
-          const n = Number(e.target.value)
-          if (Number.isFinite(n)) onChange(n)
-        }}
-        className={inputCls}
-      />
-    </FieldShell>
+    <div className="flex w-40 flex-col gap-1">
+      <span className="text-[9px] font-semibold tracking-[0.14em] text-ink-3 uppercase">Δp in band</span>
+      <div className="relative h-2 rounded-full border border-raised-3 bg-surface">
+        {frac !== null && (
+          <span
+            className={`absolute top-1/2 h-3 w-[3px] -translate-x-1/2 -translate-y-1/2 rounded-full ${
+              breached ? 'bg-brand-text' : 'bg-pos-solid'
+            }`}
+            style={{ left: `${frac * 100}%` }}
+          />
+        )}
+      </div>
+    </div>
   )
 }
 
-function TextField({
-  label,
-  value,
-  placeholder,
-  open,
-  onChange,
-}: {
-  label: string
-  value: string
-  placeholder?: string
-  open?: boolean
-  onChange: (v: string) => void
-}) {
-  return (
-    <FieldShell label={label} open={open}>
-      <input
-        type="text"
-        value={value}
-        placeholder={placeholder}
-        onChange={(e) => onChange(e.target.value)}
-        className={`${inputCls} placeholder:text-ink-4`}
-      />
-    </FieldShell>
-  )
-}
-
-function TimeField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
-  return (
-    <FieldShell label={label}>
-      <input type="time" value={value} onChange={(e) => onChange(e.target.value)} className={inputCls} />
-    </FieldShell>
-  )
-}
-
-function Note({ children }: { children: React.ReactNode }) {
-  return <p className="mt-2.5 text-[11px] leading-relaxed text-ink-3">{children}</p>
+function phaseLabel(phase: 'before' | 'open' | 'closed'): string {
+  if (phase === 'open') return 'Open'
+  return phase === 'before' ? 'Pre-open' : 'Closed'
 }
