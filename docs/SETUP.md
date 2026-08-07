@@ -21,22 +21,42 @@ market-data endpoints.
 
 ## 2. Deploy the schema
 
-Open **SQL Editor → New query**, paste the entire contents of
-[`supabase/migrations/0001_init.sql`](../supabase/migrations/0001_init.sql), and **Run**.
+Open **SQL Editor → New query** and run each migration in
+[`supabase/migrations/`](../supabase/migrations/) **in numerical order**, one
+file at a time. Each is a whole-file paste-and-Run, and each assumes its
+predecessors have already been applied — several `alter` tables or replace
+functions the earlier ones created, so skipping or reordering will fail.
 
-This creates:
+| Migration | Adds |
+| --- | --- |
+| `0001_init` | Core schema — `accounts`, `orders`, `fills`, `positions`, `execute_fill`, `reset_account`, RLS |
+| `0002_settlement` | Expiry settlement on `pg_cron`; enables `pg_net` and `pg_cron` |
+| `0003_tpsl` | Take-profit / stop-loss levels, armed server-side |
+| `0004_tpsl_trigger` | Whether a bracket watches the index or the mark |
+| `0005_fill_reason` | Records *why* a triggered close fired |
+| `0006_tpsl_cadence` | Tightens the TP/SL cron cadence |
+| `0007_account_kind` | `accounts.kind` — splits the manual and auto books |
+| `0008_strategy_engine` | `strategy_settings` and the server-side **auto strategy** |
+| `0009_realtime` | Realtime publication, so a second tab updates without a poll |
+| `0010_delta_strategy` | `delta` account kind and `delta_strategy_settings` |
+| `0011_strategy_expiry_fix` | **Required.** Fixes the auto strategy reading an expiry field the tickers feed never sends — without it, it never places a single entry |
+| `0012_delta_strategy_engine` | `delta_chain` and the server-side **delta strategy** engine |
 
-| Object | Type | Purpose |
-| --- | --- | --- |
-| `accounts` | table | Paper sub-accounts and cash balance |
-| `orders` | table | Order log; limit orders rest here as `open` |
-| `fills` | table | Immutable execution history |
-| `positions` | table | Netted position per (account, symbol) |
-| `execute_fill` | function | Atomic fill: order + fill + position + balance |
-| `reset_account` | function | Wipe an account's history, restore balance |
-| `*_owner_all` | RLS policy | Restricts every table to `auth.uid()` |
+The first ten create the schema; `0011` is a bug fix and `0012` moves the delta
+strategy's engine server-side. A fresh install wants all twelve.
 
-Verify it worked — all four tables should return `200` and an empty array:
+After `0012`, four cron jobs should be scheduled — confirm with:
+
+```sql
+select jobname, schedule, active from cron.job;
+```
+
+You want `settlement-poll`, `settlement-apply`, `tpsl-poll`, `tpsl-apply`,
+`strategy-poll`, `strategy-apply`, `delta-poll` and `delta-apply`. If `cron.job`
+is empty, `pg_cron` was not enabled — re-run `0002_settlement.sql`, which is
+where both extensions are created.
+
+Verify the core tables — all four should return `200` and an empty array:
 
 ```bash
 curl -s -o /dev/null -w "%{http_code}\n" \

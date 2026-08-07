@@ -224,8 +224,53 @@ graph LR
 ```
 
 **This engine runs in the browser.** Resting orders fill only while a dashboard tab
-is open — the single most important operational caveat in the system, accepted
-deliberately to avoid standing server infrastructure.
+is open — the single most important operational caveat for *manual* trading,
+accepted deliberately to avoid standing server infrastructure.
+
+### Strategy engines
+
+Both automated strategies run **server-side on `pg_cron`**, so they trade with no
+tab open. Neither uses the browser fill engine; both write through the same
+`execute_fill` a manual order does.
+
+```mermaid
+graph LR
+    A["pg_cron<br/>every minute"] --> B["*-poll"]
+    B --> C{"anything<br/>armed?"}
+    C -->|no| D["no-op"]
+    C -->|yes| E["pg_net http_get<br/>Delta public API"]
+    E --> F["net._http_response"]
+    A --> G["*-apply"]
+    G --> H["read freshest reply"]
+    H --> I["decide"]
+    I --> J["execute_fill"]
+```
+
+The poll and the apply are separate jobs because `pg_net` is **asynchronous**:
+the request is only sent after its transaction commits, and the reply lands in
+`net._http_response` some time later. `apply` therefore reads whatever reply is
+freshest rather than the one its own poll fired — matching them by shape, within
+a freshness window.
+
+| | Auto strategy | Delta strategy |
+| --- | --- | --- |
+| Migration | [`0008`](../supabase/migrations/0008_strategy_engine.sql), fixed by [`0011`](../supabase/migrations/0011_strategy_expiry_fix.sql) | [`0012`](../supabase/migrations/0012_delta_strategy_engine.sql) |
+| Cadence | Top of the hour only — 1h bars close there | Every minute, spaced by `cycle_seconds` |
+| Feed | Candles + full option chain (~964 KB) | XAUT tickers only (~143 KB) |
+| Needs | Last closed candle, strike ladder | Per-strike `greeks.delta`, both sides of the touch |
+| State | `strategy_settings.last_acted`, one action per bar | `delta_strategy_settings` — roll budget, touched strikes, session day |
+
+Two consequences worth stating plainly:
+
+- **Failures are silent by construction.** Both return a bare action count, which
+  `pg_cron` records as success either way. `0008` shipped reading a
+  `settlement_time` field the tickers endpoint has never returned, so it placed
+  nothing at all until `0011` — with no error anywhere. Every early return now
+  emits `raise log`; the Postgres logs are the only place a skipped cycle is
+  visible.
+- **The delta strategy's rules exist twice.** `lib/deltaStrategy.ts` computes the
+  readout in the browser; `0012` does the trading in PL/pgSQL. Only the
+  TypeScript copy is under test, and nothing enforces that they agree.
 
 ---
 
@@ -241,6 +286,10 @@ deliberately to avoid standing server infrastructure.
 | 6 | Throttle repaints to 4/sec | Render every tick | Ticks arrive far faster than perception. Writes land synchronously in a Map; only notification is throttled, so no data is dropped. |
 | 7 | Balance excludes open positions | Debit premium on entry | `balance = start + realized − fees`, `equity = balance + unrealized`. Matches how Delta presents it and keeps realized and unrealized separable. |
 | 8 | Fee rates read from the product | Hardcode 0.01% / 3.5% | The venue owns those numbers; reading them means the app tracks changes for free. |
+| 9 | Strategy engines in PL/pgSQL on `pg_cron` | Edge Function; external worker | No new deployment target, and `pg_net` + `pg_cron` were already in use for settlement and TP/SL. Cost: HTTP orchestration inside Postgres is awkward — async replies matched by sniffing JSON shape, inside a freshness race, with no logging unless asked for. |
+| 10 | One account `kind` per page | Separate tables per strategy | Orders, fills and positions are already scoped to an account, so a `kind` column partitions the three books with no schema duplication and no change to `execute_fill`. |
+| 11 | Delta strategy acts once per cycle | Walk the whole ITM queue in one pass | Δp is re-read from fresh marks before each step, so a correction can never be sized against a book it has already changed. Slower to converge; cannot compound its own error. |
+| 12 | Chain snapshot in an unlogged table | Temp table per cycle | A `language sql` body is validated at **creation**, so helpers cannot be compiled against a temp table that only exists at run time. It also avoids PL/pgSQL caching a plan for a relation dropped and recreated every minute. |
 
 ---
 
@@ -435,6 +484,10 @@ worth having on the chain you are clicking through.
 | Fills ignore quoted size | Oversized orders fill at the touch | Walk the book against `bid_size`/`ask_size` |
 | Taker fee assumed for maker fills | None today — both rates are 0.01% for XAUT | Branch on resting vs crossing |
 | Refetch after mutation, no realtime | Second tab is briefly stale | Supabase Realtime on the four tables |
+| Auto strategy acts only at the top of the hour | Five chances an hour, each losable to a flat bar or an unquoted strike; the bar is then consumed until the next hour | Retry within the hour rather than burning the bar on a skip |
+| Strategy fills model no fee | An automated book overstates P&L by roughly the commission | Pass the computed fee to `execute_fill` as the ticket does |
+| Delta rules implemented twice | The readout and the engine can disagree, and only the TypeScript copy is tested | One implementation — move the engine to a worker that imports `lib/deltaStrategy.ts` |
+| `cycle_seconds` floors at the cron minute | A correction is sized against a snapshot up to a minute old | Sub-minute scheduling, or a worker holding the feed |
 
 ---
 

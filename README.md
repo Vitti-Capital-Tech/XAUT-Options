@@ -1,8 +1,20 @@
 # XAUT Options — Paper Trading Terminal
 
 A Delta-Exchange-style options terminal for **XAUT** (Tether Gold). Live option
-chain, click-to-trade, positions, open orders and trade history — with every
-order simulated. **No order ever reaches the exchange.**
+chain, click-to-trade, positions, open orders and trade history — plus two
+automated strategies that run on a schedule — with every order simulated.
+**No order ever reaches the exchange.**
+
+Three pages, each trading its own book:
+
+| Page | Account kind | What it does |
+| --- | --- | --- |
+| **Option Chain** | `manual` | Click-to-trade the live chain by hand |
+| **Auto Strategy** | `auto` | Sells one option per closed 1h candle — a call on a red bar, a put on a green |
+| **Delta Strategy** | `delta` | The delta-band strategy from `Gold_Options_Delta_Strategy.docx` |
+
+The three never share a balance or a position: an account carries a `kind`, and
+every order, fill and position is already scoped to an account.
 
 Market data is live from Delta Exchange India's *public* API. There is no API
 key anywhere in this project and no signed endpoint is ever called, so the app
@@ -100,6 +112,71 @@ row locked, so a fill can't half-apply and two tabs can't fill one order twice.
 > fill with the tab closed you'd need a Supabase Edge Function on a cron —
 > a deliberate deferral, not an oversight.
 
+### Auto Strategy
+
+One fixed rule, no discretion: read the last **closed 1h candle** of the spot
+index and sell an option — a red bar sells a call, a green bar sells a put — at
+the chosen moneyness off the nearest expiry, inside a time-of-day window (IST),
+with a stop at twice the entry premium on the mark.
+
+The controls are only *whether* it runs, the strike, the size and the window.
+The engine itself is `apply_strategy()` on `pg_cron`
+([`0008`](supabase/migrations/0008_strategy_engine.sql)), so it trades with the
+tab closed. It acts at most once per bar, guarded by `last_acted`.
+
+> It can only ever act in the **first few minutes of an hour** — the poll gates
+> itself to that window, and the reply it reads expires after 150 seconds. Miss
+> it (a flat bar, an unquoted strike, a slow fetch) and the bar is consumed until
+> the next hour. Every skip path logs its reason.
+
+### Delta Strategy
+
+The sell-only delta-band strategy specified in
+`Gold_Options_Delta_Strategy.docx`. In short: sell a symmetric call/put pair at
+the session open, keep net portfolio delta **Δp** inside a band by rolling
+in-the-money shorts further out, fall back to fresh out-of-the-money sells when
+nothing is left to roll, and flatten at the close.
+
+**No leg is ever bought as a hedge.** Every correction is more premium sold, or
+an exit — never a long option.
+
+| Phase | Rule |
+| --- | --- |
+| Open (06:00 Sydney) | Sell N symmetric pairs at the strikes nearest `entry_premium` |
+| Intraday | Rebuild the ITM queue each cycle, most-ITM first; resolve breaches by partial exit-and-replace |
+| Roll budget | Each side gets `max_rolls`; once spent that side is **exit-only** — further triggers close in full, loss booked |
+| No ITM legs left | Band-correct with fresh OTM sells in the `band_correction_delta` range |
+| Close (22:00 Sydney) | Flatten everything, stand flat overnight, reset counters |
+
+Sizing is the document's, both rounded **down** so a correction cannot overshoot:
+
+```
+roll:            q = (target_landing - Δp) / (d_itm - d_replacement)
+band correction: q = (target_landing - Δp) / d_selected
+```
+
+**Δp is measured in contract-deltas** — `Σ(signed lots × option delta)`, with no
+contract-value factor. That is the unit the document's own worked example is
+written in, and the band is calibrated to the same one.
+
+The engine is `apply_delta_strategy()` on `pg_cron`
+([`0012`](supabase/migrations/0012_delta_strategy_engine.sql)), so this also
+trades with the tab closed. It runs entirely in SQL because `/v2/tickers`
+carries `greeks.delta`, both sides of the touch, spot and contract value on
+every symbol — and accepts `underlying_asset_symbols=XAUT`, which cuts the fetch
+from ~964 KB to ~143 KB.
+
+Every default on the control bar is the document's own figure. The **nine items
+the document leaves OPEN** have no value in it, so they are controls with
+defaults chosen here, not derived: `target_landing`, what counts as a roll, `N`,
+the strike tie-break, expiry selection and the cycle frequency.
+
+> **`N` defaults to 1, which is effectively inert.** One pair nets to roughly
+> zero delta and will never reach a ±1 band, so it sells its pair and holds it
+> until the close — no rolls, no corrections. The document's worked example sits
+> at Δp −1.5, which implies `N` nearer 3. Set it before expecting the rest of the
+> strategy to fire.
+
 ### Multiple accounts
 
 The switcher (top right) holds any number of independent paper accounts, each
@@ -151,23 +228,41 @@ protecting.
 - **Fees assume the taker rate.** A resting limit order that fills is really a
   maker fill; both rates are 0.01% for XAUT today, so this currently makes no
   numerical difference.
+- **Strategy fills are modelled without fees.** Both engines pass `0` to
+  `execute_fill`, so an automated book overstates its P&L by roughly the
+  commission a manual one would pay.
+- **Both engines are paced by `pg_cron` at one minute.** The delta strategy's
+  `cycle_seconds` therefore floors at 60 in practice however low it is set, and
+  a correction is sized against a snapshot up to a minute old.
 
 ## Project layout
 
 ```
 src/
-  lib/delta.ts          Delta REST + WebSocket client, symbol parsing
-  lib/marketStore.ts    Throttled live ticker cache (useSyncExternalStore)
-  lib/supabase.ts       Supabase client
-  lib/format.ts         Number/money/greek formatting
-  engine/paper.ts       Fees, margin, bid/ask P&L, order validation, crossing
-  hooks/useAuth.ts      Session
-  hooks/useAccounts.ts  Paper accounts CRUD + selection
-  hooks/useTrading.ts   Positions/orders/fills, order placement, fill engine
-  components/           Login, TopBar, OptionChain, OrderTicket, BottomPanel
-supabase/migrations/    Schema, RLS, execute_fill, reset_account
-docs/                   HLD, LLD, setup
+  lib/delta.ts             Delta REST + WebSocket client, symbol parsing
+  lib/marketStore.ts       Throttled live ticker cache (useSyncExternalStore)
+  lib/supabase.ts          Supabase client
+  lib/format.ts            Number/money/greek formatting
+  lib/strategy.ts          Auto strategy: candle colour, moneyness, IST window
+  lib/deltaStrategy.ts     Delta strategy: Δp, band, ITM queue, sizing, cycle plan
+  engine/paper.ts          Fees, margin, bid/ask P&L, order validation, crossing
+  hooks/useAuth.ts         Session
+  hooks/useAccounts.ts     Paper accounts CRUD + selection, per kind
+  hooks/useTrading.ts      Positions/orders/fills, order placement, fill engine
+  hooks/useAutoStrategy.ts Auto strategy settings (engine is server-side)
+  hooks/useDeltaStrategy.ts Delta strategy settings + readout (engine is server-side)
+  components/controls.tsx  Shared strategy-bar widgets: select, time picker, switch
+  components/              Login, TopBar, OptionChain, OrderTicket, BottomPanel,
+                           StrategyTab, DeltaStrategyTab, AdminPanel
+supabase/migrations/       Schema, RLS, execute_fill, settlement, TP/SL,
+                           and both strategy engines
+docs/                      HLD, LLD, setup
 ```
+
+`lib/deltaStrategy.ts` holds the strategy's logic with no React and no I/O, so
+the band maths and the sizing can be reasoned about on their own. It is also
+what the browser uses to render the live readout — the executing copy is the SQL
+in `0012`, and the two must be kept in step by hand.
 
 ## Verification status
 
@@ -182,15 +277,30 @@ Confirmed working:
   bid, and the equity/available lines.
 - Schema deployed: all four tables present, RLS rejects anonymous writes
   (`42501`), and both functions exist and execute.
+- **Delta strategy logic** in `lib/deltaStrategy.ts` — 65 assertions covering the
+  document's 5.2 worked example end to end, the band and landing rules, the
+  corrective sides, the ITM queue, and the Sydney session clock across both AEST
+  and AEDT. Fixtures are synthetic.
+- **Delta strategy daily entry, live.** Armed against the real chain it built the
+  113-symbol snapshot from the feed and sold its symmetric pair — two orders, two
+  open legs, `entered_day` set.
 
 Not yet exercised:
 
+- **The delta strategy past its daily entry.** The roll, exit-only and
+  band-correction paths have run against synthetic fixtures only, never against
+  a live book — partly because `N = 1` cannot breach the band (see above). These
+  are the paths that place and unwind real size; treat the first live breach as
+  the actual test.
+- **The two copies of the delta logic can drift.** `lib/deltaStrategy.ts` draws
+  the readout and `0012` does the trading. They implement the same rules twice,
+  in two languages, with only the TypeScript side under test.
 - **The write path inside `execute_fill`** — the `insert into fills` and the
   positions upsert. Postgres only plans statements inside a PL/pgSQL function on
   first execution, so these are validated by the first real trade rather than by
   deployment. If anything in the schema misbehaves, look here first.
-- Expiry settlement, liquidation, and partial fills against quoted size — none
-  are implemented (see *Known approximations*).
+- Liquidation and partial fills against quoted size — neither is implemented
+  (see *Known approximations*).
 
 ## License
 

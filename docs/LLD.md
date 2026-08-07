@@ -48,6 +48,8 @@ erDiagram
     ACCOUNTS ||--o{ POSITIONS : holds
     ACCOUNTS ||--o{ FILLS : records
     ORDERS ||--o{ FILLS : produces
+    ACCOUNTS ||--o| STRATEGY_SETTINGS : "if kind=auto"
+    ACCOUNTS ||--o| DELTA_STRATEGY_SETTINGS : "if kind=delta"
 
     AUTH_USERS {
         uuid id PK
@@ -60,6 +62,40 @@ erDiagram
         numeric starting_balance
         numeric cash_balance "start + realized - fees"
         boolean is_archived
+        text kind "manual | auto | delta"
+    }
+    STRATEGY_SETTINGS {
+        uuid account_id PK
+        boolean armed
+        text moneyness
+        numeric qty "XAUT per fire"
+        text window_start "HH:MM IST"
+        text window_end
+        bigint last_acted "unix sec of last bar"
+    }
+    DELTA_STRATEGY_SETTINGS {
+        uuid account_id PK
+        boolean armed
+        text session_open "HH:MM Sydney"
+        text session_close
+        numeric band_low "L"
+        numeric band_high "U"
+        text target_landing "edge | mid"
+        numeric band_buffer "B"
+        numeric itm_trigger "points"
+        integer max_rolls "per side per session"
+        numeric entry_premium
+        numeric min_premium "hard floor"
+        numeric band_delta_low
+        numeric band_delta_high
+        integer pairs "N"
+        text session_day "Sydney YYYY-MM-DD"
+        integer rolls_used_call
+        integer rolls_used_put
+        text entered_day
+        text flattened_day
+        text_array touched_symbols "once per pass"
+        boolean pass_open
     }
     ORDERS {
         uuid id PK
@@ -448,6 +484,41 @@ render `—` rather than a plausible-looking wrong number.
 Concurrency guard: an `inFlight` ref of order ids stops a tick burst from
 double-submitting. The DB row lock and status check are the real defence.
 
+### `lib/deltaStrategy.ts` — pure, no I/O
+
+The delta strategy's rules, with no React and no fetching, so the band maths can
+be reasoned about on its own. The browser uses it for the readout; the executing
+copy is PL/pgSQL in
+[`0012`](../supabase/migrations/0012_delta_strategy_engine.sql).
+
+| Function | Signature | Notes |
+| --- | --- | --- |
+| `sessionPhase` | `(now, cfg) → { phase, day }` | `before \| open \| closed`, Sydney; handles a window that wraps midnight |
+| `bookDeltas` | `(positions, tickerFor, spot) → { legs, missing }` | `missing` legs are reported, never guessed at |
+| `portfolioDelta` | `(legs) → number` | `Σ(signed lots × option delta)` |
+| `bandBreach` | `(dp, cfg) → 'low' \| 'high' \| null` | |
+| `landingTarget` | `(cfg, breach) → number` | Edge drawn back by `B`, or the midpoint |
+| `itmQueue` | `(legs, cfg) → LegDelta[]` | Shorts at or beyond the trigger, most-ITM first |
+| `rollQty` | `(target, dp, dItm, dRepl) → number` | §5.2, rounded down |
+| `bandQty` | `(target, dp, dSelected) → number` | §5.4, rounded down |
+| `pickByPremium` | `(expiry, kind, cfg, tickerFor, beyond?) → StrikePick \| null` | `beyond` is what makes a roll a roll |
+| `pickByDelta` | `(expiry, kind, cfg, tickerFor) → StrikePick \| null` | Inside `band_correction_delta` |
+| `planCycle` | `(CycleInput) → CyclePlan` | One next action, plus the reason either way |
+
+**Units.** Δp is in *contract-deltas* — no `contract_value` factor. That is the
+unit the specification's worked example is written in (2 contracts across a 0.25
+delta gap moves Δp by 0.5), and `[L, U]` is calibrated to the same one. Reading
+it as XAUT-denominated delta would put every band figure out by 1000×.
+
+**Rounding.** Both sizing formulas floor with a `1e-9` tolerance. A plain floor
+gets the specification's own example wrong: the deltas are two-decimal
+quantities, but `0.55 − 0.30` is `0.2500000000000001` in binary, so `0.5 ÷ that`
+is `1.9999999999999996` and floors to 1 where the document says 2.
+
+**Sides.** Δp below the band means a book too short-call heavy, so exiting an ITM
+*call* lifts it and selling a fresh *put* does the same — which is why the roll
+side and the sell side are always opposites.
+
 ### Validation matrix
 
 | Condition | Result | Message |
@@ -489,6 +560,9 @@ exit-price marking, not a defect — but it surprises people.
 | Position marking | Browser — long marked at bid, −$1.20 = spread | Confirmed |
 | Schema deployment | Table probe + RLS write probe | Tables present; anon write → `42501` |
 | `execute_fill` compiles | RPC reached the internal `raise` | Confirmed |
+| `lib/deltaStrategy.ts` | 65 assertions — §5.2 worked example end to end, band and landing rules, corrective sides, ITM queue, Sydney clock across AEST and AEDT | Pass, on synthetic fixtures |
+| Tickers payload shape | Live call — `greeks.delta`, `quotes`, `spot_price`, `contract_value` on all 113 XAUT symbols; **no `settlement_time`** | Confirmed |
+| Delta strategy daily entry | Armed live — built the 113-row snapshot and sold its symmetric pair | Confirmed |
 
 ### Outstanding
 
@@ -496,6 +570,27 @@ exit-price marking, not a defect — but it surprises people.
 upsert — has not executed. Postgres plans statements inside a PL/pgSQL function on
 first execution, so deployment success does not prove those two statements. The
 first real trade validates them; if the schema misbehaves, that is where to look.
+
+**The delta strategy past its daily entry.** The roll, exit-only and
+band-correction branches of `apply_delta_strategy` have never run against a live
+book — with `N = 1` the book cannot breach a ±1 band, so nothing has reached
+them. They are exactly the branches that place and unwind size. Treat the first
+live breach as the real test, and raise `N` deliberately rather than discovering
+it in a moving market.
+
+**Two implementations of one rule set.** `lib/deltaStrategy.ts` and
+[`0012`](../supabase/migrations/0012_delta_strategy_engine.sql) encode the same
+specification in TypeScript and PL/pgSQL. Only the first is covered by
+assertions, and nothing checks that they agree — a divergence would surface as
+the readout predicting one thing and the engine doing another.
+
+**`0008` is a standing lesson in silent failure.** It read `settlement_time` from
+`/v2/tickers`, which has never carried that field; the comparison against `now()`
+was `NULL`, the expiry lookup matched nothing, and it returned `0` one line
+before it would have traded — every minute, indefinitely, while `pg_cron`
+recorded success. `last_acted` never leaving `NULL` was the only external symptom.
+Fixed in [`0011`](../supabase/migrations/0011_strategy_expiry_fix.sql), which
+also added a `raise log` to every early return.
 
 ---
 
@@ -509,6 +604,9 @@ first real trade validates them; if the schema misbehaves, that is where to look
 | Maker/taker distinction | Both rates identical for XAUT today | Branch on resting vs crossing at fill time |
 | Realtime sync | Refetch adequate for single-tab use | Supabase Realtime on the four tables |
 | Stop-loss / take-profit | Not requested | Trigger orders evaluated in the same tick loop |
+| One delta implementation | SQL was the shortest path to a tab-free engine | A worker importing `lib/deltaStrategy.ts`, so the tested code is the code that trades |
+| Fees on strategy fills | Both engines pass `0` to `execute_fill` | Call `computeFee`'s SQL equivalent at fill time |
+| Sub-minute delta cycles | `pg_cron`'s floor is one minute | A worker holding the feed, rather than refetching the chain each tick |
 
 Note that size-aware fills would require relaxing the `partial fills are not
 supported` guard in `execute_fill` and tracking `filled_qty` across multiple
