@@ -245,7 +245,6 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
       }}
       onArchive={(id) => accounts.setArchived(id, true)}
       onOpenAdmin={() => setAdminOpen(true)}
-      adminKeyword={ADMIN_KEYWORD}
     />
   )
 

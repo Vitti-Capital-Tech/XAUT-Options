@@ -26,8 +26,6 @@ interface Props {
   onReset: (id: string) => Promise<void>
   onArchive: (id: string) => Promise<void>
   onOpenAdmin: () => void
-  /** Shown in the menu so the shortcut is discoverable rather than folklore. */
-  adminKeyword: string
 }
 
 export function TopBar({
@@ -43,7 +41,6 @@ export function TopBar({
   onReset,
   onArchive,
   onOpenAdmin,
-  adminKeyword,
 }: Props) {
   // Subscribed in its own right, not merely repainted by the summary prop:
   // setStatus flushes the moment the socket drops, and that is precisely when
@@ -183,12 +180,76 @@ export function TopBar({
         </button>
 
         {menuOpen && (
-          <div className="absolute right-0 z-50 mt-1 w-72 overflow-hidden rounded-lg border border-raised-3 bg-raised shadow-2xl">
-            <div className="border-b border-line px-3 py-2 text-[10px] tracking-wider text-ink-3 uppercase">
-              Paper accounts
+          <div className="absolute right-0 z-50 mt-1.5 w-72 overflow-hidden rounded-xl border border-raised-3 bg-raised shadow-delta-lg">
+            {/* Header: the section label, with Manage lifted up here as a quiet
+                link rather than a bar stuck at the bottom of the menu. */}
+            <div className="flex items-center justify-between border-b border-line px-3 py-2.5">
+              <span className="text-[10px] font-semibold tracking-[0.14em] text-ink-3 uppercase">
+                Paper accounts
+              </span>
+              <button
+                onClick={() => {
+                  setMenuOpen(false)
+                  onOpenAdmin()
+                }}
+                className="text-[11px] font-medium text-ink-2 hover:text-ink"
+              >
+                Manage
+              </button>
             </div>
 
-            <div className="max-h-60 overflow-y-auto">
+            {/* Create sits on top — the first thing, not buried under the list. */}
+            {creating ? (
+              <div className="space-y-2 border-b border-line bg-sub p-3">
+                <input
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  placeholder="Account name"
+                  autoFocus
+                  className="w-full rounded-md border border-raised-3 bg-surface px-2.5 py-1.5 text-xs text-ink focus:border-ink-3 focus:outline-none"
+                />
+                <div>
+                  <label className="mb-1 block text-[10px] text-ink-3">Starting balance (USD)</label>
+                  <input
+                    type="number"
+                    value={newBalance}
+                    onChange={(e) => setNewBalance(e.target.value)}
+                    className="num w-full rounded-md border border-raised-3 bg-surface px-2.5 py-1.5 text-right text-xs text-ink focus:border-ink-3 focus:outline-none"
+                  />
+                </div>
+                {error && <p className="text-[10px] text-neg">{error}</p>}
+                <div className="flex gap-2">
+                  <button
+                    onClick={submitCreate}
+                    disabled={busy}
+                    className="flex-1 rounded-md bg-brand py-1.5 text-xs font-semibold text-white hover:bg-brand-hover disabled:opacity-40"
+                  >
+                    Create
+                  </button>
+                  <button
+                    onClick={() => {
+                      setCreating(false)
+                      setError(null)
+                    }}
+                    className="rounded-md border border-raised-3 px-3 py-1.5 text-xs text-ink-2 hover:border-ink-3"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => setCreating(true)}
+                className="flex w-full items-center gap-2 border-b border-line px-3 py-2.5 text-left text-xs font-medium text-brand-text hover:bg-brand-muted/40"
+              >
+                <span className="flex h-4 w-4 items-center justify-center rounded-full border border-brand-text/50 text-[12px] leading-none">
+                  +
+                </span>
+                New paper account
+              </button>
+            )}
+
+            <div className="max-h-60 overflow-y-auto py-1">
               {accounts.map((a) => {
                 const isActive = a.id === selected?.id
                 const pnl = Number(a.cash_balance) - Number(a.starting_balance)
@@ -256,8 +317,13 @@ export function TopBar({
                 return (
                   <div
                     key={a.id}
-                    className={`flex items-center gap-2 px-3 py-2 ${isActive ? 'bg-sub' : 'hover:bg-raised-2'}`}
+                    className={`group flex items-center gap-2 px-2.5 py-2 ${isActive ? 'bg-brand-muted/30' : 'hover:bg-raised-2'}`}
                   >
+                    {/* A brand accent marks the active account, a bar rather than
+                        a dot — the same language the chain and tables use. */}
+                    <span
+                      className={`h-8 w-[3px] shrink-0 rounded-full ${isActive ? 'bg-brand-text' : 'bg-transparent'}`}
+                    />
                     <button
                       onClick={() => {
                         onSelect(a.id)
@@ -265,124 +331,69 @@ export function TopBar({
                       }}
                       className="min-w-0 flex-1 text-left"
                     >
-                      <div className="flex items-center gap-1.5">
-                        {isActive && <span className="text-[10px] text-brand-text">●</span>}
-                        <span className="truncate text-xs font-medium text-ink">{a.name}</span>
-                      </div>
+                      <span className="truncate text-xs font-semibold text-ink">{a.name}</span>
                       <div className="num mt-0.5 flex gap-2 text-[10px]">
                         <span className="text-ink-2">{usd(Number(a.cash_balance))}</span>
                         <span className={pnlClass(pnl)}>{signedUsd(pnl)}</span>
                       </div>
                     </button>
-                    <button
-                      onClick={() => {
-                        setDraftBalance(String(Number(a.starting_balance)))
-                        setEditingId(a.id)
-                        setError(null)
-                      }}
-                      title="Edit balance, keeping P&L and history"
-                      className="rounded p-1 text-[10px] text-ink-3 hover:bg-raised-3 hover:text-brand-text"
+                    {/* The row's actions stay quiet until the row is hovered or
+                        active, so the list reads as names and balances first. */}
+                    <div
+                      className={`flex items-center gap-0.5 transition-opacity ${
+                        isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                      }`}
                     >
-                      ✎
-                    </button>
-                    <button
-                      onClick={async () => {
-                        if (!confirm(`Reset "${a.name}"? This deletes its positions, orders and trade history, and restores the starting balance.`)) return
-                        setBusy(true)
-                        try {
-                          await onReset(a.id)
-                        } finally {
-                          setBusy(false)
-                        }
-                      }}
-                      disabled={busy}
-                      title="Reset to starting balance"
-                      className="rounded p-1 text-[10px] text-ink-3 hover:bg-raised-3 hover:text-brand-text disabled:opacity-40"
-                    >
-                      ↺
-                    </button>
-                    {accounts.length > 1 && (
+                      <button
+                        onClick={() => {
+                          setDraftBalance(String(Number(a.starting_balance)))
+                          setEditingId(a.id)
+                          setError(null)
+                        }}
+                        title="Edit balance, keeping P&L and history"
+                        className="rounded p-1 text-[11px] text-ink-3 hover:bg-raised-3 hover:text-brand-text"
+                      >
+                        ✎
+                      </button>
                       <button
                         onClick={async () => {
-                          if (!confirm(`Archive "${a.name}"? It is hidden from the switcher but its history is kept.`)) return
+                          if (!confirm(`Reset "${a.name}"? This deletes its positions, orders and trade history, and restores the starting balance.`)) return
                           setBusy(true)
                           try {
-                            await onArchive(a.id)
+                            await onReset(a.id)
                           } finally {
                             setBusy(false)
                           }
                         }}
                         disabled={busy}
-                        title="Archive account"
-                        className="rounded p-1 text-[10px] text-ink-3 hover:bg-raised-3 hover:text-neg disabled:opacity-40"
+                        title="Reset to starting balance"
+                        className="rounded p-1 text-[11px] text-ink-3 hover:bg-raised-3 hover:text-brand-text disabled:opacity-40"
                       >
-                        ✕
+                        ↺
                       </button>
-                    )}
+                      {accounts.length > 1 && (
+                        <button
+                          onClick={async () => {
+                            if (!confirm(`Archive "${a.name}"? It is hidden from the switcher but its history is kept.`)) return
+                            setBusy(true)
+                            try {
+                              await onArchive(a.id)
+                            } finally {
+                              setBusy(false)
+                            }
+                          }}
+                          disabled={busy}
+                          title="Archive account"
+                          className="rounded p-1 text-[11px] text-ink-3 hover:bg-raised-3 hover:text-neg disabled:opacity-40"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )
               })}
             </div>
-
-            {creating ? (
-              <div className="space-y-2 border-t border-line p-3">
-                <input
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  placeholder="Account name"
-                  autoFocus
-                  className="w-full rounded border border-raised-3 bg-surface px-2 py-1 text-xs text-ink focus:border-ink-3 focus:outline-none"
-                />
-                <div>
-                  <label className="mb-1 block text-[10px] text-ink-3">Starting balance (USD)</label>
-                  <input
-                    type="number"
-                    value={newBalance}
-                    onChange={(e) => setNewBalance(e.target.value)}
-                    className="num w-full rounded border border-raised-3 bg-surface px-2 py-1 text-right text-xs text-ink focus:border-ink-3 focus:outline-none"
-                  />
-                </div>
-                {error && <p className="text-[10px] text-neg">{error}</p>}
-                <div className="flex gap-2">
-                  <button
-                    onClick={submitCreate}
-                    disabled={busy}
-                    className="flex-1 rounded bg-brand py-1 text-xs font-medium text-white hover:bg-brand-hover disabled:opacity-40"
-                  >
-                    Create
-                  </button>
-                  <button
-                    onClick={() => {
-                      setCreating(false)
-                      setError(null)
-                    }}
-                    className="rounded border border-raised-3 px-3 py-1 text-xs text-ink-2 hover:border-ink-3"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <button
-                onClick={() => setCreating(true)}
-                className="w-full border-t border-line px-3 py-2 text-left text-xs text-brand-text hover:bg-raised-2"
-              >
-                + New paper account
-              </button>
-            )}
-
-            <button
-              onClick={() => {
-                setMenuOpen(false)
-                onOpenAdmin()
-              }}
-              className="flex w-full items-center justify-between border-t border-line px-3 py-2 text-left text-xs text-ink-2 hover:bg-raised-2 hover:text-ink"
-            >
-              Manage accounts
-              <span className="rounded bg-raised-2 px-1.5 py-0.5 text-[10px] text-ink-3">
-                type {adminKeyword}
-              </span>
-            </button>
 
             <div className="flex items-center justify-between border-t border-line bg-sub px-3 py-2">
               <span className="truncate text-[10px] text-ink-3">{email}</span>
