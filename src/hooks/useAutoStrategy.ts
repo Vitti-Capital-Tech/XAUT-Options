@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { DEFAULT_CONFIG, type Moneyness, type StrategyConfig } from '../lib/strategy'
+
+const SYNC_MS = 15_000
 
 /**
  * The auto-strategy's settings for one auto account, backed by the database.
@@ -34,7 +36,22 @@ export function useAutoStrategy(accountId: string | null): StrategyApi {
   const [config, setConfigState] = useState<StrategyConfig>(DEFAULT_CONFIG)
   const [armed, setArmedState] = useState(false)
   const [loading, setLoading] = useState(true)
+  // When the user last changed something here, so a background sync does not
+  // overwrite a write that may still be in flight.
+  const lastEditRef = useRef(0)
 
+  const applyRow = useCallback((row: Row) => {
+    setConfigState({
+      moneyness: row.moneyness as Moneyness,
+      qty: Number(row.qty),
+      windowStart: row.window_start,
+      windowEnd: row.window_end,
+    })
+    setArmedState(row.armed)
+  }, [])
+
+  // Initial load — and seed a default row for the cron if this auto account has
+  // none yet.
   useEffect(() => {
     let active = true
     if (!accountId) {
@@ -42,16 +59,6 @@ export function useAutoStrategy(accountId: string | null): StrategyApi {
       return
     }
     setLoading(true)
-
-    const apply = (row: Row) => {
-      setConfigState({
-        moneyness: row.moneyness as Moneyness,
-        qty: Number(row.qty),
-        windowStart: row.window_start,
-        windowEnd: row.window_end,
-      })
-      setArmedState(row.armed)
-    }
 
     void (async () => {
       const { data } = await supabase
@@ -62,9 +69,8 @@ export function useAutoStrategy(accountId: string | null): StrategyApi {
       if (!active) return
 
       if (data) {
-        apply(data as Row)
+        applyRow(data as Row)
       } else {
-        // First visit for this auto account — seed a default row for the cron.
         const def: Row = {
           account_id: accountId,
           armed: false,
@@ -75,7 +81,7 @@ export function useAutoStrategy(accountId: string | null): StrategyApi {
         }
         await supabase.from('strategy_settings').upsert(def, { onConflict: 'account_id' })
         if (!active) return
-        apply(def)
+        applyRow(def)
       }
       setLoading(false)
     })()
@@ -83,15 +89,36 @@ export function useAutoStrategy(accountId: string | null): StrategyApi {
     return () => {
       active = false
     }
-  }, [accountId])
+  }, [accountId, applyRow])
 
+  // Keep every open tab in sync — re-read the row on an interval, skipping a
+  // tick right after a local edit so an in-flight write is not clobbered.
+  useEffect(() => {
+    if (!accountId) return
+    const id = setInterval(async () => {
+      if (Date.now() - lastEditRef.current < 3000) return
+      const { data } = await supabase
+        .from('strategy_settings')
+        .select(COLS)
+        .eq('account_id', accountId)
+        .maybeSingle()
+      if (data) applyRow(data as Row)
+    }, SYNC_MS)
+    return () => clearInterval(id)
+  }, [accountId, applyRow])
+
+  // Upsert, not update: a plain update silently no-ops if the row is somehow
+  // missing, which would lose an arm. Upsert always lands the write.
   const persist = useCallback(
     (patch: Record<string, unknown>) => {
       if (!accountId) return
+      lastEditRef.current = Date.now()
       void supabase
         .from('strategy_settings')
-        .update({ ...patch, updated_at: new Date().toISOString() })
-        .eq('account_id', accountId)
+        .upsert(
+          { account_id: accountId, ...patch, updated_at: new Date().toISOString() },
+          { onConflict: 'account_id' },
+        )
     },
     [accountId],
   )
