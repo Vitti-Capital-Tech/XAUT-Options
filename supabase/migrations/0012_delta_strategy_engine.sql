@@ -52,6 +52,35 @@ alter table public.delta_strategy_settings
   add column if not exists last_cycle timestamptz;
 
 -- ---------------------------------------------------------------------------
+-- The chain snapshot the cycle reads.
+--
+-- A real unlogged table rather than a temp one. The helpers below are separate
+-- functions, and a `language sql` body is parsed and validated when the function
+-- is created — so a temp table that only exists at run time cannot even be
+-- installed against, let alone queried. It also sidesteps plpgsql caching a plan
+-- against a temp relation that is dropped and recreated every cycle.
+--
+-- Unlogged because it is rebuilt from the feed each cycle and is worthless after
+-- a crash. RLS on with no policy and no grants: this is the engine's alone, and
+-- it must not surface through PostgREST.
+-- ---------------------------------------------------------------------------
+create unlogged table if not exists public.delta_chain (
+  symbol         text primary key,
+  contract_type  text not null,
+  strike         numeric,
+  expiry_label   text,
+  contract_value numeric,
+  product_id     bigint,
+  best_bid       numeric,
+  best_ask       numeric,
+  delta          numeric,
+  spot_price     numeric
+);
+
+alter table public.delta_chain enable row level security;
+revoke all on public.delta_chain from anon, authenticated;
+
+-- ---------------------------------------------------------------------------
 -- Where the Sydney clock sits relative to a session, and which session day that
 -- is. Read through the zone, not a fixed offset, so AEST and AEDT are both right.
 -- A close before the open spans midnight; the day is then keyed to the date the
@@ -144,7 +173,6 @@ declare
   v_q         int;
   v_gap       numeric;
   v_acted     boolean;
-  v_lots      int;
   v_n         int := 0;
 begin
   -- Freshest XAUT tickers reply. Ours is the only array-shaped one carrying
@@ -163,22 +191,31 @@ begin
     return 0;
   end if;
 
-  drop table if exists _dchain;
-  create temp table _dchain on commit drop as
-  select (t ->> 'symbol')                                  as symbol,
-         (t ->> 'contract_type')                           as contract_type,
-         (t ->> 'strike_price')::numeric                   as strike,
-         split_part((t ->> 'symbol'), '-', 4)              as expiry_label,
-         nullif(t ->> 'contract_value', '')::numeric       as contract_value,
-         (t ->> 'product_id')::bigint                      as product_id,
-         nullif(t -> 'quotes' ->> 'best_bid', '')::numeric as best_bid,
-         nullif(t -> 'quotes' ->> 'best_ask', '')::numeric as best_ask,
-         nullif(t -> 'greeks' ->> 'delta', '')::numeric    as delta,
-         nullif(t ->> 'spot_price', '')::numeric           as spot_price
-  from jsonb_array_elements(v_tickers) t
-  where (t ->> 'symbol') like 'C-XAUT-%' or (t ->> 'symbol') like 'P-XAUT-%';
+  -- Rebuild the snapshot. The lock is held for the transaction, so a cycle that
+  -- overruns its minute cannot have the next one refill the chain underneath it.
+  if not pg_try_advisory_xact_lock(hashtext('delta_strategy_engine')) then
+    return 0;
+  end if;
 
-  select max(spot_price) into v_spot from _dchain where spot_price is not null;
+  delete from public.delta_chain;
+  insert into public.delta_chain (symbol, contract_type, strike, expiry_label,
+                                  contract_value, product_id, best_bid, best_ask,
+                                  delta, spot_price)
+  select (t ->> 'symbol'),
+         (t ->> 'contract_type'),
+         (t ->> 'strike_price')::numeric,
+         split_part((t ->> 'symbol'), '-', 4),
+         nullif(t ->> 'contract_value', '')::numeric,
+         (t ->> 'product_id')::bigint,
+         nullif(t -> 'quotes' ->> 'best_bid', '')::numeric,
+         nullif(t -> 'quotes' ->> 'best_ask', '')::numeric,
+         nullif(t -> 'greeks' ->> 'delta', '')::numeric,
+         nullif(t ->> 'spot_price', '')::numeric
+  from jsonb_array_elements(v_tickers) t
+  where (t ->> 'symbol') like 'C-XAUT-%' or (t ->> 'symbol') like 'P-XAUT-%'
+  on conflict (symbol) do nothing;
+
+  select max(spot_price) into v_spot from public.delta_chain where spot_price is not null;
   if v_spot is null or v_spot <= 0 then
     raise log 'apply_delta_strategy: no spot in the chain';
     return 0;
@@ -226,7 +263,7 @@ begin
 
     -- Expiry to trade.
     select expiry_label into v_exp
-    from _dchain
+    from public.delta_chain
     where expiry_label ~ '^\d{6}$'
       and (to_date(expiry_label, 'DDMMYY')::timestamp at time zone 'UTC') + interval '16 hours' > now()
     group by expiry_label
@@ -235,7 +272,7 @@ begin
     limit 1;
     if v_exp is null then
       select expiry_label into v_exp
-      from _dchain
+      from public.delta_chain
       where expiry_label ~ '^\d{6}$'
         and (to_date(expiry_label, 'DDMMYY')::timestamp at time zone 'UTC') + interval '16 hours' > now()
       group by expiry_label
@@ -264,7 +301,7 @@ begin
     select count(*) filter (where c.delta is null), coalesce(sum(p.net_qty * c.delta), 0)
       into v_missing, v_dp
     from public.positions p
-    left join _dchain c on c.symbol = p.symbol
+    left join public.delta_chain c on c.symbol = p.symbol
     where p.account_id = r.account_id and p.net_qty <> 0;
 
     if v_missing > 0 then
@@ -306,7 +343,7 @@ begin
              case when p.contract_type = 'call_options' then v_spot - p.strike_price::numeric
                   else p.strike_price::numeric - v_spot end as itm_distance
       from public.positions p
-      join _dchain c on c.symbol = p.symbol
+      join public.delta_chain c on c.symbol = p.symbol
       where p.account_id = r.account_id
         and p.net_qty < 0
         and p.contract_type = v_rollside
@@ -403,7 +440,7 @@ declare
   c        record;
   v_order  uuid;
 begin
-  select * into c from _dchain where symbol = p_symbol;
+  select * into c from public.delta_chain where symbol = p_symbol;
   if not found or c.best_bid is null or c.best_bid <= 0 then
     raise log 'delta_sell: % has no bid', p_symbol;
     return;
@@ -438,7 +475,7 @@ declare
   c       record;
   v_order uuid;
 begin
-  select * into c from _dchain where symbol = p_symbol;
+  select * into c from public.delta_chain where symbol = p_symbol;
   if not found or c.best_ask is null or c.best_ask <= 0 then
     raise log 'delta_close_leg: % has no ask', p_symbol;
     return;
@@ -527,7 +564,7 @@ stable
 as $$
   with candidates as (
     select c.symbol, c.strike, c.best_bid as premium, c.delta
-    from _dchain c
+    from public.delta_chain c
     where c.expiry_label = p_exp
       and c.contract_type = p_kind
       and c.best_bid is not null
@@ -538,11 +575,11 @@ as $$
            or (p_kind = 'call_options' and c.strike > p_beyond)
            or (p_kind = 'put_options'  and c.strike < p_beyond))
   ),
-  -- rank 0 is the requested tie-break, rank 1 the absolute-closest fallback for
+  -- pri 0 is the requested tie-break, pri 1 the absolute-closest fallback for
   -- when a one-sided rule finds nothing. An explicit ordering, because UNION ALL
   -- does not promise to return its branches in order.
   ranked as (
-    select c.*, 0 as rank, c.premium - p_entry as tiebreak
+    select c.*, 0 as pri, c.premium - p_entry as nearness
     from candidates c where p_tie = 'above' and c.premium >= p_entry
     union all
     select c.*, 0, p_entry - c.premium
@@ -550,8 +587,10 @@ as $$
     union all
     select c.*, 1, abs(c.premium - p_entry) from candidates c
   )
-  select symbol, strike, premium, delta
-  from ranked order by rank asc, tiebreak asc limit 1;
+  -- Every reference qualified: the RETURNS TABLE columns are parameters in this
+  -- scope, and a bare `symbol` here is ambiguous against them.
+  select k.symbol, k.strike, k.premium, k.delta
+  from ranked k order by k.pri asc, k.nearness asc limit 1;
 $$;
 
 /**
@@ -565,7 +604,7 @@ language sql
 stable
 as $$
   select c.symbol, c.strike, c.best_bid, c.delta
-  from _dchain c
+  from public.delta_chain c
   where c.expiry_label = p_exp
     and c.contract_type = p_kind
     and c.best_bid is not null
@@ -582,6 +621,8 @@ revoke all on function public.delta_sell(uuid, uuid, text, int, numeric) from pu
 revoke all on function public.delta_close_leg(uuid, uuid, text, int, numeric) from public, anon, authenticated;
 revoke all on function public.delta_flatten(uuid, uuid, numeric) from public, anon, authenticated;
 revoke all on function public.delta_sell_entry(uuid, uuid, text, numeric, numeric, text, int, numeric) from public, anon, authenticated;
+revoke all on function public.delta_pick_premium(text, text, numeric, numeric, text, numeric) from public, anon, authenticated;
+revoke all on function public.delta_pick_delta(text, text, numeric, numeric, numeric) from public, anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Schedule. Both gate themselves on something being armed, so an idle install
