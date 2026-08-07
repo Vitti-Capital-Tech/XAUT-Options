@@ -214,7 +214,7 @@ export function TopBar({
                     type="number"
                     value={newBalance}
                     onChange={(e) => setNewBalance(e.target.value)}
-                    className="num w-full rounded-md border border-raised-3 bg-surface px-2.5 py-1.5 text-right text-xs text-ink focus:border-ink-3 focus:outline-none"
+                    className="num w-full rounded-md border border-raised-3 bg-surface px-2.5 py-1.5 text-left text-xs text-ink focus:border-ink-3 focus:outline-none"
                   />
                 </div>
                 {error && <p className="text-[10px] text-neg">{error}</p>}
@@ -285,7 +285,7 @@ export function TopBar({
                           if (e.key === 'Escape') setEditingId(null)
                         }}
                         autoFocus
-                        className="num w-full rounded border border-raised-3 bg-surface px-2 py-1 text-right text-xs text-ink focus:border-ink-3 focus:outline-none"
+                        className="num w-full rounded border border-raised-3 bg-surface px-2 py-1 text-left text-xs text-ink focus:border-ink-3 focus:outline-none"
                       />
                       <p className="text-[10px] text-ink-3">
                         Keeps this account's {signedUsd(pnl)} of P&amp;L and its history — only the
@@ -340,10 +340,12 @@ export function TopBar({
                     {/* The row's actions stay quiet until the row is hovered or
                         active, so the list reads as names and balances first. */}
                     <div
-                      className={`flex items-center gap-0.5 transition-opacity ${
+                      className={`flex items-center gap-1 transition-opacity ${
                         isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                       }`}
                     >
+                      {/* Bordered boxes in brand ink, matching the TP/SL controls
+                          in the positions table. */}
                       <button
                         onClick={() => {
                           setDraftBalance(String(Number(a.starting_balance)))
@@ -351,7 +353,7 @@ export function TopBar({
                           setError(null)
                         }}
                         title="Edit balance, keeping P&L and history"
-                        className="rounded p-1 text-[11px] text-ink-3 hover:bg-raised-3 hover:text-brand-text"
+                        className="rounded border border-raised-3 px-1.5 py-0.5 text-[11px] leading-none text-brand-text hover:border-brand-text"
                       >
                         ✎
                       </button>
@@ -367,7 +369,7 @@ export function TopBar({
                         }}
                         disabled={busy}
                         title="Reset to starting balance"
-                        className="rounded p-1 text-[11px] text-ink-3 hover:bg-raised-3 hover:text-brand-text disabled:opacity-40"
+                        className="rounded border border-raised-3 px-1.5 py-0.5 text-[11px] leading-none text-brand-text hover:border-brand-text disabled:opacity-40"
                       >
                         ↺
                       </button>
@@ -384,7 +386,7 @@ export function TopBar({
                           }}
                           disabled={busy}
                           title="Archive account"
-                          className="rounded p-1 text-[11px] text-ink-3 hover:bg-raised-3 hover:text-neg disabled:opacity-40"
+                          className="rounded border border-raised-3 px-1.5 py-0.5 text-[11px] leading-none text-neg hover:border-neg disabled:opacity-40"
                         >
                           ✕
                         </button>

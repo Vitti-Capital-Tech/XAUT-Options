@@ -81,6 +81,13 @@ body {
   height: 100%;
 }
 
+/* Tell the browser this is a dark UI, so it draws native controls — the number
+   spinners especially — in dark tones instead of the stark white arrows a
+   light-scheme control shows against our dark inputs. */
+:root {
+  color-scheme: dark;
+}
+
 /* min-height rather than height: the first screen is sized by the app itself,
    and the positions panel grows past it, which the document then scrolls. */
 #root {
