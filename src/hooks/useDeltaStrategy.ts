@@ -67,6 +67,7 @@ interface Row {
   tie_break: string
   expiry_pick: string
   cycle_seconds: number
+  take_profit_mult: string | number | null
   session_day: string | null
   rolls_used_call: number
   rolls_used_put: number
@@ -75,7 +76,7 @@ interface Row {
 }
 
 const COLS =
-  'account_id, armed, session_open, session_close, band_low, band_high, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, min_premium, band_delta_low, band_delta_high, pairs, tie_break, expiry_pick, cycle_seconds, session_day, rolls_used_call, rolls_used_put, entered_day, flattened_day'
+  'account_id, armed, session_open, session_close, band_low, band_high, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, min_premium, band_delta_low, band_delta_high, pairs, tie_break, expiry_pick, cycle_seconds, take_profit_mult, session_day, rolls_used_call, rolls_used_put, entered_day, flattened_day'
 
 // Postgres numerics come back as strings over PostgREST.
 const n = (v: string | number) => Number(v)
@@ -99,6 +100,8 @@ function rowToConfig(row: Row): DeltaConfig {
     tieBreak: row.tie_break as TieBreak,
     expiryPick: row.expiry_pick as ExpiryPick,
     cycleSeconds: row.cycle_seconds,
+    // Null is the column's "no take-profit"; the config carries that as 0.
+    takeProfitMult: row.take_profit_mult === null ? 0 : n(row.take_profit_mult),
   }
 }
 
@@ -121,6 +124,7 @@ function configToRow(cfg: DeltaConfig) {
     tie_break: cfg.tieBreak,
     expiry_pick: cfg.expiryPick,
     cycle_seconds: cfg.cycleSeconds,
+    take_profit_mult: cfg.takeProfitMult > 0 ? cfg.takeProfitMult : null,
   }
 }
 

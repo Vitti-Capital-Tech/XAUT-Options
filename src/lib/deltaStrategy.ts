@@ -77,6 +77,13 @@ export interface DeltaConfig {
   tieBreak: TieBreak
   expiryPick: ExpiryPick
   cycleSeconds: number
+  /**
+   * Take-profit on every short the strategy opens, as a multiple of the premium
+   * it sold at, watched on the option's own mark. 0.7 buys a $4 leg back at
+   * $2.80 — 30% of the premium booked. Zero disables it. No stop is ever set:
+   * the roll budget and exit-only mode are the strategy's risk control.
+   */
+  takeProfitMult: number
 }
 
 export const DEFAULT_DELTA_CONFIG: DeltaConfig = {
@@ -97,6 +104,7 @@ export const DEFAULT_DELTA_CONFIG: DeltaConfig = {
   tieBreak: 'closest',
   expiryPick: 'nearest',
   cycleSeconds: 30,
+  takeProfitMult: 0.7,
 }
 
 /** State that lives for one session and resets at the next open. */

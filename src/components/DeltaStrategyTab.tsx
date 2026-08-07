@@ -194,6 +194,18 @@ export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
           />
         </Field>
 
+        {/* Take profit as a multiple of the premium sold, on the option's own
+            mark — 0.7 buys a $4 leg back at $2.80. No stop is ever set. */}
+        <Field label="TP × entry">
+          <NumInput
+            value={config.takeProfitMult}
+            step={0.05}
+            min={0}
+            width="w-16"
+            onChange={(v) => setConfig({ takeProfitMult: v })}
+          />
+        </Field>
+
         {/* Run / pause, held to the right so the controls read left-to-right and
             the switch sits on its own — the same place the auto strategy's is. */}
         <div className="ml-auto flex items-center gap-3 self-center">
@@ -228,6 +240,13 @@ export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
           {callsLeft} / {putsLeft}
         </Readout>
         <Readout label="Session">{plan ? phaseLabel(plan.phase) : '—'}</Readout>
+        {/* What the bracket actually lands on, so the multiplier is not read as
+            a price. No stop, so there is nothing to show beside it. */}
+        <Readout label="TP / SL">
+          {config.takeProfitMult > 0
+            ? `${greek(config.entryPremium * config.takeProfitMult, 2)} / none`
+            : 'none / none'}
+        </Readout>
 
         <BandMeter low={config.bandLow} high={config.bandHigh} dp={dp} />
 

@@ -96,6 +96,7 @@ erDiagram
         text flattened_day
         text_array touched_symbols "once per pass"
         boolean pass_open
+        numeric take_profit_mult "x entry premium, on the mark"
     }
     ORDERS {
         uuid id PK
@@ -518,6 +519,14 @@ is `1.9999999999999996` and floors to 1 where the document says 2.
 **Sides.** Δp below the band means a book too short-call heavy, so exiting an ITM
 *call* lifts it and selling a fresh *put* does the same — which is why the roll
 side and the sell side are always opposites.
+
+**Brackets.** `delta_sell` arms `take_profit = take_profit_mult ×
+avg_entry_price` with `tpsl_trigger = 'mark'` and no stop, on any short the fill
+leaves open. `apply_tpsl_triggers` sets `v_up := v_long` when the reference is
+the mark, so a short's take-profit fires on `v_ref <= take_profit` — the mark
+*falling* is the short's gain. Reading the multiplier off the account's own
+settings rather than taking it as a parameter is what keeps the signature stable
+for `apply_delta_strategy` and `delta_sell_entry`.
 
 ### Validation matrix
 

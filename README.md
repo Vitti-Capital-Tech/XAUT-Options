@@ -148,6 +148,18 @@ an exit — never a long option.
 | No ITM legs left | Band-correct with fresh OTM sells in the `band_correction_delta` range |
 | Close (22:00 Sydney) | Flatten everything, stand flat overnight, reset counters |
 
+Every short it opens carries a **take-profit and no stop**, watched on the
+option's own mark:
+
+```
+take_profit = TP× × avg_entry_price
+```
+
+At the default **0.7** a leg sold for $4 is bought back at $2.80, booking 30% of
+the premium. It re-bases onto the blended average when a position is added to,
+and `0` disables it. There is deliberately no stop-loss — the roll budget and
+exit-only mode are the strategy's risk control, not a per-leg stop.
+
 Sizing is the document's, both rounded **down** so a correction cannot overshoot:
 
 ```
