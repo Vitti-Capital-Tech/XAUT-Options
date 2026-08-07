@@ -260,5 +260,8 @@ revoke all on function public.apply_strategy() from public, anon, authenticated;
 -- no-op; apply is idempotent per bar via last_acted, so running it each minute
 -- only ever fires once.
 -- ---------------------------------------------------------------------------
-select cron.schedule('strategy-poll',  '1 minute', $$select public.queue_strategy_checks()$$);
-select cron.schedule('strategy-apply', '1 minute', $$select public.apply_strategy()$$);
+-- Every minute (cron format — pg_cron rejects '1 minute'; use '* * * * *' or
+-- an 'N seconds' interval). Poll gates itself to armed + top-of-hour and apply
+-- is idempotent per bar, so a per-minute tick is cheap.
+select cron.schedule('strategy-poll',  '* * * * *', $$select public.queue_strategy_checks()$$);
+select cron.schedule('strategy-apply', '* * * * *', $$select public.apply_strategy()$$);
