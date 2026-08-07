@@ -5,6 +5,7 @@ import { OptionChain } from './components/OptionChain'
 import { OrderTicket, type TicketRequest } from './components/OrderTicket'
 import { BottomPanel } from './components/BottomPanel'
 import { StrategyTab } from './components/StrategyTab'
+import { DeltaStrategyTab } from './components/DeltaStrategyTab'
 import { AdminPanel } from './components/AdminPanel'
 import { useAuth } from './hooks/useAuth'
 import { useAccounts } from './hooks/useAccounts'
@@ -301,7 +302,7 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
             />
           </div>
         </>
-      ) : (
+      ) : page === 'strategy' ? (
         <div className="flex min-h-screen flex-col">
           {topBar}
           <StrategyTab strategy={strategy} />
@@ -316,6 +317,12 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
             onSetTpSl={autoTrading.setTpSl}
             onPickSymbol={(product) => openTicket(product, 'buy', null)}
           />
+        </div>
+      ) : (
+        // Delta Management Strategy — configuration and spec, no engine yet.
+        <div className="flex min-h-screen flex-col">
+          {topBar}
+          <DeltaStrategyTab />
         </div>
       )}
 

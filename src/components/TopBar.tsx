@@ -6,7 +6,7 @@ import { pnlClass, signedUsd, usd } from '../lib/format'
 import { supabase } from '../lib/supabase'
 import { Logo } from './Logo'
 
-export type Page = 'chain' | 'strategy'
+export type Page = 'chain' | 'strategy' | 'delta'
 
 interface Props {
   accounts: Account[]
@@ -118,6 +118,11 @@ export function TopBar({
           label="Auto Strategy"
           active={page === 'strategy'}
           onClick={() => onNavigate('strategy')}
+        />
+        <NavLink
+          label="Delta Strategy"
+          active={page === 'delta'}
+          onClick={() => onNavigate('delta')}
         />
       </nav>
 
