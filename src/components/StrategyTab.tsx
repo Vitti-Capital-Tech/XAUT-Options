@@ -27,7 +27,7 @@ export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
           <input
             type="number"
             min={0.001}
-            step={0.001}
+            step={1}
             value={config.qty}
             onChange={(e) => {
               const n = Number(e.target.value)
