@@ -106,17 +106,23 @@ export function useAutoStrategy(accountId: string | null): StrategyApi {
       if (data) applyRow(data as Row)
     }
     const id = setInterval(refetch, SYNC_MS)
-    const channel = supabase
-      .channel(`strategy-${accountId}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'strategy_settings', filter: `account_id=eq.${accountId}` },
-        () => void refetch(),
-      )
-      .subscribe()
-    return () => {
-      clearInterval(id)
-      void supabase.removeChannel(channel)
+    // Best-effort realtime over the interval fallback — never let it blank the app.
+    try {
+      const channel = supabase
+        .channel(`strategy-${accountId}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'strategy_settings', filter: `account_id=eq.${accountId}` },
+          () => void refetch(),
+        )
+        .subscribe()
+      return () => {
+        clearInterval(id)
+        void supabase.removeChannel(channel)
+      }
+    } catch (err) {
+      console.error('strategy realtime failed; falling back to poll:', err)
+      return () => clearInterval(id)
     }
   }, [accountId, applyRow])
 

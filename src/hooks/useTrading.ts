@@ -134,14 +134,20 @@ export function useTrading(accountId: string | null, onAccountChanged: () => voi
       void reloadRef.current()
       changedRef.current()
     }
-    const channel = supabase
-      .channel(`trading-${accountId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'positions', filter: `account_id=eq.${accountId}` }, bump)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'fills', filter: `account_id=eq.${accountId}` }, bump)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `account_id=eq.${accountId}` }, bump)
-      .subscribe()
-    return () => {
-      void supabase.removeChannel(channel)
+    // Best-effort: a subscription failure must never blank the app — the 15s
+    // poll above still reconciles. Swallow any throw.
+    try {
+      const channel = supabase
+        .channel(`trading-${accountId}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'positions', filter: `account_id=eq.${accountId}` }, bump)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'fills', filter: `account_id=eq.${accountId}` }, bump)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `account_id=eq.${accountId}` }, bump)
+        .subscribe()
+      return () => {
+        void supabase.removeChannel(channel)
+      }
+    } catch (err) {
+      console.error('trading realtime failed; falling back to poll:', err)
     }
   }, [accountId])
 

@@ -91,18 +91,26 @@ export function useAccounts(userId: string | undefined, kind: AccountKind = 'man
   loadRef.current = load
   useEffect(() => {
     if (!userId) return
-    const channel = supabase
-      .channel(`accounts-${userId}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'accounts', filter: `user_id=eq.${userId}` },
-        () => void loadRef.current(),
-      )
-      .subscribe()
-    return () => {
-      void supabase.removeChannel(channel)
+    // Best-effort: realtime is an enhancement over the poll, so a failure to
+    // subscribe must never blank the app — swallow it and let the poll cover.
+    // Unique per kind: the chain and the strategy both call this with the same
+    // userId, so a shared channel name would be a duplicate subscription.
+    try {
+      const channel = supabase
+        .channel(`accounts-${kind}-${userId}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'accounts', filter: `user_id=eq.${userId}` },
+          () => void loadRef.current(),
+        )
+        .subscribe()
+      return () => {
+        void supabase.removeChannel(channel)
+      }
+    } catch (err) {
+      console.error('accounts realtime failed; falling back to poll:', err)
     }
-  }, [userId])
+  }, [userId, kind])
 
   useEffect(() => {
     if (selectedId) localStorage.setItem(selectedKey, selectedId)
