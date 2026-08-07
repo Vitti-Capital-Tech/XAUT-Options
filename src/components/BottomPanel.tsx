@@ -759,7 +759,7 @@ function TpSlDialog({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-sm rounded-lg border border-raised-3 bg-surface shadow-delta-lg"
+        className="max-h-[90vh] w-full max-w-sm overflow-y-auto rounded-lg border border-raised-3 bg-surface shadow-delta-lg"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-line px-4 py-3">

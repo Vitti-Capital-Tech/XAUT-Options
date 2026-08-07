@@ -199,19 +199,20 @@ export function OptionChain({ expiry, positions, onPick }: Props) {
     <div className="flex min-h-0 flex-1 flex-col">
       {/* Calls · underlying price and countdown · Puts. Stays put while the
           column area scrolls horizontally beneath it. */}
-      <div className="flex shrink-0 items-center justify-between border-b border-line px-4 py-2">
-        <span className="text-[14px] text-ink">Calls</span>
-        <div className="flex items-center gap-3 text-[14px]">
-          <span className="text-ink-2">
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line px-3 py-2 sm:px-4">
+        <span className="shrink-0 text-[14px] text-ink">Calls</span>
+        <div className="flex min-w-0 items-center gap-2 overflow-hidden text-[12px] sm:gap-3 sm:text-[14px]">
+          <span className="whitespace-nowrap text-ink-2">
             {UNDERLYING} <span className="num text-spot">{usdPrice(spot)}</span>
           </span>
           <span className="text-ink-4">|</span>
-          <span className="text-ink-2">
-            Time to Expiry{' '}
+          <span className="whitespace-nowrap text-ink-2">
+            {/* The label drops on a narrow screen; the countdown stays. */}
+            <span className="hidden sm:inline">Time to Expiry </span>
             <span className="num text-brand-text">{timeToExpiry(expiry.settlementTime)}</span>
           </span>
         </div>
-        <span className="text-[14px] text-ink">Puts</span>
+        <span className="shrink-0 text-[14px] text-ink">Puts</span>
       </div>
 
       <div className="flex min-h-0 flex-1">

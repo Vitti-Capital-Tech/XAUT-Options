@@ -95,15 +95,16 @@ export function TopBar({
   }
 
   return (
-    <header className="flex shrink-0 items-center gap-4 border-b border-line bg-raised px-3 py-2">
+    <header className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-raised px-3 py-2">
       {/* Mark, wordmark, and the one badge that matters: none of this is real
           money. Spot lives in the chain header, where the strikes it is being
           read against are. */}
-      <div className="flex items-center gap-2.5">
+      <div className="flex shrink-0 items-center gap-2.5">
         <Logo />
         <div className="leading-none">
           <div className="logo-word text-[15px] font-bold tracking-tight">XAUT</div>
-          <div className="mt-[3px] text-[9px] font-semibold tracking-[0.18em] text-ink-3 uppercase">
+          {/* The subtitle is the first thing to go when the bar gets tight. */}
+          <div className="mt-[3px] hidden text-[9px] font-semibold tracking-[0.18em] text-ink-3 uppercase sm:block">
             Options
           </div>
         </div>
@@ -114,7 +115,7 @@ export function TopBar({
 
       {/* The pages. Two for now — the chain and the bot — read as the section
           nav, in the same weight the expiry pills use below. */}
-      <nav className="ml-3 flex items-center gap-1">
+      <nav className="flex shrink-0 items-center gap-1 sm:ml-3">
         <NavLink label="Option Chain" active={page === 'chain'} onClick={() => onNavigate('chain')} />
         <NavLink
           label="Auto Strategy"
@@ -123,7 +124,11 @@ export function TopBar({
         />
       </nav>
 
-      <div className="ml-auto flex items-center gap-5 text-[12px]">
+      {/* The money takes a full-width strip of its own on a narrow bar and
+          scrolls sideways within it, rather than shrinking to a sliver or
+          forcing the header wider than the screen. Inline and right-aligned
+          once there is room. */}
+      <div className="flex w-full min-w-0 items-center gap-4 overflow-x-auto text-[12px] sm:ml-auto sm:w-auto">
         <Stat label="Balance" value={usd(summary.balance)} />
         <Stat
           label="Unrealized"
@@ -150,7 +155,7 @@ export function TopBar({
           a property of the connection rather than of the branding or the money.
           Dead feeds pulse, because a still red dot is easy to read past. */}
       <div
-        className="flex items-center gap-1.5 rounded border border-raised-3 px-2 py-1"
+        className="flex shrink-0 items-center gap-1.5 rounded border border-raised-3 px-2 py-1"
         title={`Market data: ${status}`}
       >
         <span
@@ -162,18 +167,19 @@ export function TopBar({
                 : 'animate-pulse bg-neg-solid'
           }`}
         />
-        <span className="text-[10px] font-semibold tracking-wider text-ink-3 uppercase">
+        {/* The dot alone carries the state when the bar is tight. */}
+        <span className="hidden text-[10px] font-semibold tracking-wider text-ink-3 uppercase sm:inline">
           {status}
         </span>
       </div>
 
-      <div className="relative" ref={menuRef}>
+      <div className="relative shrink-0" ref={menuRef}>
         <button
           onClick={() => setMenuOpen((v) => !v)}
-          className="flex items-center gap-2 rounded border border-raised-3 px-2.5 py-1.5 text-xs text-ink hover:border-ink-3"
+          className="flex max-w-[40vw] items-center gap-2 rounded border border-raised-3 px-2.5 py-1.5 text-xs text-ink hover:border-ink-3"
         >
-          <span className="font-medium">{selected?.name ?? 'No account'}</span>
-          <span className="text-ink-3">▾</span>
+          <span className="truncate font-medium">{selected?.name ?? 'No account'}</span>
+          <span className="shrink-0 text-ink-3">▾</span>
         </button>
 
         {menuOpen && (
@@ -427,7 +433,7 @@ function Stat({
   emphasis?: boolean
 }) {
   return (
-    <div className="text-right">
+    <div className="shrink-0 text-right whitespace-nowrap">
       <div className="text-[10px] tracking-wider text-ink-3 uppercase">{label}</div>
       <div
         className={`num font-semibold ${emphasis ? 'text-[13px]' : ''} ${className ?? 'text-ink'}`}
