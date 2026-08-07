@@ -211,10 +211,11 @@ function Paged<T>({
 
   return (
     <div className="flex flex-col">
-      {/* No scroll box at all: the rows decide the height and the document
-          scrolls to them, so a page of a hundred makes a long page rather than a
-          small window onto a hundred rows. */}
-      <div>{children(rows.slice(start, start + size))}</div>
+      {/* The rows decide the height and the document scrolls to them vertically.
+          Horizontally the table scrolls inside this box instead — otherwise a
+          table wider than a narrow screen would stretch the whole document past
+          the viewport and leave the chain above it short on the right. */}
+      <div className="overflow-x-auto">{children(rows.slice(start, start + size))}</div>
 
       {/* Delta's arrangement: the size selector, then boxed arrows either side of
           the range. The range is the one bright thing here, because it is the
@@ -403,7 +404,7 @@ function PositionsTable({
       )}
     <Paged rows={positions}>
       {(visible) => (
-    <table className="w-full text-[13px]">
+    <table className="w-full min-w-[1150px] text-[13px]">
       <thead className="sticky top-0 z-10">
         {/* Above the labels, not below the rows. Once the table pages, a footer
             total sits under one page and reads as that page's — these are the
@@ -995,7 +996,7 @@ function HistoryTable({ fills }: { fills: FillRow[] }) {
   return (
     <Paged rows={fills}>
       {(visible) => (
-    <table className="w-full table-fixed text-[13px]">
+    <table className="w-full min-w-[820px] text-[13px]">
       {/* Seven columns is a third of what Delta's order history carries, so a
           table this wide has slack — and auto layout gives it to whichever cell
           holds the longest string. That is what took Symbol out to a quarter of
