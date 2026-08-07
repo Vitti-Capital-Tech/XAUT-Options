@@ -26,7 +26,7 @@ export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
         <div className="flex h-9 items-center rounded-md border border-raised-3 bg-surface pr-2.5 transition-colors focus-within:border-brand-text hover:border-ink-3">
           <input
             type="number"
-            min={0.001}
+            min={1}
             step={1}
             value={config.qty}
             onChange={(e) => {
