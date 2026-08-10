@@ -531,6 +531,20 @@ mark, so a short's take-profit fires on `v_ref <= take_profit` — the mark
 rather than taking it as a parameter is what keeps the signature stable for
 `apply_delta_strategy` and `delta_sell_entry`.
 
+**The auto strategy's window is both ends of the day.** `apply_strategy` sells
+only inside it; `apply_auto_exit` closes every open leg on an armed auto account
+once outside it, at the exit side of the book, booking `close_reason =
+'window_close'`
+([`0015`](../supabase/migrations/0015_auto_strategy_exit.sql)). Both read the same
+`in_ist_window(start, end, at)` — a second inlined copy of that arithmetic could
+drift and leave a minute that both enters and flattens. The window is inclusive
+of `window_end`, so the flatten begins the minute after it; the `00:00–23:59`
+default has no outside and never fires. Exits route through
+`close_position_triggered` rather than a market order, so the ledger labels them
+and no order row is invented for a close the engine forced. A leg that cannot be
+priced from the last 90s of replies is left open and retried, never closed at a
+guess.
+
 ### Validation matrix
 
 | Condition | Result | Message |

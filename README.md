@@ -119,6 +119,13 @@ index and sell an option — a red bar sells a call, a green bar sells a put —
 the chosen moneyness off the nearest expiry, inside a time-of-day window (IST),
 with a stop at twice the entry premium on the mark.
 
+The window is both ends of the day. Inside it the strategy sells; once past
+`window_end` it stops **and flattens** — `apply_auto_exit()` closes every open
+leg at the exit side of the book and books the fill as `window_close`
+([`0015`](supabase/migrations/0015_auto_strategy_exit.sql)), so nothing is
+carried overnight. The default window is `00:00–23:59`, which has no outside, so
+an account left on it is never force-closed.
+
 The controls are only *whether* it runs, the strike, the size and the window.
 The engine itself is `apply_strategy()` on `pg_cron`
 ([`0008`](supabase/migrations/0008_strategy_engine.sql)), so it trades with the

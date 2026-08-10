@@ -987,6 +987,8 @@ function fillKind(f: FillRow): { label: string; cls: string } {
   if (f.is_settlement) return { label: 'Settlement', cls: 'text-ink-3' }
   if (f.close_reason === 'take_profit') return { label: 'Take Profit', cls: 'text-pos' }
   if (f.close_reason === 'stop_loss') return { label: 'Stop Loss', cls: 'text-neg' }
+  // A window close is neither a win nor a loss — the clock ran out on it.
+  if (f.close_reason === 'window_close') return { label: 'Window Close', cls: 'text-ink-3' }
   return { label: 'Trade', cls: 'text-ink-2' }
 }
 

@@ -8,9 +8,15 @@ import { Field, NumInput, RunSwitch, Select, TimePicker } from './controls'
  * entry), so there is nothing to toggle there; only whether it runs, the strike,
  * the size and the window. The positions and trade history it produces sit in
  * the panel below, on the strategy's own account.
+ *
+ * The window is both ends of the day: the engine sells only inside it, and
+ * flattens the account once past it, so nothing is carried overnight.
  */
 export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
   const { config, setConfig, armed, setArmed, hasAccount } = strategy
+  // The one all-day window the pickers can express — it has no outside, so the
+  // account is never force-closed.
+  const allDay = config.windowStart === '00:00' && config.windowEnd === '23:59'
 
   return (
     <div className="flex flex-wrap items-center gap-x-6 gap-y-4 border-b border-line bg-raised px-5 py-3.5">
@@ -40,6 +46,14 @@ export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
           <TimePicker value={config.windowEnd} onChange={(v) => setConfig({ windowEnd: v })} />
         </div>
       </Field>
+
+      {/* Say which of the two the window is doing, since an all-day one gates
+          nothing and never flattens. */}
+      <span className="self-center text-[11px] text-ink-3">
+        {allDay
+          ? 'All day — nothing is force-closed'
+          : `Flat outside ${config.windowStart}–${config.windowEnd}`}
+      </span>
 
       {/* Run / pause, held to the right so the controls read left-to-right and
           the switch sits on its own. */}
