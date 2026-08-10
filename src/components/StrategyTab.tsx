@@ -17,7 +17,10 @@ export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
 
   return (
     <div className="flex flex-wrap items-center gap-x-6 gap-y-4 border-b border-line bg-raised px-5 py-3.5">
-      <Field label="Strike">
+      <Field
+        label="Strike"
+        help="How far out of the money to sell, stepping off the listed strike nearest spot. Clamped to the listed wings rather than skipping the trade."
+      >
         <Select
           value={config.moneyness}
           onChange={(m) => setConfig({ moneyness: m })}
@@ -25,7 +28,10 @@ export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
         />
       </Field>
 
-      <Field label="Quantity">
+      <Field
+        label="Quantity"
+        help="Underlying units sold each time it fires, converted to lots at placement."
+      >
         <NumInput
           value={config.qty}
           min={1}
@@ -36,7 +42,10 @@ export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
         />
       </Field>
 
-      <Field label="Window · IST">
+      <Field
+        label="Window · IST"
+        help="Trading hours on the IST clock. Inside it the strategy sells; past the end it stops and flattens whatever it holds, so nothing is carried overnight."
+      >
         <div className="flex items-center gap-2">
           <TimePicker value={config.windowStart} onChange={(v) => setConfig({ windowStart: v })} />
           <span className="text-ink-4">–</span>
@@ -44,7 +53,10 @@ export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
         </div>
       </Field>
 
-      <Field label="Days · IST">
+      <Field
+        label="Days · IST"
+        help="Weekdays it trades. A day switched off is treated as out of session, so the flatten covers it — it can never be left holding a position through a day it does not trade."
+      >
         <DayPicker value={config.tradeDays} onChange={(tradeDays) => setConfig({ tradeDays })} />
       </Field>
 
@@ -52,7 +64,10 @@ export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
           lists no same-day contract, or once the same-day one has settled at
           21:30 IST — deliberately, since selling a multi-day option in its place
           is what the rule exists to stop. */}
-      <Field label="Expiry">
+      <Field
+        label="Expiry"
+        help="Today only sells the same-day contract and skips the bar when there is none — XAUT does not list one every day, and the same-day contract settles at 21:30 IST. Nearest live takes the nearest unsettled expiry instead, whatever its date."
+      >
         <Select
           value={config.expiryRule}
           width="w-32"
@@ -66,7 +81,10 @@ export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
 
       {/* The premium floor: a bar whose strike is bid under this is skipped
           rather than sold. Zero turns the filter off. */}
-      <Field label="Min premium">
+      <Field
+        label="Min premium"
+        help="Floor on the bid. A bar whose strike is bid below this is skipped, not sold — it never hunts for a richer strike, since the strike is the Strike setting's to choose."
+      >
         <NumInput
           value={config.minPremium}
           min={0}

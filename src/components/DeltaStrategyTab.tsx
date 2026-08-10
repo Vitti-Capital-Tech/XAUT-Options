@@ -37,7 +37,10 @@ export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
       {/* Controls. One wrapping row, the way the auto strategy's is — there are
           simply more of them here. */}
       <div className="flex flex-wrap items-start gap-x-6 gap-y-4 px-5 py-3.5">
-        <Field label="Session · Sydney">
+        <Field
+          label="Session · Sydney"
+          help="Trading hours on the Sydney clock. The opening pair is sold at the open and everything is bought back at the close, so no position is ever carried overnight."
+        >
           <div className="flex items-center gap-2">
             <TimePicker value={config.sessionOpen} onChange={(v) => setConfig({ sessionOpen: v })} />
             <span className="text-ink-4">–</span>
@@ -48,11 +51,17 @@ export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
         {/* The days the session runs, on the session's own clock. A day left out
             reads as a closed session: the book is flattened and nothing new is
             opened. The readout's Session field says which it is. */}
-        <Field label="Days · Sydney">
+        <Field
+          label="Days · Sydney"
+          help="Weekdays the session runs. A day switched off reads as a closed session — the book is flattened and nothing new is opened."
+        >
           <DayPicker value={config.tradeDays} onChange={(tradeDays) => setConfig({ tradeDays })} />
         </Field>
 
-        <Field label="Band L / U">
+        <Field
+          label="Band L / U"
+          help="The net portfolio delta (Δp) you will tolerate — the whole book's exposure, not one option's. Inside the band the engine does nothing; outside it corrects. Negatives are fine, so −2 to 1 is a valid band."
+        >
           <div className="flex items-center gap-2">
             <NumInput value={config.bandLow} step={0.1} width="w-16" onChange={(v) => setConfig({ bandLow: v })} />
             <span className="text-ink-4">–</span>
@@ -60,7 +69,10 @@ export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
           </div>
         </Field>
 
-        <Field label="Lands on">
+        <Field
+          label="Lands on"
+          help="Where a correction aims once the band breaks: back to the edge you crossed, or all the way to the band's midpoint. On an asymmetric band the midpoint pulls the book much further."
+        >
           <Select
             value={config.targetLanding}
             width="w-32"
@@ -72,7 +84,10 @@ export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
           />
         </Field>
 
-        <Field label="Buffer B">
+        <Field
+          label="Buffer B"
+          help="How far inside the breached edge to land. At 0 it aims for the edge itself, which often sizes to zero contracts and does nothing at all — 0.4 is what makes corrections actually fire."
+        >
           <NumInput
             value={config.bandBuffer}
             step={0.05}
@@ -82,7 +97,10 @@ export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
           />
         </Field>
 
-        <Field label="ITM trigger">
+        <Field
+          label="ITM trigger"
+          help="Points of spot-to-strike before a short leg counts as needing management. It only makes a leg eligible — the band breach is what triggers action, never this on its own."
+        >
           <NumInput
             value={config.itmTrigger}
             step={1}
@@ -93,7 +111,10 @@ export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
           />
         </Field>
 
-        <Field label="Max rolls / side">
+        <Field
+          label="Max rolls / side"
+          help="Rolls each side gets per day. Once spent that side is exit-only: the next trigger closes the leg in full and books the loss. This is the risk control — no stop-loss is ever set."
+        >
           <NumInput
             value={config.maxRolls}
             step={1}
@@ -103,7 +124,10 @@ export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
           />
         </Field>
 
-        <Field label="A roll is">
+        <Field
+          label="A roll is"
+          help="A roll buys back part of a losing short and sells the same type further out. This says whether one corrective pass draws a single roll from the budget, or every strike it touches draws its own."
+        >
           <Select
             value={config.rollCounts}
             width="w-32"
@@ -115,7 +139,10 @@ export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
           />
         </Field>
 
-        <Field label="Entry / floor $">
+        <Field
+          label="Entry / floor $"
+          help="Left: the price to aim for when selling the opening pair and every roll replacement — it takes whichever listed strike is quoted nearest it. Right: a hard floor, nothing is ever sold cheaper than this."
+        >
           <div className="flex items-center gap-2">
             <NumInput
               value={config.entryPremium}
@@ -135,7 +162,10 @@ export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
           </div>
         </Field>
 
-        <Field label="Band Δ range">
+        <Field
+          label="Band Δ range"
+          help="One option's own delta, used only to pick which fresh strike to sell when no ITM leg is left to roll — not the portfolio's delta. A single option's delta is always between −1 and 1, so keep this small and positive. The sign is handled for you: 0.15–0.25 already matches a put at −0.20."
+        >
           <div className="flex items-center gap-2">
             <NumInput
               value={config.bandDeltaLow}
@@ -155,7 +185,10 @@ export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
           </div>
         </Field>
 
-        <Field label="N pairs">
+        <Field
+          label="N pairs"
+          help="Call/put pairs sold at the open, as lots per leg. At N = 1 a ±1 band can barely be breached, so corrections almost never fire."
+        >
           <NumInput
             value={config.pairs}
             step={1}
@@ -165,7 +198,10 @@ export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
           />
         </Field>
 
-        <Field label="Tie-break">
+        <Field
+          label="Tie-break"
+          help="Which strike wins when several sit near the entry premium: the absolute closest, or the nearest one above or below it."
+        >
           <Select
             value={config.tieBreak}
             width="w-32"
@@ -178,7 +214,10 @@ export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
           />
         </Field>
 
-        <Field label="Expiry">
+        <Field
+          label="Expiry"
+          help="Which listed expiry to trade — the nearest one still to settle, or the one after it."
+        >
           <Select
             value={config.expiryPick}
             width="w-28"
@@ -190,7 +229,10 @@ export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
           />
         </Field>
 
-        <Field label="Cycle">
+        <Field
+          label="Cycle"
+          help="How often the engine re-reads the book. It takes at most one action per cycle, sized on prices fetched that cycle — never a batch."
+        >
           <NumInput
             value={config.cycleSeconds}
             step={5}
@@ -203,7 +245,10 @@ export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
 
         {/* Take profit as a price on the option's own mark — 0.7 buys any short
             leg back at $0.70, whatever it sold for. No stop is ever set. */}
-        <Field label="TP mark">
+        <Field
+          label="TP mark"
+          help="Take-profit as a price on the option's own mark, not a percentage. At 0.70 any short is bought back once it is worth 70 cents, whatever it sold for. No stop is ever set."
+        >
           <NumInput
             value={config.takeProfitMark}
             step={0.05}

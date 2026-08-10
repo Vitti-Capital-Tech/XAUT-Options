@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 
 /**
  * The controls a strategy bar is built from — a labelled field, a dark dropdown,
@@ -10,14 +10,79 @@ import { useEffect, useRef, useState } from 'react'
  * chrome that does not belong in the terminal, which is why these are hand-built.
  */
 
-export function Field({ label, children }: { label: string; children: React.ReactNode }) {
+/**
+ * A labelled control, with an optional `?` that explains the setting on hover.
+ *
+ * Every parameter here reads as jargon until someone tells you what it does, and
+ * a strategy bar is exactly where a wrong guess costs money — so the explanation
+ * sits on the label rather than in a document nobody has open.
+ */
+export function Field({
+  label,
+  help,
+  children,
+}: {
+  label: string
+  help?: string
+  children: React.ReactNode
+}) {
   return (
     <div className="flex flex-col gap-1.5">
-      <span className="text-[10px] font-semibold tracking-[0.14em] text-ink-3 uppercase">
+      <span className="flex items-center gap-1 text-[10px] font-semibold tracking-[0.14em] text-ink-3 uppercase">
         {label}
+        {help && <HelpTip label={label} text={help} />}
       </span>
       {children}
     </div>
+  )
+}
+
+/**
+ * The `?` and its bubble. Shown on hover for a mouse and on focus for a keyboard
+ * or a tap — no click handler, because a tap focuses the button and a tap
+ * elsewhere blurs it, which is the behaviour we want anyway.
+ *
+ * Hand-built rather than a `title` attribute: the native tooltip is slow to
+ * appear, cannot be reached by keyboard, and brings the same white chrome the
+ * selects here already avoid.
+ */
+function HelpTip({ label, text }: { label: string; text: string }) {
+  const [hover, setHover] = useState(false)
+  const [focus, setFocus] = useState(false)
+  const id = useId()
+  const open = hover || focus
+
+  return (
+    <span className="relative inline-flex">
+      <button
+        type="button"
+        aria-label={`What does ${label} do?`}
+        aria-expanded={open}
+        aria-describedby={open ? id : undefined}
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
+        onFocus={() => setFocus(true)}
+        onBlur={() => setFocus(false)}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') e.currentTarget.blur()
+        }}
+        className={`flex h-[13px] w-[13px] items-center justify-center rounded-full border text-[9px] leading-none font-bold transition-colors ${
+          open ? 'border-brand-text text-brand-text' : 'border-ink-4 text-ink-4 hover:text-ink-2'
+        }`}
+      >
+        ?
+      </button>
+
+      {open && (
+        <span
+          id={id}
+          role="tooltip"
+          className="absolute top-[19px] left-0 z-40 w-64 rounded-md border border-raised-3 bg-raised px-3 py-2.5 text-[11.5px] leading-[1.5] font-normal tracking-normal text-ink-2 normal-case shadow-delta-lg"
+        >
+          {text}
+        </span>
+      )}
+    </span>
   )
 }
 
