@@ -134,6 +134,13 @@ trade. Days are ISO weekdays (Mon 1 – Sun 7) on the same IST clock as the
 window, and the day tested is the one the window *opened* on, so a window that
 wraps past midnight belongs to the day it started.
 
+`min_premium` puts a floor under the entry
+([`0017`](supabase/migrations/0017_auto_strategy_min_premium.sql)): a bar whose
+strike is bid below it is **skipped, not sold**. It vetoes rather than hunting for
+a richer strike — the strike is `moneyness`'s to choose, and searching for
+whatever clears the floor would quietly override that and could walk the position
+deep into the money on a thin day. `0` disables it.
+
 The controls are only *whether* it runs, the strike, the size and the window.
 The engine itself is `apply_strategy()` on `pg_cron`
 ([`0008`](supabase/migrations/0008_strategy_engine.sql)), so it trades with the

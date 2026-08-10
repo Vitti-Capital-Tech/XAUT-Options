@@ -72,6 +72,7 @@ erDiagram
         text window_start "HH:MM IST"
         text window_end
         smallint_array trade_days "ISO weekdays, IST"
+        numeric min_premium "floor on the bid; 0 off"
         bigint last_acted "unix sec of last bar"
     }
     DELTA_STRATEGY_SETTINGS {
@@ -563,6 +564,18 @@ it does not trade. An empty array is a valid off state and reads as "never". Bot
 `in_ist_window` and `delta_session` were dropped and recreated rather than
 overloaded: two candidates that each default their tail would make the old
 two-argument call ambiguous.
+
+**The auto strategy's premium floor vetoes, the delta strategy's narrows.**
+`strategy_settings.min_premium` skips a bar whose resolved strike is bid under it
+([`0017`](../supabase/migrations/0017_auto_strategy_min_premium.sql)) rather than
+looking for a strike that clears it — `moneyness` is the strategy's one rule about
+*what* to sell, and a search would override it and could walk the position deep
+into the money on a thin day. `delta_strategy_settings.min_premium` reads the same
+(Section 6: nothing is sold below the floor), but it is already picking a strike
+by premium, so there the floor narrows a search rather than blocking one. A
+skipped bar consumes `last_acted`, like every other skip path: the poll only
+fetches in the first minutes of an hour, so the bar cannot be retried, and leaving
+it unconsumed would re-log the same decision every minute for the rest of it.
 
 ### Validation matrix
 

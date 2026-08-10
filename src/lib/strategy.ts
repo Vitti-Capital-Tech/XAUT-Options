@@ -50,6 +50,12 @@ export interface StrategyConfig {
    * never.
    */
   tradeDays: number[]
+  /**
+   * Premium floor, in dollars on the bid. A bar whose strike is bid below this is
+   * skipped rather than sold — the strike is fixed by `moneyness`, so the floor
+   * vetoes the trade instead of hunting for a richer strike. Zero disables it.
+   */
+  minPremium: number
 }
 
 export const DEFAULT_CONFIG: StrategyConfig = {
@@ -59,6 +65,8 @@ export const DEFAULT_CONFIG: StrategyConfig = {
   windowStart: '00:00',
   windowEnd: '23:59',
   tradeDays: [1, 2, 3, 4, 5, 6, 7],
+  // No floor by default: the strategy sells whatever the moneyness resolves to.
+  minPremium: 0,
 }
 
 // ---------------------------------------------------------------------------

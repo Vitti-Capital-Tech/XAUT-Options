@@ -29,9 +29,11 @@ interface Row {
   window_start: string
   window_end: string
   trade_days: number[] | null
+  min_premium: string | number
 }
 
-const COLS = 'account_id, armed, moneyness, qty, window_start, window_end, trade_days'
+const COLS =
+  'account_id, armed, moneyness, qty, window_start, window_end, trade_days, min_premium'
 
 export function useAutoStrategy(accountId: string | null): StrategyApi {
   const [config, setConfigState] = useState<StrategyConfig>(DEFAULT_CONFIG)
@@ -50,6 +52,8 @@ export function useAutoStrategy(accountId: string | null): StrategyApi {
       // A null column is the engine's "every day"; carry that as the full week
       // rather than an empty selection, which would read as "never".
       tradeDays: row.trade_days === null ? [...DEFAULT_CONFIG.tradeDays] : row.trade_days.map(Number),
+      // Postgres numerics come back as strings over PostgREST.
+      minPremium: Number(row.min_premium),
     })
     setArmedState(row.armed)
   }, [])
@@ -83,6 +87,7 @@ export function useAutoStrategy(accountId: string | null): StrategyApi {
           window_start: DEFAULT_CONFIG.windowStart,
           window_end: DEFAULT_CONFIG.windowEnd,
           trade_days: DEFAULT_CONFIG.tradeDays,
+          min_premium: DEFAULT_CONFIG.minPremium,
         }
         await supabase.from('strategy_settings').upsert(def, { onConflict: 'account_id' })
         if (!active) return
@@ -162,6 +167,7 @@ export function useAutoStrategy(accountId: string | null): StrategyApi {
           window_start: next.windowStart,
           window_end: next.windowEnd,
           trade_days: next.tradeDays,
+          min_premium: next.minPremium,
         })
         return next
       })

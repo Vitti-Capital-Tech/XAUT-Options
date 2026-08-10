@@ -14,9 +14,6 @@ import { DayPicker, Field, NumInput, RunSwitch, Select, TimePicker } from './con
  */
 export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
   const { config, setConfig, armed, setArmed, hasAccount } = strategy
-  // The one all-day window the pickers can express — it has no outside, so the
-  // account is never force-closed.
-  const allDay = config.windowStart === '00:00' && config.windowEnd === '23:59'
 
   return (
     <div className="flex flex-wrap items-center gap-x-6 gap-y-4 border-b border-line bg-raised px-5 py-3.5">
@@ -51,15 +48,24 @@ export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
         <DayPicker value={config.tradeDays} onChange={(tradeDays) => setConfig({ tradeDays })} />
       </Field>
 
-      {/* Say what the two filters are actually doing: an all-day, all-week
-          setting gates nothing and never flattens, which is easy to forget. */}
-      <span className="self-center text-[11px] text-ink-3">
-        {config.tradeDays.length === 0
-          ? 'No days selected — nothing will trade'
-          : allDay && config.tradeDays.length === 7
-            ? 'All day, every day — nothing is force-closed'
-            : `Flat outside ${config.windowStart}–${config.windowEnd}`}
-      </span>
+      {/* The premium floor: a bar whose strike is bid under this is skipped
+          rather than sold. Zero turns the filter off. */}
+      <Field label="Min premium">
+        <NumInput
+          value={config.minPremium}
+          min={0}
+          step={0.5}
+          unit="$"
+          width="w-16"
+          onChange={(minPremium) => setConfig({ minPremium })}
+        />
+      </Field>
+
+      {/* No days selected disables the strategy outright, which is worth saying
+          out loud — the run switch still reads "Running". */}
+      {config.tradeDays.length === 0 && (
+        <span className="self-center text-[11px] text-warn">No days selected — nothing will trade</span>
+      )}
 
       {/* Run / pause, held to the right so the controls read left-to-right and
           the switch sits on its own. */}
