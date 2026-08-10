@@ -41,11 +41,12 @@ functions the earlier ones created, so skipping or reordering will fail.
 | `0010_delta_strategy` | `delta` account kind and `delta_strategy_settings` |
 | `0011_strategy_expiry_fix` | **Required.** Fixes the auto strategy reading an expiry field the tickers feed never sends — without it, it never places a single entry |
 | `0012_delta_strategy_engine` | `delta_chain` and the server-side **delta strategy** engine |
-| `0013_delta_take_profit` | Take-profit on every delta strategy short, at a multiple of the premium sold; no stop |
+| `0013_delta_take_profit` | Take-profit on every delta strategy short; no stop |
+| `0014_delta_take_profit_mark` | Reads that take-profit as a price on the option's mark rather than a multiple of the premium sold |
 
 The first ten create the schema; `0011` is a bug fix, `0012` moves the delta
-strategy's engine server-side and `0013` brackets what it sells. A fresh install
-wants all thirteen.
+strategy's engine server-side, and `0013`–`0014` bracket what it sells. A fresh
+install wants all fourteen.
 
 After `0012`, four cron jobs should be scheduled — confirm with:
 

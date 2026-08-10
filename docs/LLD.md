@@ -96,7 +96,7 @@ erDiagram
         text flattened_day
         text_array touched_symbols "once per pass"
         boolean pass_open
-        numeric take_profit_mult "x entry premium, on the mark"
+        numeric take_profit_mark "a price on the option's mark"
     }
     ORDERS {
         uuid id PK
@@ -520,13 +520,16 @@ is `1.9999999999999996` and floors to 1 where the document says 2.
 *call* lifts it and selling a fresh *put* does the same — which is why the roll
 side and the sell side are always opposites.
 
-**Brackets.** `delta_sell` arms `take_profit = take_profit_mult ×
-avg_entry_price` with `tpsl_trigger = 'mark'` and no stop, on any short the fill
-leaves open. `apply_tpsl_triggers` sets `v_up := v_long` when the reference is
-the mark, so a short's take-profit fires on `v_ref <= take_profit` — the mark
-*falling* is the short's gain. Reading the multiplier off the account's own
-settings rather than taking it as a parameter is what keeps the signature stable
-for `apply_delta_strategy` and `delta_sell_entry`.
+**Brackets.** `delta_sell` arms `take_profit = take_profit_mark` with
+`tpsl_trigger = 'mark'` and no stop, on any short the fill leaves open. The level
+is an absolute mark price rather than a multiple of the premium sold, so adding to
+a short leaves it where it is; it is only armed when `avg_entry_price` is above
+it, since a take-profit at or above a short's entry would fire on the fill that
+opened it. `apply_tpsl_triggers` sets `v_up := v_long` when the reference is the
+mark, so a short's take-profit fires on `v_ref <= take_profit` — the mark
+*falling* is the short's gain. Reading the level off the account's own settings
+rather than taking it as a parameter is what keeps the signature stable for
+`apply_delta_strategy` and `delta_sell_entry`.
 
 ### Validation matrix
 

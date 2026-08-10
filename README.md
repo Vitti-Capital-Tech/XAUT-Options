@@ -152,12 +152,12 @@ Every short it opens carries a **take-profit and no stop**, watched on the
 option's own mark:
 
 ```
-take_profit = TP× × avg_entry_price
+take_profit = take_profit_mark
 ```
 
-At the default **0.7** a leg sold for $4 is bought back at $2.80, booking 30% of
-the premium. It re-bases onto the blended average when a position is added to,
-and `0` disables it. There is deliberately no stop-loss — the roll budget and
+The level is a price, not a multiple of the premium sold: at the default **0.7**
+any short leg is bought back when its mark reaches **$0.70**, whatever it sold
+for. Adding to a position leaves the level where it is, and `0` disables it. There is deliberately no stop-loss — the roll budget and
 exit-only mode are the strategy's risk control, not a per-leg stop.
 
 Sizing is the document's, both rounded **down** so a correction cannot overshoot:

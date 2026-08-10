@@ -194,15 +194,16 @@ export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
           />
         </Field>
 
-        {/* Take profit as a multiple of the premium sold, on the option's own
-            mark — 0.7 buys a $4 leg back at $2.80. No stop is ever set. */}
-        <Field label="TP × entry">
+        {/* Take profit as a price on the option's own mark — 0.7 buys any short
+            leg back at $0.70, whatever it sold for. No stop is ever set. */}
+        <Field label="TP mark">
           <NumInput
-            value={config.takeProfitMult}
+            value={config.takeProfitMark}
             step={0.05}
             min={0}
+            unit="$"
             width="w-16"
-            onChange={(v) => setConfig({ takeProfitMult: v })}
+            onChange={(v) => setConfig({ takeProfitMark: v })}
           />
         </Field>
 
@@ -240,12 +241,10 @@ export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
           {callsLeft} / {putsLeft}
         </Readout>
         <Readout label="Session">{plan ? phaseLabel(plan.phase) : '—'}</Readout>
-        {/* What the bracket actually lands on, so the multiplier is not read as
-            a price. No stop, so there is nothing to show beside it. */}
+        {/* The mark every short is bought back at. No stop, so there is nothing
+            to show beside it. */}
         <Readout label="TP / SL">
-          {config.takeProfitMult > 0
-            ? `${greek(config.entryPremium * config.takeProfitMult, 2)} / none`
-            : 'none / none'}
+          {config.takeProfitMark > 0 ? `${price(config.takeProfitMark, 2)} / none` : 'none / none'}
         </Readout>
 
         <BandMeter low={config.bandLow} high={config.bandHigh} dp={dp} />
