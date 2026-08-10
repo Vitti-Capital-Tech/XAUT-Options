@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { DEFAULT_CONFIG, type Moneyness, type StrategyConfig } from '../lib/strategy'
+import {
+  DEFAULT_CONFIG,
+  type ExpiryRule,
+  type Moneyness,
+  type StrategyConfig,
+} from '../lib/strategy'
 
 const SYNC_MS = 15_000
 
@@ -30,10 +35,11 @@ interface Row {
   window_end: string
   trade_days: number[] | null
   min_premium: string | number
+  expiry_rule: string
 }
 
 const COLS =
-  'account_id, armed, moneyness, qty, window_start, window_end, trade_days, min_premium'
+  'account_id, armed, moneyness, qty, window_start, window_end, trade_days, min_premium, expiry_rule'
 
 export function useAutoStrategy(accountId: string | null): StrategyApi {
   const [config, setConfigState] = useState<StrategyConfig>(DEFAULT_CONFIG)
@@ -54,6 +60,7 @@ export function useAutoStrategy(accountId: string | null): StrategyApi {
       tradeDays: row.trade_days === null ? [...DEFAULT_CONFIG.tradeDays] : row.trade_days.map(Number),
       // Postgres numerics come back as strings over PostgREST.
       minPremium: Number(row.min_premium),
+      expiryRule: row.expiry_rule as ExpiryRule,
     })
     setArmedState(row.armed)
   }, [])
@@ -88,6 +95,7 @@ export function useAutoStrategy(accountId: string | null): StrategyApi {
           window_end: DEFAULT_CONFIG.windowEnd,
           trade_days: DEFAULT_CONFIG.tradeDays,
           min_premium: DEFAULT_CONFIG.minPremium,
+          expiry_rule: DEFAULT_CONFIG.expiryRule,
         }
         await supabase.from('strategy_settings').upsert(def, { onConflict: 'account_id' })
         if (!active) return
@@ -168,6 +176,7 @@ export function useAutoStrategy(accountId: string | null): StrategyApi {
           window_end: next.windowEnd,
           trade_days: next.tradeDays,
           min_premium: next.minPremium,
+          expiry_rule: next.expiryRule,
         })
         return next
       })

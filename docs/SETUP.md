@@ -46,11 +46,16 @@ functions the earlier ones created, so skipping or reordering will fail.
 | `0015_auto_strategy_exit` | The auto strategy flattens past `window_end` instead of holding overnight; shares one window test with the entry gate |
 | `0016_strategy_trade_days` | `trade_days` on both strategies — which days of the week each trades, on its own clock |
 | `0017_auto_strategy_min_premium` | `min_premium` on the auto strategy — skip a bar whose strike is bid under the floor |
+| `0018_auto_strategy_expiry_rule` | `expiry_rule` on the auto strategy — same-day expiry only (the new default), or the nearest live one |
 
 The first ten create the schema; `0011` is a bug fix, `0012` moves the delta
 strategy's engine server-side, `0013`–`0014` bracket what it sells, `0015` gives
-the auto strategy a close to match its open, and `0016`–`0017` add its entry
-filters. A fresh install wants all seventeen.
+the auto strategy a close to match its open, and `0016`–`0018` add its entry
+filters. A fresh install wants all eighteen.
+
+> `0018` changes behaviour on an existing account: `expiry_rule` defaults to
+> `today`, so an armed auto account stops trading on a day XAUT lists no same-day
+> expiry, and after 21:30 IST. Set it to `nearest` for the previous behaviour.
 
 After `0012`, four cron jobs should be scheduled — confirm with:
 

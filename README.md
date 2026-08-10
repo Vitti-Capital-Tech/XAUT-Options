@@ -134,6 +134,20 @@ trade. Days are ISO weekdays (Mon 1 – Sun 7) on the same IST clock as the
 window, and the day tested is the one the window *opened* on, so a window that
 wraps past midnight belongs to the day it started.
 
+`expiry_rule` decides which expiry an entry lands in
+([`0018`](supabase/migrations/0018_auto_strategy_expiry_rule.sql)). The default,
+**`today`**, sells only the same-day contract on the IST clock and **skips the bar
+when there is none** — it never falls through to a later expiry, which is the
+behaviour it exists to stop. Two consequences worth knowing before arming it:
+
+- XAUT does not list a contract every calendar day (a live set of Mon 10 / Tue 11
+  / Fri 14 Aug leaves Wednesday and Thursday with no same-day expiry at all).
+- The same-day contract settles at **16:00 UTC = 21:30 IST**, so from 21:30 there
+  is nothing same-day left to sell.
+
+On either, an account on `today` stands down and logs why. `nearest` restores the
+old behaviour of taking the nearest unsettled expiry whatever its date.
+
 `min_premium` puts a floor under the entry
 ([`0017`](supabase/migrations/0017_auto_strategy_min_premium.sql)): a bar whose
 strike is bid below it is **skipped, not sold**. It vetoes rather than hunting for

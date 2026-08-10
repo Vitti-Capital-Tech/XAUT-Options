@@ -34,6 +34,9 @@ export const MONEYNESS_ORDER: Moneyness[] = [
   'OTM5',
 ]
 
+/** Which expiry an entry is sold in: the same IST day only, or the nearest live one. */
+export type ExpiryRule = 'today' | 'nearest'
+
 export interface StrategyConfig {
   moneyness: Moneyness
   /** Underlying units sold per fire (XAUT). Converted to lots at placement. */
@@ -56,6 +59,14 @@ export interface StrategyConfig {
    * vetoes the trade instead of hunting for a richer strike. Zero disables it.
    */
   minPremium: number
+  /**
+   * Which expiry to sell. `today` takes only the same-day contract on the IST
+   * clock and skips the bar when there is none — XAUT does not list one every
+   * calendar day, and the same-day contract settles at 21:30 IST, so expect no
+   * trades on either. `nearest` takes the nearest unsettled expiry, whatever its
+   * date, which is what the strategy did before the rule existed.
+   */
+  expiryRule: ExpiryRule
 }
 
 export const DEFAULT_CONFIG: StrategyConfig = {
@@ -67,6 +78,9 @@ export const DEFAULT_CONFIG: StrategyConfig = {
   tradeDays: [1, 2, 3, 4, 5, 6, 7],
   // No floor by default: the strategy sells whatever the moneyness resolves to.
   minPremium: 0,
+  // Same-day only. Selling a multi-day option because today's is unlisted was the
+  // behaviour this rule was added to stop, so it is not the default.
+  expiryRule: 'today',
 }
 
 // ---------------------------------------------------------------------------

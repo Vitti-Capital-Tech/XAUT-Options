@@ -73,6 +73,7 @@ erDiagram
         text window_end
         smallint_array trade_days "ISO weekdays, IST"
         numeric min_premium "floor on the bid; 0 off"
+        text expiry_rule "today | nearest"
         bigint last_acted "unix sec of last bar"
     }
     DELTA_STRATEGY_SETTINGS {
@@ -576,6 +577,26 @@ by premium, so there the floor narrows a search rather than blocking one. A
 skipped bar consumes `last_acted`, like every other skip path: the poll only
 fetches in the first minutes of an hour, so the bar cannot be retried, and leaving
 it unconsumed would re-log the same decision every minute for the rest of it.
+
+**Nearest-unsettled is not the same as today.** `apply_strategy` sold the nearest
+expiry still to settle, which diverges from the same-day contract two ways: XAUT
+lists no contract for every calendar day (Mon 10 / Tue 11 / Fri 14 Aug leaves
+Wednesday and Thursday with none), and the same-day one settles at 16:00 UTC =
+21:30 IST. `expiry_rule = 'today'` — the default from
+[`0018`](../supabase/migrations/0018_auto_strategy_expiry_rule.sql) — takes only
+the contract whose label is the current IST date *and* is still unsettled, and
+skips the bar otherwise rather than falling through.
+
+It reads the **current** IST date, not the window's open day. A wrapped window
+(22:00–06:00) belongs to its open day for the days filter, but that day's expiry
+settled at 21:30 IST, before the tail even begins — so the overnight tail can only
+ever trade the new day's contract.
+
+The expiry now varies per account, so the strike ranking that `_k` used to hold in
+a temp table built once before the account loop is a ranked subquery over `_chain`
+instead. Deliberately not a temp table created inside the loop: that is the
+plpgsql plan-caching trap [`0012`](../supabase/migrations/0012_delta_strategy_engine.sql)
+called out when it chose an unlogged `delta_chain` over a temp one.
 
 ### Validation matrix
 

@@ -48,6 +48,22 @@ export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
         <DayPicker value={config.tradeDays} onChange={(tradeDays) => setConfig({ tradeDays })} />
       </Field>
 
+      {/* Which expiry an entry lands in. 'Today only' skips the bar when XAUT
+          lists no same-day contract, or once the same-day one has settled at
+          21:30 IST — deliberately, since selling a multi-day option in its place
+          is what the rule exists to stop. */}
+      <Field label="Expiry">
+        <Select
+          value={config.expiryRule}
+          width="w-32"
+          onChange={(expiryRule) => setConfig({ expiryRule })}
+          options={[
+            { value: 'today', label: 'Today only' },
+            { value: 'nearest', label: 'Nearest live' },
+          ]}
+        />
+      </Field>
+
       {/* The premium floor: a bar whose strike is bid under this is skipped
           rather than sold. Zero turns the filter off. */}
       <Field label="Min premium">
