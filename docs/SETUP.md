@@ -47,11 +47,13 @@ functions the earlier ones created, so skipping or reordering will fail.
 | `0016_strategy_trade_days` | `trade_days` on both strategies — which days of the week each trades, on its own clock |
 | `0017_auto_strategy_min_premium` | `min_premium` on the auto strategy — skip a bar whose strike is bid under the floor |
 | `0018_auto_strategy_expiry_rule` | `expiry_rule` on the auto strategy — same-day expiry only (the new default), or the nearest live one |
+| `0019_delta_entry_all_or_nothing` | **Bug fix.** The delta strategy stamped its daily entry as done even when nothing sold, and could half-fill the pair. Both legs now open or neither, and the day is only stamped on a filled pair |
 
 The first ten create the schema; `0011` is a bug fix, `0012` moves the delta
 strategy's engine server-side, `0013`–`0014` bracket what it sells, `0015` gives
-the auto strategy a close to match its open, and `0016`–`0018` add its entry
-filters. A fresh install wants all eighteen.
+the auto strategy a close to match its open, `0016`–`0018` add its entry filters,
+and `0019` fixes the delta strategy's daily entry. A fresh install wants all
+nineteen.
 
 > `0018` changes behaviour on an existing account: `expiry_rule` defaults to
 > `today`, so an armed auto account stops trading on a day XAUT lists no same-day

@@ -663,6 +663,17 @@ specification in TypeScript and PL/pgSQL. Only the first is covered by
 assertions, and nothing checks that they agree — a divergence would surface as
 the readout predicting one thing and the engine doing another.
 
+> This is not hypothetical. The S4 entry diverged for seven migrations:
+> `planCycle` left the day unstamped when no strike cleared the floor, so it
+> retried; the engine stamped `entered_day` whether or not `delta_sell_entry` had
+> sold anything, so one thin quote at the open cost the whole session, silently.
+> Fixed in [`0019`](../supabase/migrations/0019_delta_entry_all_or_nothing.sql),
+> which also made the pair all-or-nothing — symmetry was checked when picking the
+> strikes but the two sells were independent, so a thrown fill on the second leg
+> left a naked directional short that fault one then held all day. Both legs now
+> sit inside one block whose implicit savepoint unwinds the first if the second
+> does not fill, so a retry starts from flat having paid no spread.
+
 **`0008` is a standing lesson in silent failure.** It read `settlement_time` from
 `/v2/tickers`, which has never carried that field; the comparison against `now()`
 was `NULL`, the expiry lookup matched nothing, and it returned `0` one line

@@ -178,7 +178,7 @@ an exit — never a long option.
 
 | Phase | Rule |
 | --- | --- |
-| Open (06:00 Sydney) | Sell N symmetric pairs at the strikes nearest `entry_premium` |
+| Open (06:00 Sydney) | Sell N symmetric pairs at the strikes nearest `entry_premium`. Both legs fill or neither does; a failed open is retried on the next cycle rather than written off for the day ([`0019`](supabase/migrations/0019_delta_entry_all_or_nothing.sql)) |
 | Intraday | Rebuild the ITM queue each cycle, most-ITM first; resolve breaches by partial exit-and-replace |
 | Roll budget | Each side gets `max_rolls`; once spent that side is **exit-only** — further triggers close in full, loss booked |
 | No ITM legs left | Band-correct with fresh OTM sells in the `band_correction_delta` range |
