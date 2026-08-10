@@ -126,6 +126,14 @@ leg at the exit side of the book and books the fill as `window_close`
 carried overnight. The default window is `00:00–23:59`, which has no outside, so
 an account left on it is never force-closed.
 
+`trade_days` narrows that to chosen days of the week
+([`0016`](supabase/migrations/0016_strategy_trade_days.sql)). A day left out is
+treated as out of session, not merely as "no entries" — the flatten covers it,
+so the strategy can never be left holding a book through a day it does not
+trade. Days are ISO weekdays (Mon 1 – Sun 7) on the same IST clock as the
+window, and the day tested is the one the window *opened* on, so a window that
+wraps past midnight belongs to the day it started.
+
 The controls are only *whether* it runs, the strike, the size and the window.
 The engine itself is `apply_strategy()` on `pg_cron`
 ([`0008`](supabase/migrations/0008_strategy_engine.sql)), so it trades with the
@@ -154,6 +162,7 @@ an exit — never a long option.
 | Roll budget | Each side gets `max_rolls`; once spent that side is **exit-only** — further triggers close in full, loss booked |
 | No ITM legs left | Band-correct with fresh OTM sells in the `band_correction_delta` range |
 | Close (22:00 Sydney) | Flatten everything, stand flat overnight, reset counters |
+| Off day | A weekday outside `trade_days` reports the session **closed**, so the same flatten covers it and nothing is opened |
 
 Every short it opens carries a **take-profit and no stop**, watched on the
 option's own mark:

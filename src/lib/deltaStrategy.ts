@@ -60,6 +60,14 @@ export interface DeltaConfig {
   /** Session bounds on the Sydney clock, `HH:MM`. */
   sessionOpen: string
   sessionClose: string
+  /**
+   * Days of the week the strategy trades, as ISO weekdays — Monday 1 to Sunday 7,
+   * `extract(isodow)`'s numbering, which is what the settings column stores. The
+   * day tested is the *session day*, so a session opening Friday 22:00 stays
+   * Friday's until it closes. A day left out reads as a closed session: the book
+   * is flattened and nothing new is opened.
+   */
+  tradeDays: number[]
   bandLow: number
   bandHigh: number
   targetLanding: TargetLanding
@@ -89,6 +97,7 @@ export interface DeltaConfig {
 export const DEFAULT_DELTA_CONFIG: DeltaConfig = {
   sessionOpen: '06:00',
   sessionClose: '22:00',
+  tradeDays: [1, 2, 3, 4, 5, 6, 7],
   bandLow: -1,
   bandHigh: 1,
   targetLanding: 'edge',
@@ -167,32 +176,51 @@ export function parseHHMM(s: string): number | null {
 
 export type SessionPhase = 'before' | 'open' | 'closed'
 
+/** `YYYY-MM-DD` → ISO weekday, Monday 1 to Sunday 7. */
+export function isoDow(day: string): number {
+  return ((new Date(`${day}T00:00:00Z`).getUTCDay() + 6) % 7) + 1
+}
+
 /**
- * Where the clock sits relative to the session, and which session day that is.
+ * Where the clock sits relative to the session, which session day that is, and
+ * whether that day is one the strategy trades.
  *
  * A window whose close is before its open spans midnight; the day is then keyed
  * to the calendar date the session *opened* on, so the counters do not reset
- * halfway through a night.
+ * halfway through a night — and the days filter reads a session that opened on a
+ * Friday as Friday's all the way to its close.
+ *
+ * A day left out of `tradeDays` reports `closed`, which is what makes the
+ * flatten-and-stand-flat branch cover a non-trading day without a rule of its own.
+ * `tradeDays` omitted means every day.
  */
 export function sessionPhase(
   now: Date,
-  cfg: Pick<DeltaConfig, 'sessionOpen' | 'sessionClose'>,
-): { phase: SessionPhase; day: string } {
+  cfg: Pick<DeltaConfig, 'sessionOpen' | 'sessionClose'> & { tradeDays?: number[] },
+): { phase: SessionPhase; day: string; tradingDay: boolean } {
   const { day, minutes } = zoneNow(now)
   const open = parseHHMM(cfg.sessionOpen)
   const close = parseHHMM(cfg.sessionClose)
-  if (open === null || close === null) return { phase: 'closed', day }
+  const trades = (d: string) => cfg.tradeDays === undefined || cfg.tradeDays.includes(isoDow(d))
+  // A non-trading day is reported closed, whatever the clock says.
+  const at = (phase: SessionPhase, d: string) => ({
+    phase: trades(d) ? phase : ('closed' as SessionPhase),
+    day: d,
+    tradingDay: trades(d),
+  })
+
+  if (open === null || close === null) return at('closed', day)
 
   if (open <= close) {
-    if (minutes < open) return { phase: 'before', day }
-    return { phase: minutes <= close ? 'open' : 'closed', day }
+    if (minutes < open) return at('before', day)
+    return at(minutes <= close ? 'open' : 'closed', day)
   }
 
   // Wrapping window: after the open we are in today's session; before the close
   // we are still in the one that opened yesterday.
-  if (minutes >= open) return { phase: 'open', day }
-  if (minutes <= close) return { phase: 'open', day: previousDay(day) }
-  return { phase: 'closed', day: previousDay(day) }
+  if (minutes >= open) return at('open', day)
+  if (minutes <= close) return at('open', previousDay(day))
+  return at('closed', previousDay(day))
 }
 
 function previousDay(day: string): string {
@@ -514,6 +542,8 @@ export interface CyclePlan {
   breach: Breach
   phase: SessionPhase
   day: string
+  /** Whether `day` is one of the configured trading days. */
+  tradingDay: boolean
   queue: LegDelta[]
 }
 
@@ -528,23 +558,31 @@ export interface CyclePlan {
  */
 export function planCycle(input: CycleInput): CyclePlan {
   const { now, cfg, session, positions, expiry, spot, tickerFor, touched } = input
-  const { phase, day } = sessionPhase(now, cfg)
+  const { phase, day, tradingDay } = sessionPhase(now, cfg)
 
   const live = positions.filter((p) => p.net_qty !== 0)
   const { legs, missing } = bookDeltas(live, tickerFor, spot)
   const dp = missing.length === 0 ? portfolioDelta(legs) : null
   const queue = itmQueue(legs, cfg)
-  const base = { dp, breach: null as Breach, phase, day, queue }
+  const base = { dp, breach: null as Breach, phase, day, tradingDay, queue }
 
   // ---- Session close: flatten, whatever the band says ----------------------
   if (phase !== 'open') {
     if (live.length > 0 && session.flattenedDay !== day) {
-      return { ...base, action: { type: 'flatten', positions: live }, reason: 'Session closed — flattening' }
+      return {
+        ...base,
+        action: { type: 'flatten', positions: live },
+        reason: tradingDay ? 'Session closed — flattening' : 'Not a trading day — flattening',
+      }
     }
     return {
       ...base,
       action: null,
-      reason: phase === 'before' ? 'Before the session open' : 'Session closed — flat overnight',
+      reason: !tradingDay
+        ? 'Not a trading day — flat'
+        : phase === 'before'
+          ? 'Before the session open'
+          : 'Session closed — flat overnight',
     }
   }
 

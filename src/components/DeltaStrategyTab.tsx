@@ -1,7 +1,7 @@
 import { useMarketTick } from '../lib/marketStore'
 import type { DeltaStrategyApi } from '../hooks/useDeltaStrategy'
 import { greek, price } from '../lib/format'
-import { Field, NumInput, RunSwitch, Select, TimePicker } from './controls'
+import { DayPicker, Field, NumInput, RunSwitch, Select, TimePicker } from './controls'
 
 /**
  * The Delta Management Strategy's controls — the same shape of bar the auto
@@ -43,6 +43,13 @@ export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
             <span className="text-ink-4">–</span>
             <TimePicker value={config.sessionClose} onChange={(v) => setConfig({ sessionClose: v })} />
           </div>
+        </Field>
+
+        {/* The days the session runs, on the session's own clock. A day left out
+            reads as a closed session: the book is flattened and nothing new is
+            opened. The readout's Session field says which it is. */}
+        <Field label="Days · Sydney">
+          <DayPicker value={config.tradeDays} onChange={(tradeDays) => setConfig({ tradeDays })} />
         </Field>
 
         <Field label="Band L / U">
@@ -240,7 +247,9 @@ export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
         <Readout label="Rolls left C / P" tone={callsLeft === 0 || putsLeft === 0 ? 'warn' : 'ok'}>
           {callsLeft} / {putsLeft}
         </Readout>
-        <Readout label="Session">{plan ? phaseLabel(plan.phase) : '—'}</Readout>
+        <Readout label="Session">
+          {plan ? phaseLabel(plan.phase, plan.tradingDay) : '—'}
+        </Readout>
         {/* The mark every short is bought back at. No stop, so there is nothing
             to show beside it. */}
         <Readout label="TP / SL">
@@ -312,7 +321,10 @@ function BandMeter({ low, high, dp }: { low: number; high: number; dp: number | 
   )
 }
 
-function phaseLabel(phase: 'before' | 'open' | 'closed'): string {
+function phaseLabel(phase: 'before' | 'open' | 'closed', tradingDay: boolean): string {
+  // A day left out of the filter reports 'closed'; say which kind of closed it
+  // is, so a deselected weekday does not read as a session that has just ended.
+  if (!tradingDay) return 'Off day'
   if (phase === 'open') return 'Open'
   return phase === 'before' ? 'Pre-open' : 'Closed'
 }

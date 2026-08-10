@@ -44,11 +44,12 @@ functions the earlier ones created, so skipping or reordering will fail.
 | `0013_delta_take_profit` | Take-profit on every delta strategy short; no stop |
 | `0014_delta_take_profit_mark` | Reads that take-profit as a price on the option's mark rather than a multiple of the premium sold |
 | `0015_auto_strategy_exit` | The auto strategy flattens past `window_end` instead of holding overnight; shares one window test with the entry gate |
+| `0016_strategy_trade_days` | `trade_days` on both strategies — which days of the week each trades, on its own clock |
 
 The first ten create the schema; `0011` is a bug fix, `0012` moves the delta
-strategy's engine server-side, `0013`–`0014` bracket what it sells, and `0015`
-gives the auto strategy a close to match its open. A fresh install wants all
-fifteen.
+strategy's engine server-side, `0013`–`0014` bracket what it sells, `0015` gives
+the auto strategy a close to match its open, and `0016` adds a days filter to
+both. A fresh install wants all sixteen.
 
 After `0012`, four cron jobs should be scheduled — confirm with:
 

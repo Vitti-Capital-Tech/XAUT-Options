@@ -71,6 +71,7 @@ erDiagram
         numeric qty "XAUT per fire"
         text window_start "HH:MM IST"
         text window_end
+        smallint_array trade_days "ISO weekdays, IST"
         bigint last_acted "unix sec of last bar"
     }
     DELTA_STRATEGY_SETTINGS {
@@ -78,6 +79,7 @@ erDiagram
         boolean armed
         text session_open "HH:MM Sydney"
         text session_close
+        smallint_array trade_days "ISO weekdays, Sydney"
         numeric band_low "L"
         numeric band_high "U"
         text target_landing "edge | mid"
@@ -494,7 +496,7 @@ copy is PL/pgSQL in
 
 | Function | Signature | Notes |
 | --- | --- | --- |
-| `sessionPhase` | `(now, cfg) → { phase, day }` | `before \| open \| closed`, Sydney; handles a window that wraps midnight |
+| `sessionPhase` | `(now, cfg) → { phase, day, tradingDay }` | `before \| open \| closed`, Sydney; handles a window that wraps midnight, and reports a day outside `tradeDays` as closed |
 | `bookDeltas` | `(positions, tickerFor, spot) → { legs, missing }` | `missing` legs are reported, never guessed at |
 | `portfolioDelta` | `(legs) → number` | `Σ(signed lots × option delta)` |
 | `bandBreach` | `(dp, cfg) → 'low' \| 'high' \| null` | |
@@ -544,6 +546,23 @@ default has no outside and never fires. Exits route through
 and no order row is invented for a close the engine forced. A leg that cannot be
 priced from the last 90s of replies is left open and retried, never closed at a
 guess.
+
+**Days.** `trade_days` on both settings tables holds ISO weekdays — Monday 1 to
+Sunday 7, `extract(isodow)`'s numbering, so the column, the SQL and the client
+count alike ([`0016`](../supabase/migrations/0016_strategy_trade_days.sql)). The
+day tested is the one the **session opened on**, never the current date: for the
+auto strategy that is `in_ist_window`'s `wday`, non-null exactly when the clock is
+inside the window and equal to its open date; for the delta strategy it is
+`delta_session`'s `sday`, which already keys the counters. So unselecting Saturday
+still lets a Friday 22:00 session run to its close on Saturday morning.
+
+A day left out is *out of session*, not merely "no entries" — `delta_session`
+returns `closed` and `in_ist_window` returns false, which routes an off-day into
+each engine's existing flatten. Neither can be left holding a book through a day
+it does not trade. An empty array is a valid off state and reads as "never". Both
+`in_ist_window` and `delta_session` were dropped and recreated rather than
+overloaded: two candidates that each default their tail would make the old
+two-argument call ambiguous.
 
 ### Validation matrix
 

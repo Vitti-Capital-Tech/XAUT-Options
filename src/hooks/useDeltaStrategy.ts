@@ -68,6 +68,7 @@ interface Row {
   expiry_pick: string
   cycle_seconds: number
   take_profit_mark: string | number | null
+  trade_days: number[] | null
   session_day: string | null
   rolls_used_call: number
   rolls_used_put: number
@@ -76,7 +77,7 @@ interface Row {
 }
 
 const COLS =
-  'account_id, armed, session_open, session_close, band_low, band_high, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, min_premium, band_delta_low, band_delta_high, pairs, tie_break, expiry_pick, cycle_seconds, take_profit_mark, session_day, rolls_used_call, rolls_used_put, entered_day, flattened_day'
+  'account_id, armed, session_open, session_close, band_low, band_high, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, min_premium, band_delta_low, band_delta_high, pairs, tie_break, expiry_pick, cycle_seconds, take_profit_mark, trade_days, session_day, rolls_used_call, rolls_used_put, entered_day, flattened_day'
 
 // Postgres numerics come back as strings over PostgREST.
 const n = (v: string | number) => Number(v)
@@ -102,6 +103,10 @@ function rowToConfig(row: Row): DeltaConfig {
     cycleSeconds: row.cycle_seconds,
     // Null is the column's "no take-profit"; the config carries that as 0.
     takeProfitMark: row.take_profit_mark === null ? 0 : n(row.take_profit_mark),
+    // A null column is the engine's "every day"; carry that as the full week
+    // rather than an empty selection, which would read as "never".
+    tradeDays:
+      row.trade_days === null ? [...DEFAULT_DELTA_CONFIG.tradeDays] : row.trade_days.map(Number),
   }
 }
 
@@ -125,6 +130,7 @@ function configToRow(cfg: DeltaConfig) {
     expiry_pick: cfg.expiryPick,
     cycle_seconds: cfg.cycleSeconds,
     take_profit_mark: cfg.takeProfitMark > 0 ? cfg.takeProfitMark : null,
+    trade_days: cfg.tradeDays,
   }
 }
 

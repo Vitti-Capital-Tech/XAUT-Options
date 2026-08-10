@@ -226,6 +226,56 @@ function TimeColumn({
   )
 }
 
+/**
+ * ISO weekday numbers, Monday 1 to Sunday 7 — `extract(isodow)`'s numbering, and
+ * what the settings column stores, so the two never need translating.
+ */
+export const ISO_DAYS = [1, 2, 3, 4, 5, 6, 7] as const
+const DAY_INITIALS = ['M', 'T', 'W', 'T', 'F', 'S', 'S']
+const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+
+/**
+ * Which days of the week a strategy trades — seven toggles in one shell, so the
+ * whole week reads at a glance rather than as a dropdown you have to open.
+ *
+ * The days are the *session's* own, on its own clock: IST for the auto strategy,
+ * Sydney for the delta one. An empty selection is a valid off state, and the
+ * engines read it as one — no day is a trading day, so nothing is ever opened.
+ */
+export function DayPicker({ value, onChange }: { value: number[]; onChange: (v: number[]) => void }) {
+  const set = new Set(value)
+  const toggle = (d: number) => {
+    const next = new Set(set)
+    if (next.has(d)) next.delete(d)
+    else next.add(d)
+    onChange(ISO_DAYS.filter((x) => next.has(x)))
+  }
+
+  return (
+    <div className="flex h-9 items-center gap-0.5 rounded-md border border-raised-3 bg-surface px-1">
+      {ISO_DAYS.map((d, i) => {
+        const on = set.has(d)
+        return (
+          <button
+            key={d}
+            type="button"
+            aria-pressed={on}
+            title={DAY_NAMES[i]}
+            onClick={() => toggle(d)}
+            className={`num h-7 w-6 rounded text-[12px] transition-colors ${
+              on
+                ? 'bg-raised-2 font-semibold text-brand-text'
+                : 'text-ink-4 hover:bg-raised-2 hover:text-ink-2'
+            }`}
+          >
+            {DAY_INITIALS[i]}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 export function RunSwitch({
   on,
   onChange,

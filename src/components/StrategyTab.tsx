@@ -1,6 +1,6 @@
 import { MONEYNESS_ORDER, type Moneyness } from '../lib/strategy'
 import type { StrategyApi } from '../hooks/useAutoStrategy'
-import { Field, NumInput, RunSwitch, Select, TimePicker } from './controls'
+import { DayPicker, Field, NumInput, RunSwitch, Select, TimePicker } from './controls'
 
 /**
  * The auto-strategy's controls — a compact bar above its trades table. The rule
@@ -47,12 +47,18 @@ export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
         </div>
       </Field>
 
-      {/* Say which of the two the window is doing, since an all-day one gates
-          nothing and never flattens. */}
+      <Field label="Days · IST">
+        <DayPicker value={config.tradeDays} onChange={(tradeDays) => setConfig({ tradeDays })} />
+      </Field>
+
+      {/* Say what the two filters are actually doing: an all-day, all-week
+          setting gates nothing and never flattens, which is easy to forget. */}
       <span className="self-center text-[11px] text-ink-3">
-        {allDay
-          ? 'All day — nothing is force-closed'
-          : `Flat outside ${config.windowStart}–${config.windowEnd}`}
+        {config.tradeDays.length === 0
+          ? 'No days selected — nothing will trade'
+          : allDay && config.tradeDays.length === 7
+            ? 'All day, every day — nothing is force-closed'
+            : `Flat outside ${config.windowStart}–${config.windowEnd}`}
       </span>
 
       {/* Run / pause, held to the right so the controls read left-to-right and

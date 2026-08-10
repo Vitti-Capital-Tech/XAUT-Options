@@ -28,9 +28,10 @@ interface Row {
   qty: number
   window_start: string
   window_end: string
+  trade_days: number[] | null
 }
 
-const COLS = 'account_id, armed, moneyness, qty, window_start, window_end'
+const COLS = 'account_id, armed, moneyness, qty, window_start, window_end, trade_days'
 
 export function useAutoStrategy(accountId: string | null): StrategyApi {
   const [config, setConfigState] = useState<StrategyConfig>(DEFAULT_CONFIG)
@@ -46,6 +47,9 @@ export function useAutoStrategy(accountId: string | null): StrategyApi {
       qty: Number(row.qty),
       windowStart: row.window_start,
       windowEnd: row.window_end,
+      // A null column is the engine's "every day"; carry that as the full week
+      // rather than an empty selection, which would read as "never".
+      tradeDays: row.trade_days === null ? [...DEFAULT_CONFIG.tradeDays] : row.trade_days.map(Number),
     })
     setArmedState(row.armed)
   }, [])
@@ -78,6 +82,7 @@ export function useAutoStrategy(accountId: string | null): StrategyApi {
           qty: DEFAULT_CONFIG.qty,
           window_start: DEFAULT_CONFIG.windowStart,
           window_end: DEFAULT_CONFIG.windowEnd,
+          trade_days: DEFAULT_CONFIG.tradeDays,
         }
         await supabase.from('strategy_settings').upsert(def, { onConflict: 'account_id' })
         if (!active) return
@@ -156,6 +161,7 @@ export function useAutoStrategy(accountId: string | null): StrategyApi {
           qty: next.qty,
           window_start: next.windowStart,
           window_end: next.windowEnd,
+          trade_days: next.tradeDays,
         })
         return next
       })

@@ -42,14 +42,23 @@ export interface StrategyConfig {
    *  midnight (start > end) is honoured. */
   windowStart: string
   windowEnd: string
+  /**
+   * Days of the week the strategy trades, as ISO weekdays — Monday 1 to Sunday 7,
+   * `extract(isodow)`'s numbering, which is what the settings column stores. The
+   * day is the one the *window opened on*, so a window wrapping past midnight
+   * belongs to the day it started, not the one it ends in. An empty list trades
+   * never.
+   */
+  tradeDays: number[]
 }
 
 export const DEFAULT_CONFIG: StrategyConfig = {
   moneyness: 'ATM',
   qty: 1,
-  // All day by default, so the window filters nothing until the trader sets it.
+  // All day, every day by default, so neither filter bites until it is set.
   windowStart: '00:00',
   windowEnd: '23:59',
+  tradeDays: [1, 2, 3, 4, 5, 6, 7],
 }
 
 // ---------------------------------------------------------------------------
@@ -158,17 +167,29 @@ export function resolveContract(
 // Time-of-day window (IST)
 // ---------------------------------------------------------------------------
 
-/** Minutes past midnight in IST for a given instant. */
-export function istMinutes(date: Date): number {
-  const parts = new Intl.DateTimeFormat('en-GB', {
+/** Calendar date and minutes past midnight on the IST clock. */
+export function istNow(date: Date): { day: string; minutes: number } {
+  const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
   }).formatToParts(date)
-  const h = Number(parts.find((p) => p.type === 'hour')?.value ?? '0')
-  const m = Number(parts.find((p) => p.type === 'minute')?.value ?? '0')
-  return h * 60 + m
+  const at = (t: string) => parts.find((p) => p.type === t)?.value ?? '00'
+  // en-CA gives 24-hour time, but midnight can come back as '24' on some engines.
+  const hour = Number(at('hour')) % 24
+  return {
+    day: `${at('year')}-${at('month')}-${at('day')}`,
+    minutes: hour * 60 + Number(at('minute')),
+  }
+}
+
+/** Minutes past midnight in IST for a given instant. */
+export function istMinutes(date: Date): number {
+  return istNow(date).minutes
 }
 
 /** `HH:MM` → minutes past midnight, or null if it does not parse. */
@@ -182,13 +203,50 @@ export function parseHHMM(s: string): number | null {
 }
 
 /**
- * Whether `date`'s IST clock falls in `[start, end]`. A window whose start is
- * after its end is read as spanning midnight (e.g. 22:00–06:00).
+ * The IST date the window `date` sits inside opened on, or null when it sits
+ * outside the window entirely.
+ *
+ * A window whose start is after its end is read as spanning midnight (e.g.
+ * 22:00–06:00), and its tail belongs to the day it *opened* on — so the days
+ * filter treats a Friday 22:00 window as Friday's right through to Saturday
+ * morning. Mirrors `in_ist_window` in
+ * [`0016`](../../supabase/migrations/0016_strategy_trade_days.sql).
  */
-export function inWindow(date: Date, windowStart: string, windowEnd: string): boolean {
-  const now = istMinutes(date)
+export function windowDay(date: Date, windowStart: string, windowEnd: string): string | null {
+  const { day, minutes } = istNow(date)
   const start = parseHHMM(windowStart)
   const end = parseHHMM(windowEnd)
-  if (start === null || end === null) return true // an unparseable window blocks nothing
-  return start <= end ? now >= start && now <= end : now >= start || now <= end
+  if (start === null || end === null) return day // an unparseable window blocks nothing
+
+  if (start <= end) return minutes >= start && minutes <= end ? day : null
+  if (minutes >= start) return day
+  if (minutes <= end) return previousDay(day)
+  return null
+}
+
+/** `YYYY-MM-DD` → ISO weekday, Monday 1 to Sunday 7. */
+export function isoDow(day: string): number {
+  return ((new Date(`${day}T00:00:00Z`).getUTCDay() + 6) % 7) + 1
+}
+
+function previousDay(day: string): string {
+  const d = new Date(`${day}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() - 1)
+  return d.toISOString().slice(0, 10)
+}
+
+/**
+ * Whether the strategy may trade at `date`: inside its window, on one of its
+ * days. `tradeDays` omitted means every day, so a caller that only cares about
+ * the clock reads exactly as it did before the filter existed.
+ */
+export function inWindow(
+  date: Date,
+  windowStart: string,
+  windowEnd: string,
+  tradeDays?: number[],
+): boolean {
+  const day = windowDay(date, windowStart, windowEnd)
+  if (day === null) return false
+  return tradeDays === undefined || tradeDays.includes(isoDow(day))
 }
