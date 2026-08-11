@@ -75,7 +75,7 @@ export function DeltaStrategyTab({
         </Field>
 
         <Field
-          label="Band L / U"
+          label="Net delta range"
           help="The delta of everything you hold, added up. Inside this range it does nothing at all; outside it, it fixes the position. This is the whole position, not one option — so it can be any size, and negatives are fine. −2 to 1 is a valid range."
         >
           <div className="flex items-center gap-2">
@@ -101,7 +101,7 @@ export function DeltaStrategyTab({
         </Field>
 
         <Field
-          label="Buffer B"
+          label="Land inside by"
           help="How far back inside the range to come, rather than stopping on the line. At 0 it aims for the line itself, which usually works out to zero contracts and so does nothing — 0.4 is what makes fixes actually happen."
         >
           <NumInput
@@ -141,7 +141,7 @@ export function DeltaStrategyTab({
         </Field>
 
         <Field
-          label="A roll is"
+          label="Count rolls by"
           help="A fix buys back part of the option that is hurting and sells the same type further out. This decides whether one round of fixing counts as one, or every strike it touches counts as one."
         >
           <Select
@@ -180,7 +180,7 @@ export function DeltaStrategyTab({
 
         <Field
           label="Strike Δ range"
-          help="When there is nothing left to fix and it has to sell a fresh option, this is how big that one option's delta should be — not the whole position's, which is Band L / U. Keep it small so each contract moves the position a little — 0.15 to 0.25. One option's delta is always between −1 and 1, so this can never be −2. Ignore the sign: 0.15–0.25 already matches a put at −0.20."
+          help="When there is nothing left to fix and it has to sell a fresh option, this is how big that one option's delta should be — not the whole position's, which is Net delta range. Keep it small so each contract moves the position a little — 0.15 to 0.25. One option's delta is always between −1 and 1, so this can never be −2. Ignore the sign: 0.15–0.25 already matches a put at −0.20."
         >
           <div className="flex items-center gap-2">
             <NumInput
@@ -219,7 +219,7 @@ export function DeltaStrategyTab({
             is the difference between a sane band and a permanently breached one. */}
         <Field
           label="Qty · XAUT"
-          help="How much to sell of each option, in XAUT — the same idea as Quantity on the auto tab. Careful: position delta counts lots, so doubling this doubles the delta. Raise Band L / U by the same amount or it will sit outside its band all day."
+          help="How much to sell of each option, in XAUT — the same idea as Quantity on the auto tab. Careful: position delta counts lots, so doubling this doubles the delta. Raise Net delta range by the same amount or it will sit outside it all day."
         >
           <div className="flex items-center gap-2">
             <NumInput
@@ -236,7 +236,7 @@ export function DeltaStrategyTab({
         </Field>
 
         <Field
-          label="Tie-break"
+          label="Tie goes to"
           help="When two strikes are priced about equally close to what you asked for, this decides which one wins."
         >
           <Select
