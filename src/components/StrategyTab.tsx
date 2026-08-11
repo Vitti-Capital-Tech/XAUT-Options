@@ -4,14 +4,17 @@ import type { StrategyApi } from '../hooks/useAutoStrategy'
 import { DayPicker, Field, NumInput, RunSwitch, Select, TimePicker } from './controls'
 
 /**
- * The auto-strategy's controls — a compact bar above its trades table. The rule
- * is fixed (sell a call on a red 1h candle, a put on a green, stop at twice
- * entry), so there is nothing to toggle there; only whether it runs, the strike,
- * the size and the window. The positions and trade history it produces sit in
- * the panel below, on the strategy's own account.
+ * The auto-strategy's controls — a compact bar above its trades table. The signal
+ * is fixed (sell a call on a red 1h candle, a put on a green), so there is nothing
+ * to toggle there; what is here is when it may trade, what it sells, and where the
+ * bracket sits. The positions and trade history it produces are in the panel below,
+ * on the strategy's own account.
  *
- * The window is both ends of the day: the engine sells only inside it, and
- * flattens the account once past it, so nothing is carried overnight.
+ * Trading hours are both ends of the day: it sells only inside them, and buys back
+ * whatever it holds once past them, so nothing is carried overnight.
+ *
+ * Every label says what the setting does rather than what the code calls it — this
+ * bar is read under time pressure, and a wrong guess here costs money.
  */
 export function StrategyTab({
   strategy,
@@ -33,8 +36,8 @@ export function StrategyTab({
   return (
     <div className="flex flex-wrap items-center gap-x-6 gap-y-4 border-b border-line bg-raised px-5 py-3.5">
       <Field
-        label="Strike"
-        help="How far out of the money to sell, stepping off the listed strike nearest spot. Clamped to the listed wings rather than skipping the trade."
+        label="Strike distance"
+        help="How far from gold's price to sell. ATM is the listed strike nearest spot; OTM 2 is two strikes further out, ITM 1 one strike closer in. If it runs out of listed strikes it takes the furthest one rather than skipping the trade."
       >
         <Select
           value={config.moneyness}
@@ -44,8 +47,8 @@ export function StrategyTab({
       </Field>
 
       <Field
-        label="Quantity"
-        help="Underlying units sold each time it fires, converted to lots at placement."
+        label="Size per trade · XAUT"
+        help="How much to sell each time it fires, in XAUT. It is turned into lots when the order is placed."
       >
         <NumInput
           value={config.qty}
@@ -58,8 +61,8 @@ export function StrategyTab({
       </Field>
 
       <Field
-        label="Window · IST"
-        help="Trading hours on the IST clock. Inside it the strategy sells; past the end it stops and flattens whatever it holds, so nothing is carried overnight."
+        label="Trading hours · IST"
+        help="When it trades, on the IST clock. Inside these hours it sells; past the end it stops and buys back whatever it holds, so nothing is held overnight."
       >
         <div className="flex items-center gap-2">
           <TimePicker value={config.windowStart} onChange={(v) => setConfig({ windowStart: v })} />
@@ -69,8 +72,8 @@ export function StrategyTab({
       </Field>
 
       <Field
-        label="Days · IST"
-        help="Weekdays it trades. A day switched off is treated as out of session, so the flatten covers it — it can never be left holding a position through a day it does not trade."
+        label="Trading days"
+        help="Which days it trades. A day switched off is treated as closed, so it buys back what it holds — it can never be left carrying a position through a day it does not trade."
       >
         <DayPicker value={config.tradeDays} onChange={(tradeDays) => setConfig({ tradeDays })} />
       </Field>
@@ -80,7 +83,7 @@ export function StrategyTab({
           selling a contract nobody picked, so the stale case is called out. */}
       <Field
         label="Expiry"
-        help="Which expiry to sell, by date. A date does not roll — once it settles the strategy stops trading until you pick a new one, rather than quietly selling a different contract. Today's expiry settles at 21:30 IST."
+        help="Which expiry to sell, by date. The date does not move on its own — once that expiry is gone, trading stops until you pick a new one. It will never quietly sell a different one. Today's expiry finishes at 21:30 IST."
       >
         <div className="flex items-center gap-2">
           <Select
@@ -98,8 +101,8 @@ export function StrategyTab({
       {/* The premium floor: a bar whose strike is bid under this is skipped
           rather than sold. Zero turns the filter off. */}
       <Field
-        label="Min premium"
-        help="Floor on the bid. A bar whose strike is bid below this is skipped, not sold — it never hunts for a richer strike, since the strike is the Strike setting's to choose."
+        label="Never sell below"
+        help="A price floor. If the strike it would sell is bid under this, that hour is skipped rather than sold. It will not go looking for a better-paying strike — which strike to sell is Strike distance's to decide."
       >
         <NumInput
           value={config.minPremium}
@@ -116,7 +119,7 @@ export function StrategyTab({
           and it keeps the old hardcoded 2× recognisable. */}
       <Field
         label="Stop loss"
-        help="How much of the premium collected you will give back before the position is closed, watched on the option's own mark. 100% stops a $4 short at $8; 50% stops it at $6. At 0 no stop is armed at all, leaving only the window flatten and expiry to close it."
+        help="How much of the premium you are willing to give back before it closes the position, watched on the option's own price. 100% closes a $4 sale at $8 — the whole premium given back. 50% closes it at $6. At 0 there is no stop at all, and only the end of the trading hours or the expiry will close it."
       >
         <div className="flex items-center gap-2">
           <NumInput
@@ -137,7 +140,7 @@ export function StrategyTab({
           the premium kept. Same shape, same mark, opposite direction. */}
       <Field
         label="Take profit"
-        help="How much of the premium collected you will keep before the position is closed, watched on the option's own mark. 70% buys a $4 short back at $1.20; 50% at $2.00. At 0 no take-profit is armed."
+        help="How much of the premium you want to keep before it closes the position, watched on the option's own price. 70% buys a $4 sale back at $1.20, keeping 70% of it. 50% buys it back at $2.00. At 0 there is no take-profit."
       >
         <div className="flex items-center gap-2">
           <NumInput
@@ -157,7 +160,7 @@ export function StrategyTab({
       {/* No days selected disables the strategy outright, which is worth saying
           out loud — the run switch still reads "Running". */}
       {config.tradeDays.length === 0 && (
-        <span className="self-center text-[11px] text-warn">No days selected — nothing will trade</span>
+        <span className="self-center text-[11px] text-warn">No trading days picked — nothing will trade</span>
       )}
 
       {/* Run / pause, held to the right so the controls read left-to-right and

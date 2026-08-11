@@ -310,8 +310,8 @@ export function DeltaStrategyTab({
         {/* Take profit as a price on the option's own mark — 0.7 buys any short
             leg back at $0.70, whatever it sold for. No stop is ever set. */}
         <Field
-          label="Buy back at"
-          help="Any option it sold is bought back once its price falls to this. At $0.70, a leg sold for $4 closes at 70 cents and you keep most of the premium. This is a price, not a percentage."
+          label="TP mark"
+          help="Take-profit, as a price on the option's own mark. Any option it sold is bought back once its price falls to this: at $0.70, a leg sold for $4 closes at 70 cents and you keep most of the premium. It is a price, not a percentage. No stop-loss is ever set."
         >
           <NumInput
             value={config.takeProfitMark}
@@ -361,7 +361,7 @@ export function DeltaStrategyTab({
         </Readout>
         {/* The mark every short is bought back at. No stop, so there is nothing
             to show beside it. */}
-        <Readout label="Buy back / stop">
+        <Readout label="TP / SL">
           {config.takeProfitMark > 0 ? `${price(config.takeProfitMark, 2)} / none` : 'none / none'}
         </Readout>
 
