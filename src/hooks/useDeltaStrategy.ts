@@ -165,7 +165,7 @@ function configToRow(cfg: DeltaConfig) {
 function settingsError(message: string): string {
   if (message.includes('delta_qty_chk')) return 'Qty must be more than zero.'
   if (message.includes('delta_band_chk'))
-    return 'Net delta range needs the left number below the right one.'
+    return '[L, U] needs the left number below the right one.'
   if (message.includes('delta_cycle_chk')) return 'Refresh must be between 5 and 3600 seconds.'
   if (message.includes('delta_expiry_label_chk')) return 'That expiry is not a valid date.'
   if (message.includes('delta_target_landing_chk')) return 'That is not a landing point the engine accepts.'

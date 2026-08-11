@@ -75,7 +75,7 @@ export function DeltaStrategyTab({
         </Field>
 
         <Field
-          label="Net delta range"
+          label="[L, U]"
           help="The delta of everything you hold, added up. Inside this range it does nothing at all; outside it, it fixes the position. This is the whole position, not one option — so it can be any size, and negatives are fine. −2 to 1 is a valid range."
         >
           <div className="flex items-center gap-2">
@@ -96,7 +96,7 @@ export function DeltaStrategyTab({
         </Field>
 
         <Field
-          label="Correct back to"
+          label="Target landing"
           help="Once it starts fixing, where should the position delta end up — back at the edge you crossed, or all the way to the middle of the range? The middle moves the position a lot further."
         >
           <Select
@@ -111,7 +111,7 @@ export function DeltaStrategyTab({
         </Field>
 
         <Field
-          label="Land inside by"
+          label="B (buffer)"
           help="How far back inside the range to come, rather than stopping on the line. At 0 it aims for the line itself, which usually works out to zero contracts and so does nothing — 0.4 is what makes fixes actually happen."
         >
           <NumInput
@@ -138,7 +138,7 @@ export function DeltaStrategyTab({
         </Field>
 
         <Field
-          label="Max rolls / side"
+          label="Max rolls per side"
           help="How many times a day the calls (or the puts) can be fixed by moving them further out. Once used up, the next problem on that side is closed in full and the loss taken. This is the risk control — there is no stop-loss."
         >
           <NumInput
@@ -166,7 +166,7 @@ export function DeltaStrategyTab({
         </Field>
 
         <Field
-          label="Entry / floor $"
+          label="Entry premium / min premium"
           help="Left: the premium to aim for — it picks whichever strike is quoted closest to this. Right: a hard floor. Nothing is ever sold cheaper than this, anywhere."
         >
           <div className="flex items-center gap-2">
@@ -189,8 +189,8 @@ export function DeltaStrategyTab({
         </Field>
 
         <Field
-          label="Strike Δ range"
-          help="When there is nothing left to fix and it has to sell a fresh option, this is how big that one option's delta should be — not the whole position's, which is Net delta range. Keep it small so each contract moves the position a little — 0.15 to 0.25. One option's delta is always between −1 and 1, so this can never be −2. Ignore the sign: 0.15–0.25 already matches a put at −0.20."
+          label="Band correction delta"
+          help="When there is nothing left to fix and it has to sell a fresh option, this is how big that one option's delta should be — not the whole position's, which is [L, U]. Keep it small so each contract moves the position a little — 0.15 to 0.25. One option's delta is always between −1 and 1, so this can never be −2. Ignore the sign: 0.15–0.25 already matches a put at −0.20."
         >
           <div className="flex items-center gap-2">
             <NumInput
@@ -216,7 +216,7 @@ export function DeltaStrategyTab({
             is the difference between a sane band and a permanently breached one. */}
         <Field
           label="Qty · XAUT"
-          help="How much to sell of each option, in XAUT — the same idea as Quantity on the auto tab, and the spec's N expressed in XAUT rather than lots. Careful: position delta counts lots, so doubling this doubles the delta. Raise Net delta range by the same amount or it will sit outside it all day."
+          help="How much to sell of each option, in XAUT — the same idea as Quantity on the auto tab, and the spec's N expressed in XAUT rather than lots. Careful: position delta counts lots, so doubling this doubles the delta. Raise [L, U] by the same amount or it will sit outside it all day."
         >
           <div className="flex items-center gap-2">
             <NumInput
@@ -436,7 +436,8 @@ function BandMeter({ low, high, dp }: { low: number; high: number; dp: number | 
 /**
  * Keep the two ends of the delta range the right way round.
  *
- * `band_low < band_high` is a database constraint, and neither box can enforce it
+ * `band_low < band_high` — the doc's [L, U] — is a database constraint, and neither
+ * box can enforce it
  * alone — set the low end above the high one and the write is rejected *after* the
  * box already shows the new number, which reads as the app breaking rather than as
  * a value it will not take. Clamping to a step short of the other end keeps the
