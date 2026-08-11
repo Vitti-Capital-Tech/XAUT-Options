@@ -74,25 +74,49 @@ export function pct(v: number | null | undefined, dp = 2): string {
   return `${v > 0 ? '+' : ''}${v.toFixed(dp)}%`
 }
 
+/**
+ * The zone every timestamp on screen is rendered in.
+ *
+ * Pinned rather than left to the browser. Without it these formatters follow
+ * whatever the machine is set to, so the same fill reads 17:30 on a desk in India
+ * and 12:00 on one in London — and a ledger whose times depend on who is looking
+ * at it cannot be reconciled against the venue's.
+ */
+export const DISPLAY_ZONE = 'Asia/Kolkata'
+
 export function timeOfDay(iso: string): string {
-  return new Date(iso).toLocaleTimeString('en-GB', { hour12: false })
+  return new Date(iso).toLocaleTimeString('en-GB', { hour12: false, timeZone: DISPLAY_ZONE })
 }
 
 export function dateTime(iso: string): string {
   const d = new Date(iso)
-  return `${d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })} ${d.toLocaleTimeString('en-GB', { hour12: false })}`
+  const date = d.toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    timeZone: DISPLAY_ZONE,
+  })
+  return `${date} ${d.toLocaleTimeString('en-GB', { hour12: false, timeZone: DISPLAY_ZONE })}`
 }
 
 /**
  * The same stamp in the two lines Delta stacks in a Time column — `05 Aug` over
  * `5:30:01 PM`. Twelve-hour, as theirs is, because that is what an Indian desk
- * reads the clock in.
+ * reads the clock in — and in IST, for the same reason.
  */
 export function dateTimeParts(iso: string): { date: string; time: string } {
   const d = new Date(iso)
   return {
-    date: d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }),
-    time: d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit' }),
+    date: d.toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      timeZone: DISPLAY_ZONE,
+    }),
+    time: d.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      second: '2-digit',
+      timeZone: DISPLAY_ZONE,
+    }),
   }
 }
 

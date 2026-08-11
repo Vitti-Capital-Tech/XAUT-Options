@@ -6,7 +6,7 @@ import { DayPicker, Field, NumInput, RunSwitch, Select, TimePicker } from './con
 
 /**
  * The Delta Management Strategy's controls — the same shape of bar the auto
- * strategy wears, with the parameters the rules spec actually names: the Sydney
+ * strategy wears, with the parameters the rules spec actually names: the trading
  * session, the delta band and where a correction lands in it, the ITM trigger
  * and roll budget, the entry and floor premiums, and the delta range fresh
  * out-of-the-money sells are picked from.
@@ -41,8 +41,8 @@ export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
           simply more of them here. */}
       <div className="flex flex-wrap items-start gap-x-6 gap-y-4 px-5 py-3.5">
         <Field
-          label="Session · Sydney"
-          help="Trading hours on the Sydney clock. The opening pair is sold at the open and everything is bought back at the close, so no position is ever carried overnight."
+          label="Session · IST"
+          help="Trading hours on the IST clock, the same clock the auto strategy uses. The opening pair is sold at the open and everything is bought back at the close, so no position is ever carried overnight."
         >
           <div className="flex items-center gap-2">
             <TimePicker value={config.sessionOpen} onChange={(v) => setConfig({ sessionOpen: v })} />
@@ -51,12 +51,12 @@ export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
           </div>
         </Field>
 
-        {/* The days the session runs, on the session's own clock. A day left out
-            reads as a closed session: the book is flattened and nothing new is
-            opened. The readout's Session field says which it is. */}
+        {/* The days the session runs. A day left out reads as a closed session: the
+            book is flattened and nothing new is opened. The readout's Session field
+            says which it is. */}
         <Field
-          label="Days · Sydney"
-          help="Weekdays the session runs. A day switched off reads as a closed session — the book is flattened and nothing new is opened."
+          label="Days · IST"
+          help="Weekdays the session runs, on the IST clock. A day switched off reads as a closed session — the book is flattened and nothing new is opened."
         >
           <DayPicker value={config.tradeDays} onChange={(tradeDays) => setConfig({ tradeDays })} />
         </Field>

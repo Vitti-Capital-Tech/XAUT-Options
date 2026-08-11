@@ -81,9 +81,9 @@ erDiagram
     DELTA_STRATEGY_SETTINGS {
         uuid account_id PK
         boolean armed
-        text session_open "HH:MM Sydney"
+        text session_open "HH:MM IST"
         text session_close
-        smallint_array trade_days "ISO weekdays, Sydney"
+        smallint_array trade_days "ISO weekdays, IST"
         numeric band_low "L"
         numeric band_high "U"
         text target_landing "edge | mid"
@@ -96,7 +96,7 @@ erDiagram
         numeric band_delta_high
         integer pairs "N"
         numeric qty "XAUT per leg -> lots"
-        text session_day "Sydney YYYY-MM-DD"
+        text session_day "IST YYYY-MM-DD"
         integer rolls_used_call
         integer rolls_used_put
         text entered_day
@@ -501,7 +501,7 @@ copy is PL/pgSQL in
 
 | Function | Signature | Notes |
 | --- | --- | --- |
-| `sessionPhase` | `(now, cfg) → { phase, day, tradingDay }` | `before \| open \| closed`, Sydney; handles a window that wraps midnight, and reports a day outside `tradeDays` as closed |
+| `sessionPhase` | `(now, cfg) → { phase, day, tradingDay }` | `before \| open \| closed`, IST; handles a window that wraps midnight, and reports a day outside `tradeDays` as closed |
 | `bookDeltas` | `(positions, tickerFor, spot) → { legs, missing }` | `missing` legs are reported, never guessed at |
 | `portfolioDelta` | `(legs) → number` | `Σ(signed lots × option delta)` |
 | `bandBreach` | `(dp, cfg) → 'low' \| 'high' \| null` | |
@@ -652,7 +652,7 @@ exit-price marking, not a defect — but it surprises people.
 | Position marking | Browser — long marked at bid, −$1.20 = spread | Confirmed |
 | Schema deployment | Table probe + RLS write probe | Tables present; anon write → `42501` |
 | `execute_fill` compiles | RPC reached the internal `raise` | Confirmed |
-| `lib/deltaStrategy.ts` | 65 assertions — §5.2 worked example end to end, band and landing rules, corrective sides, ITM queue, Sydney clock across AEST and AEDT | Pass, on synthetic fixtures |
+| `lib/deltaStrategy.ts` | 65 assertions — §5.2 worked example end to end, band and landing rules, corrective sides, ITM queue, the session clock across zones | Pass, on synthetic fixtures |
 | Tickers payload shape | Live call — `greeks.delta`, `quotes`, `spot_price`, `contract_value` on all 113 XAUT symbols; **no `settlement_time`** | Confirmed |
 | Delta strategy daily entry | Armed live — built the 113-row snapshot and sold its symmetric pair | Confirmed |
 

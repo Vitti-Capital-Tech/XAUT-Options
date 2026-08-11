@@ -57,7 +57,7 @@ export function pickExpiry(expiries: Expiry[], pick: ExpiryPick): Expiry | null 
 }
 
 export interface DeltaConfig {
-  /** Session bounds on the Sydney clock, `HH:MM`. */
+  /** Session bounds on the IST clock, `HH:MM`. */
   sessionOpen: string
   sessionClose: string
   /**
@@ -130,7 +130,7 @@ export const DEFAULT_DELTA_CONFIG: DeltaConfig = {
 
 /** State that lives for one session and resets at the next open. */
 export interface SessionState {
-  /** Sydney `YYYY-MM-DD` the counters below belong to. */
+  /** IST `YYYY-MM-DD` the counters below belong to. */
   sessionDay: string | null
   rollsUsedCall: number
   rollsUsedPut: number
@@ -147,15 +147,23 @@ export const EMPTY_SESSION: SessionState = {
 }
 
 // ---------------------------------------------------------------------------
-// The Sydney clock
+// The session clock
 // ---------------------------------------------------------------------------
 
-export const SESSION_ZONE = 'Australia/Sydney'
+/**
+ * The zone the session, the days filter and the session day are all read on.
+ *
+ * IST, matching the auto strategy and the desk that runs both. The spec writes its
+ * session in Sydney terms, but a rule set is not a timezone — the hours are the
+ * trader's to choose, and two engines on one screen keeping two different clocks
+ * is how a window gets misread.
+ */
+export const SESSION_ZONE = 'Asia/Kolkata'
 
 /**
  * Calendar day and minutes-past-midnight on the session's own clock. Read
- * through Intl rather than a fixed offset, so AEST and AEDT are both right
- * without a daylight-saving table of ours.
+ * through Intl rather than a fixed offset — IST has no daylight saving, but the
+ * zone is a parameter and reading it properly costs nothing.
  */
 export function zoneNow(date: Date, timeZone = SESSION_ZONE): { day: string; minutes: number } {
   const parts = new Intl.DateTimeFormat('en-CA', {

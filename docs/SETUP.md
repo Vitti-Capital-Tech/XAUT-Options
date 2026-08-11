@@ -50,18 +50,25 @@ functions the earlier ones created, so skipping or reordering will fail.
 | `0019_delta_entry_all_or_nothing` | **Bug fix.** The delta strategy stamped its daily entry as done even when nothing sold, and could half-fill the pair. Both legs now open or neither, and the day is only stamped on a filled pair |
 | `0020_auto_strategy_stop_pct` | `stop_loss_pct` on the auto strategy — the stop becomes a percent of the premium collected instead of a hardcoded 2× entry |
 | `0021_qty_and_take_profit` | `qty` on the delta strategy (size in XAUT, as the auto tab does it) and `take_profit_pct` on the auto strategy (the mirror of its stop) |
+| `0022_delta_session_ist` | The delta session, days filter and session day move from the Sydney clock to IST, so both engines keep one clock |
 
 The first ten create the schema; `0011` is a bug fix, `0012` moves the delta
 strategy's engine server-side, `0013`–`0014` bracket what it sells, `0015` gives
 the auto strategy a close to match its open, `0016`–`0018` add its entry filters,
-`0019` fixes the delta strategy's daily entry, and `0020`–`0021` make the auto
-bracket configurable and give delta a size in XAUT. A fresh install wants all
-twenty-one.
+`0019` fixes the delta strategy's daily entry, `0020`–`0021` make the auto bracket
+configurable and give delta a size in XAUT, and `0022` puts both engines on the
+IST clock. A fresh install wants all twenty-two.
 
 > `0021` adds `delta_strategy_settings.qty`, defaulting to one lot so nothing
 > changes on its own. **Raising it means rescaling `band_low`/`band_high` by the
 > same factor** — Δp counts lots, so a bigger size breaches the old band
 > permanently.
+
+> `0022` does not change the stored session times, so their *meaning* changes:
+> `06:00–22:00` was 01:30–17:30 IST under AEST and is now 06:00–22:00 IST.
+> **Check the session against what you actually want after running it.** It also
+> re-keys `session_day`, `entered_day` and `flattened_day` onto the IST day, which
+> is what stops the switch reading as a new session and selling a second pair.
 
 > `0018` changes behaviour on an existing account: `expiry_rule` defaults to
 > `today`, so an armed auto account stops trading on a day XAUT lists no same-day

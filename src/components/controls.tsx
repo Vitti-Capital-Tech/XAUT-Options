@@ -303,9 +303,9 @@ const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Satu
  * Which days of the week a strategy trades — seven toggles in one shell, so the
  * whole week reads at a glance rather than as a dropdown you have to open.
  *
- * The days are the *session's* own, on its own clock: IST for the auto strategy,
- * Sydney for the delta one. An empty selection is a valid off state, and the
- * engines read it as one — no day is a trading day, so nothing is ever opened.
+ * The days are the *session's* own, read on its own clock — IST for both engines.
+ * An empty selection is a valid off state, and the engines read it as one: no day
+ * is a trading day, so nothing is ever opened.
  */
 export function DayPicker({ value, onChange }: { value: number[]; onChange: (v: number[]) => void }) {
   const set = new Set(value)

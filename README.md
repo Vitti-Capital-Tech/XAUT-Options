@@ -203,11 +203,11 @@ an exit — never a long option.
 
 | Phase | Rule |
 | --- | --- |
-| Open (06:00 Sydney) | Sell N symmetric pairs at the strikes nearest `entry_premium`, sized by `qty` in XAUT. Both legs fill or neither does; a failed open is retried on the next refresh rather than written off for the day ([`0019`](supabase/migrations/0019_delta_entry_all_or_nothing.sql)) |
+| Open (06:00 IST) | Sell N symmetric pairs at the strikes nearest `entry_premium`, sized by `qty` in XAUT. Both legs fill or neither does; a failed open is retried on the next refresh rather than written off for the day ([`0019`](supabase/migrations/0019_delta_entry_all_or_nothing.sql)) |
 | Intraday | Rebuild the ITM queue each cycle, most-ITM first; resolve breaches by partial exit-and-replace |
 | Roll budget | Each side gets `max_rolls`; once spent that side is **exit-only** — further triggers close in full, loss booked |
 | No ITM legs left | Band-correct with fresh OTM sells in the `band_correction_delta` range |
-| Close (22:00 Sydney) | Flatten everything, stand flat overnight, reset counters |
+| Close (22:00 IST) | Flatten everything, stand flat overnight, reset counters |
 | Off day | A weekday outside `trade_days` reports the session **closed**, so the same flatten covers it and nothing is opened |
 
 Every short it opens carries a **take-profit and no stop**, watched on the
@@ -353,8 +353,8 @@ Confirmed working:
   (`42501`), and both functions exist and execute.
 - **Delta strategy logic** in `lib/deltaStrategy.ts` — 65 assertions covering the
   document's 5.2 worked example end to end, the band and landing rules, the
-  corrective sides, the ITM queue, and the Sydney session clock across both AEST
-  and AEDT. Fixtures are synthetic.
+  corrective sides, the ITM queue, and the session clock read through the zone
+  rather than a fixed offset. Fixtures are synthetic.
 - **Delta strategy daily entry, live.** Armed against the real chain it built the
   113-symbol snapshot from the feed and sold its symmetric pair — two orders, two
   open legs, `entered_day` set.
