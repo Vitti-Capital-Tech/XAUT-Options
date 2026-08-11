@@ -148,6 +148,7 @@ export function StrategyTab({
           <NumInput
             value={config.takeProfitPct}
             min={0}
+            max={95}
             step={10}
             unit="%"
             width="w-16"

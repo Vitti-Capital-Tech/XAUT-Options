@@ -34,7 +34,10 @@ export interface DeltaStrategyApi {
   /** The latest planned cycle — Δp, the ITM queue and what it is about to do.
    *  Computed whether or not it is armed, so the readout is live while paused. */
   plan: CyclePlan | null
-  /** Last engine error. Cleared by the next cycle that acts cleanly. */
+  /**
+   * Why the last settings read or write failed, in the field's own terms. Not an
+   * engine error — the engine runs server-side and reports through its own logs.
+   */
   error: string | null
   /**
    * Run a cycle now rather than waiting out the refresh interval: clears
@@ -149,6 +152,27 @@ function configToRow(cfg: DeltaConfig) {
     take_profit_mark: cfg.takeProfitMark > 0 ? cfg.takeProfitMark : null,
     trade_days: cfg.tradeDays,
   }
+}
+
+/**
+ * A rejected settings write, said in the field's own terms.
+ *
+ * Postgres names the constraint, not the control: "violates check constraint
+ * delta_qty_chk" tells a trader nothing about which box to fix. The inputs are
+ * bounded so these should be unreachable from the UI, but a stale tab or a hand-
+ * written row can still trip one, and then the message is all there is to go on.
+ */
+function settingsError(message: string): string {
+  if (message.includes('delta_qty_chk')) return 'Qty must be more than zero.'
+  if (message.includes('delta_band_chk'))
+    return 'Net delta range needs the left number below the right one.'
+  if (message.includes('delta_cycle_chk')) return 'Refresh must be between 5 and 3600 seconds.'
+  if (message.includes('delta_expiry_label_chk')) return 'That expiry is not a valid date.'
+  if (message.includes('delta_target_landing_chk')) return 'That is not a landing point the engine accepts.'
+  if (message.includes('delta_roll_counts_chk')) return 'That is not a roll count the engine accepts.'
+  if (message.includes('delta_tie_break_chk')) return 'That is not a tie-break the engine accepts.'
+  if (message.includes('delta_expiry_pick_chk')) return 'That is not an expiry rule the engine accepts.'
+  return message
 }
 
 function rowToSession(row: Row): SessionState {
@@ -287,7 +311,7 @@ export function useDeltaStrategy(accountId: string | null, deps: DeltaEngineDeps
         )
       if (err) {
         console.error('delta_strategy_settings write failed:', err.message)
-        setError(err.message)
+        setError(settingsError(err.message))
       }
     },
     [accountId],

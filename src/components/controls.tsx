@@ -158,6 +158,7 @@ export function NumInput({
   onChange,
   step = 1,
   min,
+  max,
   unit,
   width = 'w-20',
 }: {
@@ -165,6 +166,12 @@ export function NumInput({
   onChange: (v: number) => void
   step?: number
   min?: number
+  /**
+   * Upper bound, checked on commit as `min` is. Worth setting wherever the database
+   * has a matching constraint: a value it will reject is not saved, and the write
+   * fails after the box already shows the new number.
+   */
+  max?: number
   unit?: string
   width?: string
 }) {
@@ -176,11 +183,17 @@ export function NumInput({
         type="number"
         step={step}
         min={min}
+        max={max}
         value={draft ?? value}
         onChange={(e) => {
           setDraft(e.target.value)
           const v = Number(e.target.value)
-          if (e.target.value !== '' && Number.isFinite(v) && (min === undefined || v >= min)) {
+          if (
+            e.target.value !== '' &&
+            Number.isFinite(v) &&
+            (min === undefined || v >= min) &&
+            (max === undefined || v <= max)
+          ) {
             onChange(v)
           }
         }}

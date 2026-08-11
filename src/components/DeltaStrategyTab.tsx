@@ -79,9 +79,19 @@ export function DeltaStrategyTab({
           help="The delta of everything you hold, added up. Inside this range it does nothing at all; outside it, it fixes the position. This is the whole position, not one option — so it can be any size, and negatives are fine. −2 to 1 is a valid range."
         >
           <div className="flex items-center gap-2">
-            <NumInput value={config.bandLow} step={0.1} width="w-16" onChange={(v) => setConfig({ bandLow: v })} />
+            <NumInput
+              value={config.bandLow}
+              step={0.1}
+              width="w-16"
+              onChange={(v) => setConfig({ bandLow: keepBelow(v, config.bandHigh) })}
+            />
             <span className="text-ink-4">–</span>
-            <NumInput value={config.bandHigh} step={0.1} width="w-16" onChange={(v) => setConfig({ bandHigh: v })} />
+            <NumInput
+              value={config.bandHigh}
+              step={0.1}
+              width="w-16"
+              onChange={(v) => setConfig({ bandHigh: keepAbove(v, config.bandLow) })}
+            />
           </div>
         </Field>
 
@@ -212,7 +222,7 @@ export function DeltaStrategyTab({
             <NumInput
               value={config.qty}
               step={0.001}
-              min={0}
+              min={0.001}
               width="w-20"
               onChange={(v) => setConfig({ qty: v })}
             />
@@ -363,7 +373,7 @@ export function DeltaStrategyTab({
       </div>
 
       {error && (
-        <div className="border-t border-line px-5 py-2 text-[12px] text-neg">Engine error — {error}</div>
+        <div className="border-t border-line px-5 py-2 text-[12px] text-neg">Settings not saved — {error}</div>
       )}
     </div>
   )
@@ -421,6 +431,25 @@ function BandMeter({ low, high, dp }: { low: number; high: number; dp: number | 
       </div>
     </div>
   )
+}
+
+/**
+ * Keep the two ends of the delta range the right way round.
+ *
+ * `band_low < band_high` is a database constraint, and neither box can enforce it
+ * alone — set the low end above the high one and the write is rejected *after* the
+ * box already shows the new number, which reads as the app breaking rather than as
+ * a value it will not take. Clamping to a step short of the other end keeps the
+ * pair valid, and rounding kills the 0.30000000000000004 the subtraction produces.
+ */
+const STEP = 0.1
+
+function keepBelow(v: number, high: number): number {
+  return Math.round(Math.min(v, high - STEP) * 100) / 100
+}
+
+function keepAbove(v: number, low: number): number {
+  return Math.round(Math.max(v, low + STEP) * 100) / 100
 }
 
 /** Circular arrow, spun while a manual refresh is in flight. */
