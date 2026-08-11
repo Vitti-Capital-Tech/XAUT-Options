@@ -75,7 +75,7 @@ export function DeltaStrategyTab({
         </Field>
 
         <Field
-          label="[L, U]"
+          label="Target delta band"
           help="The delta of everything you hold, added up. Inside this range it does nothing at all; outside it, it fixes the position. This is the whole position, not one option — so it can be any size, and negatives are fine. −2 to 1 is a valid range."
         >
           <div className="flex items-center gap-2">
@@ -190,7 +190,7 @@ export function DeltaStrategyTab({
 
         <Field
           label="Band correction delta"
-          help="When there is nothing left to fix and it has to sell a fresh option, this is how big that one option's delta should be — not the whole position's, which is [L, U]. Keep it small so each contract moves the position a little — 0.15 to 0.25. One option's delta is always between −1 and 1, so this can never be −2. Ignore the sign: 0.15–0.25 already matches a put at −0.20."
+          help="When there is nothing left to fix and it has to sell a fresh option, this is how big that one option's delta should be — not the whole position's, which is Target delta band. Keep it small so each contract moves the position a little — 0.15 to 0.25. One option's delta is always between −1 and 1, so this can never be −2. Ignore the sign: 0.15–0.25 already matches a put at −0.20."
         >
           <div className="flex items-center gap-2">
             <NumInput
@@ -216,7 +216,7 @@ export function DeltaStrategyTab({
             is the difference between a sane band and a permanently breached one. */}
         <Field
           label="Qty · XAUT"
-          help="How much to sell of each option, in XAUT — the same idea as Quantity on the auto tab, and the spec's N expressed in XAUT rather than lots. Careful: position delta counts lots, so doubling this doubles the delta. Raise [L, U] by the same amount or it will sit outside it all day."
+          help="How much to sell of each option, in XAUT — the same idea as Quantity on the auto tab, and the spec's N expressed in XAUT rather than lots. Careful: position delta counts lots, so doubling this doubles the delta. Raise Target delta band by the same amount or it will sit outside it all day."
         >
           <div className="flex items-center gap-2">
             <NumInput
@@ -304,11 +304,12 @@ export function DeltaStrategyTab({
           </div>
         </Field>
 
-        {/* Take profit as a price on the option's own mark — 0.7 buys any short
-            leg back at $0.70, whatever it sold for. No stop is ever set. */}
+        {/* Both brackets, as prices on the option's own mark: the take-profit fires
+            as the mark falls, the stop as it rises. Zero on either arms nothing —
+            which for the stop is the rules document's own behaviour. */}
         <Field
           label="TP mark"
-          help="Any option it sold is bought back once its price falls to this — the take-profit. At $0.70, a leg sold for $4 closes at 70 cents and you keep most of the premium. It is a price on the option's own mark, not a percentage. No stop-loss is ever set."
+          help="Any option it sold is bought back once its price falls to this — the take-profit. At $0.70, a leg sold for $4 closes at 70 cents and you keep most of the premium. It is a price on the option's own mark, not a percentage. Zero arms no take-profit."
         >
           <NumInput
             value={config.takeProfitMark}
@@ -317,6 +318,20 @@ export function DeltaStrategyTab({
             unit="$"
             width="w-16"
             onChange={(v) => setConfig({ takeProfitMark: v })}
+          />
+        </Field>
+
+        <Field
+          label="SL mark"
+          help="The other way: a sold option is bought back once its price rises to this. A leg sold for $4 with SL 8 closes at $8, giving back the whole premium. Zero arms no stop — which is what the rules document specifies, since the roll budget and exit-only mode are meant to be the risk control. Set it generously if at all: a losing leg is the one the roll logic exists to fix, and a stop closes it instead."
+        >
+          <NumInput
+            value={config.stopLossMark}
+            step={0.5}
+            min={0}
+            unit="$"
+            width="w-16"
+            onChange={(v) => setConfig({ stopLossMark: v })}
           />
         </Field>
 
@@ -356,10 +371,11 @@ export function DeltaStrategyTab({
         <Readout label="Session">
           {plan ? phaseLabel(plan.phase, plan.tradingDay) : '—'}
         </Readout>
-        {/* The mark every short is bought back at. No stop, so there is nothing
-            to show beside it. */}
+        {/* The two marks every short is bought back at, take-profit then stop. */}
         <Readout label="TP / SL">
-          {config.takeProfitMark > 0 ? `${price(config.takeProfitMark, 2)} / none` : 'none / none'}
+          {config.takeProfitMark > 0 ? price(config.takeProfitMark, 2) : 'none'}
+          {' / '}
+          {config.stopLossMark > 0 ? price(config.stopLossMark, 2) : 'none'}
         </Readout>
 
         <BandMeter low={config.bandLow} high={config.bandHigh} dp={dp} />
@@ -437,7 +453,7 @@ function BandMeter({ low, high, dp }: { low: number; high: number; dp: number | 
  * Keep the two ends of the delta range the right way round.
  *
  * `band_low < band_high` — the doc's [L, U] — is a database constraint, and neither
- * box can enforce it
+ * box can police it
  * alone — set the low end above the high one and the write is rejected *after* the
  * box already shows the new number, which reads as the app breaking rather than as
  * a value it will not take. Clamping to a step short of the other end keeps the

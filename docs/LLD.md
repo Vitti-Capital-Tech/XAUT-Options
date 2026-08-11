@@ -105,6 +105,7 @@ erDiagram
         text_array touched_symbols "once per pass"
         boolean pass_open
         numeric take_profit_mark "a price on the option's mark"
+        numeric stop_loss_mark "a price on the mark; 0 = none"
     }
     ORDERS {
         uuid id PK

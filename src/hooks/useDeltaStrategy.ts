@@ -86,6 +86,7 @@ interface Row {
   expiry_label: string | null
   cycle_seconds: number
   take_profit_mark: string | number | null
+  stop_loss_mark: string | number
   trade_days: number[] | null
   session_day: string | null
   rolls_used_call: number
@@ -95,7 +96,7 @@ interface Row {
 }
 
 const COLS =
-  'account_id, armed, session_open, session_close, band_low, band_high, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, min_premium, band_delta_low, band_delta_high, qty, tie_break, expiry_pick, expiry_label, cycle_seconds, take_profit_mark, trade_days, session_day, rolls_used_call, rolls_used_put, entered_day, flattened_day'
+  'account_id, armed, session_open, session_close, band_low, band_high, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, min_premium, band_delta_low, band_delta_high, qty, tie_break, expiry_pick, expiry_label, cycle_seconds, take_profit_mark, stop_loss_mark, trade_days, session_day, rolls_used_call, rolls_used_put, entered_day, flattened_day'
 
 // Postgres numerics come back as strings over PostgREST.
 const n = (v: string | number) => Number(v)
@@ -122,6 +123,7 @@ function rowToConfig(row: Row): DeltaConfig {
     cycleSeconds: row.cycle_seconds,
     // Null is the column's "no take-profit"; the config carries that as 0.
     takeProfitMark: row.take_profit_mark === null ? 0 : n(row.take_profit_mark),
+    stopLossMark: n(row.stop_loss_mark),
     // A null column is the engine's "every day"; carry that as the full week
     // rather than an empty selection, which would read as "never".
     tradeDays:
@@ -150,6 +152,7 @@ function configToRow(cfg: DeltaConfig) {
     expiry_label: cfg.expiryLabel,
     cycle_seconds: cfg.cycleSeconds,
     take_profit_mark: cfg.takeProfitMark > 0 ? cfg.takeProfitMark : null,
+    stop_loss_mark: cfg.stopLossMark,
     trade_days: cfg.tradeDays,
   }
 }
@@ -164,8 +167,9 @@ function configToRow(cfg: DeltaConfig) {
  */
 function settingsError(message: string): string {
   if (message.includes('delta_qty_chk')) return 'Qty must be more than zero.'
+  if (message.includes('delta_stop_loss_mark_chk')) return 'SL mark cannot be negative.'
   if (message.includes('delta_band_chk'))
-    return '[L, U] needs the left number below the right one.'
+    return 'Target delta band needs the left number below the right one.'
   if (message.includes('delta_cycle_chk')) return 'Refresh must be between 5 and 3600 seconds.'
   if (message.includes('delta_expiry_label_chk')) return 'That expiry is not a valid date.'
   if (message.includes('delta_target_landing_chk')) return 'That is not a landing point the engine accepts.'

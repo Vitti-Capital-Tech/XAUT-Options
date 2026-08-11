@@ -117,10 +117,20 @@ export interface DeltaConfig {
   /**
    * Take-profit on every short the strategy opens, as a price on the option's
    * own mark — not a multiple of what it sold for. 0.7 buys any short leg back
-   * when its mark reaches $0.70. Zero disables it. No stop is ever set: the roll
-   * budget and exit-only mode are the strategy's risk control.
+   * when its mark reaches $0.70. Zero disables it.
    */
   takeProfitMark: number
+  /**
+   * Stop on every short, as a price on the option's own mark: the leg is bought
+   * back when its mark *rises* to this. Zero disables it, which is the rules
+   * document's behaviour — §5.3 makes the roll budget and exit-only mode the risk
+   * control and the spec never defines a stop, so this is an addition.
+   *
+   * Worth setting generously if at all: a leg going against you is the leg the ITM
+   * queue exists to roll, and a stop closes it outright instead, so the premium is
+   * never replaced and Δp jumps by that leg's whole contribution.
+   */
+  stopLossMark: number
 }
 
 export const DEFAULT_DELTA_CONFIG: DeltaConfig = {
@@ -146,6 +156,8 @@ export const DEFAULT_DELTA_CONFIG: DeltaConfig = {
   expiryLabel: null,
   cycleSeconds: 30,
   takeProfitMark: 0.7,
+  // No stop, which is what the rules document specifies.
+  stopLossMark: 0,
 }
 
 /** State that lives for one session and resets at the next open. */

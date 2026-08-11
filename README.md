@@ -224,8 +224,21 @@ take_profit = take_profit_mark
 
 The level is a price, not a multiple of the premium sold: at the default **0.7**
 any short leg is bought back when its mark reaches **$0.70**, whatever it sold
-for. Adding to a position leaves the level where it is, and `0` disables it. There is deliberately no stop-loss — the roll budget and
-exit-only mode are the strategy's risk control, not a per-leg stop.
+for. Adding to a position leaves the level where it is, and `0` disables it.
+
+`stop_loss_mark` is the other side of the same bracket — the leg is bought back when
+its mark *rises* to it ([`0026`](supabase/migrations/0026_delta_stop_loss_mark.sql)).
+It defaults to `0`, no stop, because **the rules document specifies none**: §5.3
+makes the per-side roll budget and exit-only mode the risk control, and Section 6
+never lists a stop among the constraints applied throughout. Neither bracket is the
+spec's — both are additions.
+
+> Worth understanding before switching the stop on. A leg going against you is
+> exactly the leg the ITM queue exists to roll: buy part of it back, sell further
+> out, keep collecting. A stop closes it outright instead, so the roll never
+> happens, the premium is not replaced, and Δp jumps by that leg's whole
+> contribution — which the next cycle corrects by selling somewhere else. Set it
+> generously if at all.
 
 Sizing is the document's, both rounded **down** so a correction cannot overshoot:
 
