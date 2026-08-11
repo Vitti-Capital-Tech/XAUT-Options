@@ -414,17 +414,23 @@ function BandMeter({ low, high, dp }: { low: number; high: number; dp: number | 
   const breached = dp !== null && (dp < low || dp > high)
 
   return (
-    <div className="flex w-40 flex-col gap-1">
+    <div className="flex w-56 flex-col gap-1">
       <span className="text-[9px] font-semibold tracking-[0.14em] text-ink-3 uppercase">Δp in band</span>
-      <div className="relative h-2 rounded-full border border-raised-3 bg-surface">
-        {frac !== null && (
-          <span
-            className={`absolute top-1/2 h-3 w-[3px] -translate-x-1/2 -translate-y-1/2 rounded-full ${
-              breached ? 'bg-brand-text' : 'bg-pos-solid'
-            }`}
-            style={{ left: `${frac * 100}%` }}
-          />
-        )}
+      {/* The set range at each end, so the marker's position reads against real
+          numbers rather than an unlabelled track. */}
+      <div className="flex items-center gap-2">
+        <span className="num shrink-0 text-[10px] text-ink-3">{price(low, 2)}</span>
+        <div className="relative h-2 flex-1 rounded-full border border-raised-3 bg-surface">
+          {frac !== null && (
+            <span
+              className={`absolute top-1/2 h-3 w-[3px] -translate-x-1/2 -translate-y-1/2 rounded-full ${
+                breached ? 'bg-brand-text' : 'bg-pos-solid'
+              }`}
+              style={{ left: `${frac * 100}%` }}
+            />
+          )}
+        </div>
+        <span className="num shrink-0 text-[10px] text-ink-3">{price(high, 2)}</span>
       </div>
     </div>
   )
