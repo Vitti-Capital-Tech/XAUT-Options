@@ -29,6 +29,22 @@ export function stopMultiple(stopLossPct: number): number | null {
 }
 
 /**
+ * The same, for the take-profit — a percent of the premium *kept* rather than
+ * given back, so the multiple sits below 1x:
+ *
+ *      70% → 0.30x entry — a $4 short is bought back at $1.20
+ *      50% → 0.50x entry — a $4 short is bought back at $2.00
+ *
+ * Null at zero: no take-profit armed. The column is capped below 100 because a
+ * level of zero is a price no option ever marks at, so the bracket would sit
+ * there and never fire.
+ */
+export function takeProfitMultiple(takeProfitPct: number): number | null {
+  if (!(takeProfitPct > 0)) return null
+  return 1 - takeProfitPct / 100
+}
+
+/**
  * How far the traded strike sits from the money. ITM is capped at 2 and OTM at
  * 5, as asked — the deep wings are illiquid on this book and a fill there is
  * more slippage than signal.
@@ -86,6 +102,13 @@ export interface StrategyConfig {
    * expiry settlement to close the position.
    */
   stopLossPct: number
+  /**
+   * Take-profit as a percent of the premium collected that you keep, watched on
+   * the option's own mark — see `takeProfitMultiple`. 70 buys a $4 short back at
+   * $1.20. Zero arms no take-profit; it must stay under 100, since a level of zero
+   * is a price no option marks at.
+   */
+  takeProfitPct: number
 }
 
 export const DEFAULT_CONFIG: StrategyConfig = {
@@ -102,6 +125,9 @@ export const DEFAULT_CONFIG: StrategyConfig = {
   expiryRule: 'today',
   // 100% is the 2x-entry stop the strategy was hardcoded to before it was a setting.
   stopLossPct: 100,
+  // No take-profit by default: the strategy had none, and the window flatten already
+  // closes the day.
+  takeProfitPct: 0,
 }
 
 // ---------------------------------------------------------------------------

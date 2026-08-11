@@ -49,12 +49,19 @@ functions the earlier ones created, so skipping or reordering will fail.
 | `0018_auto_strategy_expiry_rule` | `expiry_rule` on the auto strategy — same-day expiry only (the new default), or the nearest live one |
 | `0019_delta_entry_all_or_nothing` | **Bug fix.** The delta strategy stamped its daily entry as done even when nothing sold, and could half-fill the pair. Both legs now open or neither, and the day is only stamped on a filled pair |
 | `0020_auto_strategy_stop_pct` | `stop_loss_pct` on the auto strategy — the stop becomes a percent of the premium collected instead of a hardcoded 2× entry |
+| `0021_qty_and_take_profit` | `qty` on the delta strategy (size in XAUT, as the auto tab does it) and `take_profit_pct` on the auto strategy (the mirror of its stop) |
 
 The first ten create the schema; `0011` is a bug fix, `0012` moves the delta
 strategy's engine server-side, `0013`–`0014` bracket what it sells, `0015` gives
 the auto strategy a close to match its open, `0016`–`0018` add its entry filters,
-`0019` fixes the delta strategy's daily entry, and `0020` makes the auto stop
-configurable. A fresh install wants all twenty.
+`0019` fixes the delta strategy's daily entry, and `0020`–`0021` make the auto
+bracket configurable and give delta a size in XAUT. A fresh install wants all
+twenty-one.
+
+> `0021` adds `delta_strategy_settings.qty`, defaulting to one lot so nothing
+> changes on its own. **Raising it means rescaling `band_low`/`band_high` by the
+> same factor** — Δp counts lots, so a bigger size breaches the old band
+> permanently.
 
 > `0018` changes behaviour on an existing account: `expiry_rule` defaults to
 > `today`, so an armed auto account stops trading on a day XAUT lists no same-day

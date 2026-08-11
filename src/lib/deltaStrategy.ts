@@ -80,8 +80,18 @@ export interface DeltaConfig {
   minPremium: number
   bandDeltaLow: number
   bandDeltaHigh: number
-  /** N — call/put pairs sold at the open, as lots per leg. */
+  /** N — call/put pairs sold at the open. Multiplies the lots `qty` resolves to. */
   pairs: number
+  /**
+   * XAUT sold per leg at the open, converted to lots by the contract's own value
+   * the way the auto strategy's `qty` is: `lots = round(qty / contractValue) × pairs`.
+   *
+   * Δp counts lots with no contract-value factor, so lots scale Δp one-for-one —
+   * raising this means scaling `bandLow`/`bandHigh` by the same factor or the band
+   * stops meaning anything. At the venue's 0.001 contract value the default is
+   * exactly one lot.
+   */
+  qty: number
   tieBreak: TieBreak
   expiryPick: ExpiryPick
   cycleSeconds: number
@@ -110,6 +120,8 @@ export const DEFAULT_DELTA_CONFIG: DeltaConfig = {
   bandDeltaLow: 0.15,
   bandDeltaHigh: 0.25,
   pairs: 1,
+  // One lot at the venue's 0.001 contract value — the size before qty existed.
+  qty: 0.001,
   tieBreak: 'closest',
   expiryPick: 'nearest',
   cycleSeconds: 30,
@@ -365,6 +377,18 @@ function floorContracts(q: number): number {
 }
 
 /**
+ * Lots an entry leg is worth: the XAUT size over that contract's own value, times
+ * the number of pairs. Mirrors `delta_sell_entry` in
+ * [`0021`](../../supabase/migrations/0021_qty_and_take_profit.sql) — a missing or
+ * zero contract value falls back to one lot rather than sizing off a guess.
+ */
+export function entryLots(product: Product, cfg: Pick<DeltaConfig, 'qty' | 'pairs'>): number {
+  const cv = Number(product.contract_value)
+  const perPair = cv > 0 ? Math.max(1, Math.round(cfg.qty / cv)) : 1
+  return perPair * cfg.pairs
+}
+
+/**
  * Contracts to exit from an ITM leg, replacing them further out:
  *
  *     q = (target − Δp) ÷ (d_itm − d_replacement)        [round down]
@@ -601,16 +625,18 @@ export function planCycle(input: CycleInput): CyclePlan {
         reason: `No ${!call ? 'call' : 'put'} strike at or above the $${cfg.minPremium} floor yet`,
       }
     }
+    const callLots = entryLots(call.product, cfg)
+    const putLots = entryLots(put.product, cfg)
     return {
       ...base,
       action: {
         type: 'entry',
         legs: [
-          { product: call.product, qty: cfg.pairs },
-          { product: put.product, qty: cfg.pairs },
+          { product: call.product, qty: callLots },
+          { product: put.product, qty: putLots },
         ],
       },
-      reason: `Selling ${cfg.pairs} pair${cfg.pairs === 1 ? '' : 's'} — ${call.strike}C / ${put.strike}P`,
+      reason: `Selling ${callLots} × ${call.strike}C / ${putLots} × ${put.strike}P`,
     }
   }
 

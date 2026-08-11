@@ -6,6 +6,7 @@ import type { PositionRow } from '../engine/paper'
 import {
   DEFAULT_DELTA_CONFIG,
   EMPTY_SESSION,
+  entryLots as entryLotsFor,
   pickExpiry,
   planCycle,
   type CyclePlan,
@@ -35,6 +36,19 @@ export interface DeltaStrategyApi {
   plan: CyclePlan | null
   /** Last engine error. Cleared by the next cycle that acts cleanly. */
   error: string | null
+  /**
+   * Run a cycle now rather than waiting out the refresh interval: clears
+   * `last_cycle`, which is the only thing holding the engine back, and re-reads the
+   * row. The engine's own tick is every minute, so this brings the next cycle
+   * forward to within that — it cannot make the engine act this instant.
+   */
+  refresh: () => Promise<void>
+  /**
+   * Lots one entry leg resolves to at the current `qty` and `pairs`, off the traded
+   * expiry's own contract value. Null until an expiry is listed — better than
+   * showing a number computed against an assumed contract size.
+   */
+  entryLots: number | null
 }
 
 /** What the readout needs to price the book. Nothing here places an order. */
@@ -64,6 +78,7 @@ interface Row {
   band_delta_low: string | number
   band_delta_high: string | number
   pairs: number
+  qty: string | number
   tie_break: string
   expiry_pick: string
   cycle_seconds: number
@@ -77,7 +92,7 @@ interface Row {
 }
 
 const COLS =
-  'account_id, armed, session_open, session_close, band_low, band_high, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, min_premium, band_delta_low, band_delta_high, pairs, tie_break, expiry_pick, cycle_seconds, take_profit_mark, trade_days, session_day, rolls_used_call, rolls_used_put, entered_day, flattened_day'
+  'account_id, armed, session_open, session_close, band_low, band_high, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, min_premium, band_delta_low, band_delta_high, pairs, qty, tie_break, expiry_pick, cycle_seconds, take_profit_mark, trade_days, session_day, rolls_used_call, rolls_used_put, entered_day, flattened_day'
 
 // Postgres numerics come back as strings over PostgREST.
 const n = (v: string | number) => Number(v)
@@ -98,6 +113,7 @@ function rowToConfig(row: Row): DeltaConfig {
     bandDeltaLow: n(row.band_delta_low),
     bandDeltaHigh: n(row.band_delta_high),
     pairs: row.pairs,
+    qty: n(row.qty),
     tieBreak: row.tie_break as TieBreak,
     expiryPick: row.expiry_pick as ExpiryPick,
     cycleSeconds: row.cycle_seconds,
@@ -126,6 +142,7 @@ function configToRow(cfg: DeltaConfig) {
     band_delta_low: cfg.bandDeltaLow,
     band_delta_high: cfg.bandDeltaHigh,
     pairs: cfg.pairs,
+    qty: cfg.qty,
     tie_break: cfg.tieBreak,
     expiry_pick: cfg.expiryPick,
     cycle_seconds: cfg.cycleSeconds,
@@ -295,6 +312,21 @@ export function useDeltaStrategy(accountId: string | null, deps: DeltaEngineDeps
     [persist],
   )
 
+  // Clearing last_cycle is all a manual refresh can do from here: the engine is
+  // server-side and its spacing check is the one gate the client owns. The row is
+  // then re-read directly rather than waiting on the background sync, which the
+  // write we just made would have skipped anyway.
+  const refresh = useCallback(async () => {
+    if (!accountId) return
+    await persist({ last_cycle: null })
+    const { data } = await supabase
+      .from('delta_strategy_settings')
+      .select(COLS)
+      .eq('account_id', accountId)
+      .maybeSingle()
+    if (data) applyRow(data as Row)
+  }, [accountId, persist, applyRow])
+
   // The session counters are the engine's to write, not ours: it owns the roll
   // budget, the touched strikes and which day has been entered. They arrive here
   // through the realtime subscription above, read-only.
@@ -309,7 +341,9 @@ export function useDeltaStrategy(accountId: string | null, deps: DeltaEngineDeps
   useEffect(() => {
     if (!accountId) return
 
-    const refresh = () => {
+    // Named apart from the exported `refresh`, which pokes the engine rather than
+    // recomputing the readout.
+    const recompute = () => {
       const { config: cfg, session: sess, deps: d } = ctx.current
       setPlan(
         planCycle({
@@ -327,10 +361,18 @@ export function useDeltaStrategy(accountId: string | null, deps: DeltaEngineDeps
       )
     }
 
-    refresh()
-    const id = setInterval(refresh, READOUT_MS)
+    recompute()
+    const id = setInterval(recompute, READOUT_MS)
     return () => clearInterval(id)
   }, [accountId])
+
+  // Any listed contract of the traded expiry answers this — they share a contract
+  // value — so the readout uses the venue's number rather than assuming one.
+  const entryLots = useMemo(() => {
+    const expiry = pickExpiry(deps.expiries, config.expiryPick)
+    const product = expiry?.calls.values().next().value ?? expiry?.puts.values().next().value
+    return product ? entryLotsFor(product, config) : null
+  }, [deps.expiries, config])
 
   return useMemo(
     () => ({
@@ -343,7 +385,9 @@ export function useDeltaStrategy(accountId: string | null, deps: DeltaEngineDeps
       loading,
       plan,
       error,
+      refresh,
+      entryLots,
     }),
-    [config, setConfig, armed, setArmed, session, accountId, loading, plan, error],
+    [config, setConfig, armed, setArmed, session, accountId, loading, plan, error, refresh, entryLots],
   )
 }

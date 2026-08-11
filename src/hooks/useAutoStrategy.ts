@@ -37,10 +37,11 @@ interface Row {
   min_premium: string | number
   expiry_rule: string
   stop_loss_pct: string | number
+  take_profit_pct: string | number
 }
 
 const COLS =
-  'account_id, armed, moneyness, qty, window_start, window_end, trade_days, min_premium, expiry_rule, stop_loss_pct'
+  'account_id, armed, moneyness, qty, window_start, window_end, trade_days, min_premium, expiry_rule, stop_loss_pct, take_profit_pct'
 
 export function useAutoStrategy(accountId: string | null): StrategyApi {
   const [config, setConfigState] = useState<StrategyConfig>(DEFAULT_CONFIG)
@@ -63,6 +64,7 @@ export function useAutoStrategy(accountId: string | null): StrategyApi {
       minPremium: Number(row.min_premium),
       expiryRule: row.expiry_rule as ExpiryRule,
       stopLossPct: Number(row.stop_loss_pct),
+      takeProfitPct: Number(row.take_profit_pct),
     })
     setArmedState(row.armed)
   }, [])
@@ -99,6 +101,7 @@ export function useAutoStrategy(accountId: string | null): StrategyApi {
           min_premium: DEFAULT_CONFIG.minPremium,
           expiry_rule: DEFAULT_CONFIG.expiryRule,
           stop_loss_pct: DEFAULT_CONFIG.stopLossPct,
+          take_profit_pct: DEFAULT_CONFIG.takeProfitPct,
         }
         await supabase.from('strategy_settings').upsert(def, { onConflict: 'account_id' })
         if (!active) return
@@ -181,6 +184,7 @@ export function useAutoStrategy(accountId: string | null): StrategyApi {
           min_premium: next.minPremium,
           expiry_rule: next.expiryRule,
           stop_loss_pct: next.stopLossPct,
+          take_profit_pct: next.takeProfitPct,
         })
         return next
       })

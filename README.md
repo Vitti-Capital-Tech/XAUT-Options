@@ -130,8 +130,19 @@ stop_loss = avg_entry_price × (1 + stop_loss_pct / 100)
 At the default **100** a $4 short stops at $8, giving back exactly the premium —
 the 2× the strategy was hardcoded to before this was a setting. `50` stops it at
 $6; `0` arms no stop at all, leaving only the window flatten and expiry
-settlement to close the position. Adding to a symbol re-bases the level onto the
-blended entry rather than leaving it pinned to the first fill.
+settlement to close the position.
+
+`take_profit_pct` is the mirror — a percent of the premium **kept**
+([`0021`](supabase/migrations/0021_qty_and_take_profit.sql)):
+
+```
+take_profit = avg_entry_price × (1 − take_profit_pct / 100)
+```
+
+`70` buys a $4 short back at $1.20. Default `0`, so no take-profit is armed until
+you set one. Both levels are read off `avg_entry_price`, so adding to a symbol
+re-bases them onto the blended entry rather than leaving them pinned to the first
+fill.
 
 The window is both ends of the day. Inside it the strategy sells; once past
 `window_end` it stops **and flattens** — `apply_auto_exit()` closes every open
@@ -192,7 +203,7 @@ an exit — never a long option.
 
 | Phase | Rule |
 | --- | --- |
-| Open (06:00 Sydney) | Sell N symmetric pairs at the strikes nearest `entry_premium`. Both legs fill or neither does; a failed open is retried on the next cycle rather than written off for the day ([`0019`](supabase/migrations/0019_delta_entry_all_or_nothing.sql)) |
+| Open (06:00 Sydney) | Sell N symmetric pairs at the strikes nearest `entry_premium`, sized by `qty` in XAUT. Both legs fill or neither does; a failed open is retried on the next refresh rather than written off for the day ([`0019`](supabase/migrations/0019_delta_entry_all_or_nothing.sql)) |
 | Intraday | Rebuild the ITM queue each cycle, most-ITM first; resolve breaches by partial exit-and-replace |
 | Roll budget | Each side gets `max_rolls`; once spent that side is **exit-only** — further triggers close in full, loss booked |
 | No ITM legs left | Band-correct with fresh OTM sells in the `band_correction_delta` range |

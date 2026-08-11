@@ -75,6 +75,7 @@ erDiagram
         numeric min_premium "floor on the bid; 0 off"
         text expiry_rule "today | nearest"
         numeric stop_loss_pct "% of premium; 0 = no stop"
+        numeric take_profit_pct "% of premium kept; 0 = none"
         bigint last_acted "unix sec of last bar"
     }
     DELTA_STRATEGY_SETTINGS {
@@ -94,6 +95,7 @@ erDiagram
         numeric band_delta_low
         numeric band_delta_high
         integer pairs "N"
+        numeric qty "XAUT per leg -> lots"
         text session_day "Sydney YYYY-MM-DD"
         integer rolls_used_call
         integer rolls_used_put
@@ -515,6 +517,16 @@ copy is PL/pgSQL in
 unit the specification's worked example is written in (2 contracts across a 0.25
 delta gap moves Δp by 0.5), and `[L, U]` is calibrated to the same one. Reading
 it as XAUT-denominated delta would put every band figure out by 1000×.
+
+> Which is why `qty` ([`0021`](../supabase/migrations/0021_qty_and_take_profit.sql))
+> is the one setting that cannot be changed in isolation. It sizes the entry in
+> XAUT the way the auto strategy does — `lots = round(qty / contract_value) ×
+> pairs` — and Δp counts lots, so lots scale Δp one-for-one. At 1 XAUT a leg is
+> 1000 lots and a 0.30-delta option contributes 300, which breaches the default
+> `[-1, 1]` from the first fill and never recovers. The sizing formulas are
+> scale-free and will compute correct contract counts either way; the *band* is
+> what has to be rescaled with the size. It defaults to exactly one lot, so an
+> existing account is untouched until the number moves.
 
 **Rounding.** Both sizing formulas floor with a `1e-9` tolerance. A plain floor
 gets the specification's own example wrong: the deltas are two-decimal

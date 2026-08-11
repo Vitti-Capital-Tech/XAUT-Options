@@ -1,4 +1,4 @@
-import { MONEYNESS_ORDER, stopMultiple, type Moneyness } from '../lib/strategy'
+import { MONEYNESS_ORDER, stopMultiple, takeProfitMultiple, type Moneyness } from '../lib/strategy'
 import type { StrategyApi } from '../hooks/useAutoStrategy'
 import { DayPicker, Field, NumInput, RunSwitch, Select, TimePicker } from './controls'
 
@@ -15,6 +15,7 @@ import { DayPicker, Field, NumInput, RunSwitch, Select, TimePicker } from './con
 export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
   const { config, setConfig, armed, setArmed, hasAccount } = strategy
   const mult = stopMultiple(config.stopLossPct)
+  const tpMult = takeProfitMultiple(config.takeProfitPct)
 
   return (
     <div className="flex flex-wrap items-center gap-x-6 gap-y-4 border-b border-line bg-raised px-5 py-3.5">
@@ -114,6 +115,27 @@ export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
           />
           <span className="text-[11px] whitespace-nowrap text-ink-3">
             {mult === null ? 'no stop' : `${mult.toFixed(2)}× entry`}
+          </span>
+        </div>
+      </Field>
+
+      {/* The other half of the bracket: the stop is the premium given back, this is
+          the premium kept. Same shape, same mark, opposite direction. */}
+      <Field
+        label="Take profit"
+        help="How much of the premium collected you will keep before the position is closed, watched on the option's own mark. 70% buys a $4 short back at $1.20; 50% at $2.00. At 0 no take-profit is armed."
+      >
+        <div className="flex items-center gap-2">
+          <NumInput
+            value={config.takeProfitPct}
+            min={0}
+            step={10}
+            unit="%"
+            width="w-16"
+            onChange={(takeProfitPct) => setConfig({ takeProfitPct })}
+          />
+          <span className="text-[11px] whitespace-nowrap text-ink-3">
+            {tpMult === null ? 'no TP' : `${tpMult.toFixed(2)}× entry`}
           </span>
         </div>
       </Field>

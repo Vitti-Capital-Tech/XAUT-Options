@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useMarketTick } from '../lib/marketStore'
 import type { DeltaStrategyApi } from '../hooks/useDeltaStrategy'
 import { greek, price } from '../lib/format'
@@ -23,7 +24,9 @@ import { DayPicker, Field, NumInput, RunSwitch, Select, TimePicker } from './con
  * buried in an engine.
  */
 export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
-  const { config, setConfig, armed, setArmed, session, hasAccount, plan, error } = strategy
+  const { config, setConfig, armed, setArmed, session, hasAccount, plan, error, refresh, entryLots } =
+    strategy
+  const [refreshing, setRefreshing] = useState(false)
   // The plan is rebuilt on the engine's own cycle, but Δp moves with every tick;
   // subscribing keeps the band meter honest between cycles.
   useMarketTick()
@@ -163,8 +166,8 @@ export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
         </Field>
 
         <Field
-          label="Band Δ range"
-          help="One option's own delta, used only to pick which fresh strike to sell when no ITM leg is left to roll — not the portfolio's delta. A single option's delta is always between −1 and 1, so keep this small and positive. The sign is handled for you: 0.15–0.25 already matches a put at −0.20."
+          label="Strike Δ range"
+          help="One option's own delta, used only to pick which fresh strike to sell when no ITM leg is left to roll — not the portfolio's delta, which is Band L / U. A single option's delta is always between −1 and 1, so keep this small and positive. The sign is handled for you: 0.15–0.25 already matches a put at −0.20."
         >
           <div className="flex items-center gap-2">
             <NumInput
@@ -187,7 +190,7 @@ export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
 
         <Field
           label="N pairs"
-          help="Call/put pairs sold at the open, as lots per leg. At N = 1 a ±1 band can barely be breached, so corrections almost never fire."
+          help="How many call/put pairs to sell at the open. Multiplies the lots Qty resolves to, so 2 pairs of a 1-lot Qty is 2 lots a leg."
         >
           <NumInput
             value={config.pairs}
@@ -196,6 +199,27 @@ export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
             width="w-16"
             onChange={(v) => setConfig({ pairs: Math.round(v) })}
           />
+        </Field>
+
+        {/* Size in XAUT, the way the auto tab expresses it, with the lots it works
+            out to beside the box — lots are what Δp actually counts, so seeing them
+            is the difference between a sane band and a permanently breached one. */}
+        <Field
+          label="Qty · XAUT"
+          help="XAUT sold per leg at the open, converted to lots by the contract's own value — the same as the auto tab's Quantity. Careful: Δp counts lots, so raising this scales Δp by the same factor and Band L / U has to be scaled with it or the band stops meaning anything."
+        >
+          <div className="flex items-center gap-2">
+            <NumInput
+              value={config.qty}
+              step={0.001}
+              min={0}
+              width="w-20"
+              onChange={(v) => setConfig({ qty: v })}
+            />
+            <span className="text-[11px] whitespace-nowrap text-ink-3">
+              {entryLots === null ? '—' : `${entryLots} lot${entryLots === 1 ? '' : 's'} / leg`}
+            </span>
+          </div>
         </Field>
 
         <Field
@@ -229,18 +253,40 @@ export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
           />
         </Field>
 
+        {/* The interval, plus a way to skip the wait. The button clears the spacing
+            the engine checks, so its next tick acts — the engine runs once a minute,
+            so this brings a cycle forward to within that, not to this instant. */}
         <Field
-          label="Cycle"
-          help="How often the engine re-reads the book. It takes at most one action per cycle, sized on prices fetched that cycle — never a batch."
+          label="Refresh"
+          help="How often the engine re-reads the book. It takes at most one action per refresh, sized on prices fetched then — never a batch. The button clears the wait so the next engine tick acts; the engine ticks once a minute, so a cycle arrives within that rather than instantly."
         >
-          <NumInput
-            value={config.cycleSeconds}
-            step={5}
-            min={5}
-            unit="s"
-            width="w-16"
-            onChange={(v) => setConfig({ cycleSeconds: Math.round(v) })}
-          />
+          <div className="flex items-center gap-2">
+            <NumInput
+              value={config.cycleSeconds}
+              step={5}
+              min={5}
+              unit="s"
+              width="w-16"
+              onChange={(v) => setConfig({ cycleSeconds: Math.round(v) })}
+            />
+            <button
+              type="button"
+              disabled={!hasAccount || refreshing}
+              title={
+                hasAccount
+                  ? 'Run a cycle now — clears the wait so the next engine tick acts'
+                  : 'Create a delta account first'
+              }
+              onClick={() => {
+                setRefreshing(true)
+                void refresh().finally(() => setRefreshing(false))
+              }}
+              className="flex h-9 items-center gap-1.5 rounded-md border border-raised-3 bg-surface px-2.5 text-[12px] text-ink-2 transition-colors hover:border-ink-3 hover:text-ink disabled:opacity-40"
+            >
+              <RefreshIcon spinning={refreshing} />
+              {refreshing ? 'Queued' : 'Now'}
+            </button>
+          </div>
         </Field>
 
         {/* Take profit as a price on the option's own mark — 0.7 buys any short
@@ -363,6 +409,28 @@ function BandMeter({ low, high, dp }: { low: number; high: number; dp: number | 
         )}
       </div>
     </div>
+  )
+}
+
+/** Circular arrow, spun while a manual refresh is in flight. */
+function RefreshIcon({ spinning }: { spinning: boolean }) {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 16 16"
+      fill="none"
+      className={`shrink-0 ${spinning ? 'motion-safe:animate-spin' : ''}`}
+      aria-hidden
+    >
+      <path
+        d="M13.5 8a5.5 5.5 0 1 1-1.8-4.07"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+      />
+      <path d="M13.6 1.6v3h-3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   )
 }
 
