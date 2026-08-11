@@ -117,7 +117,21 @@ row locked, so a fill can't half-apply and two tabs can't fill one order twice.
 One fixed rule, no discretion: read the last **closed 1h candle** of the spot
 index and sell an option — a red bar sells a call, a green bar sells a put — at
 the chosen moneyness off the nearest expiry, inside a time-of-day window (IST),
-with a stop at twice the entry premium on the mark.
+with a stop read off `stop_loss_pct` on the mark.
+
+The stop is **a percent of the premium collected**
+([`0020`](supabase/migrations/0020_auto_strategy_stop_pct.sql)) — the number a
+premium seller actually thinks in:
+
+```
+stop_loss = avg_entry_price × (1 + stop_loss_pct / 100)
+```
+
+At the default **100** a $4 short stops at $8, giving back exactly the premium —
+the 2× the strategy was hardcoded to before this was a setting. `50` stops it at
+$6; `0` arms no stop at all, leaving only the window flatten and expiry
+settlement to close the position. Adding to a symbol re-bases the level onto the
+blended entry rather than leaving it pinned to the first fill.
 
 The window is both ends of the day. Inside it the strategy sells; once past
 `window_end` it stops **and flattens** — `apply_auto_exit()` closes every open

@@ -1,4 +1,4 @@
-import { MONEYNESS_ORDER, type Moneyness } from '../lib/strategy'
+import { MONEYNESS_ORDER, stopMultiple, type Moneyness } from '../lib/strategy'
 import type { StrategyApi } from '../hooks/useAutoStrategy'
 import { DayPicker, Field, NumInput, RunSwitch, Select, TimePicker } from './controls'
 
@@ -14,6 +14,7 @@ import { DayPicker, Field, NumInput, RunSwitch, Select, TimePicker } from './con
  */
 export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
   const { config, setConfig, armed, setArmed, hasAccount } = strategy
+  const mult = stopMultiple(config.stopLossPct)
 
   return (
     <div className="flex flex-wrap items-center gap-x-6 gap-y-4 border-b border-line bg-raised px-5 py-3.5">
@@ -93,6 +94,28 @@ export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
           width="w-16"
           onChange={(minPremium) => setConfig({ minPremium })}
         />
+      </Field>
+
+      {/* The stop, as a share of the premium collected. The multiple it works out
+          to sits beside the box, since that is the form it is easiest to check —
+          and it keeps the old hardcoded 2× recognisable. */}
+      <Field
+        label="Stop loss"
+        help="How much of the premium collected you will give back before the position is closed, watched on the option's own mark. 100% stops a $4 short at $8; 50% stops it at $6. At 0 no stop is armed at all, leaving only the window flatten and expiry to close it."
+      >
+        <div className="flex items-center gap-2">
+          <NumInput
+            value={config.stopLossPct}
+            min={0}
+            step={25}
+            unit="%"
+            width="w-16"
+            onChange={(stopLossPct) => setConfig({ stopLossPct })}
+          />
+          <span className="text-[11px] whitespace-nowrap text-ink-3">
+            {mult === null ? 'no stop' : `${mult.toFixed(2)}× entry`}
+          </span>
+        </div>
       </Field>
 
       {/* No days selected disables the strategy outright, which is worth saying

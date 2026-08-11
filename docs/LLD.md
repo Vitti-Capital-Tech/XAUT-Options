@@ -74,6 +74,7 @@ erDiagram
         smallint_array trade_days "ISO weekdays, IST"
         numeric min_premium "floor on the bid; 0 off"
         text expiry_rule "today | nearest"
+        numeric stop_loss_pct "% of premium; 0 = no stop"
         bigint last_acted "unix sec of last bar"
     }
     DELTA_STRATEGY_SETTINGS {

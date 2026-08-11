@@ -13,8 +13,20 @@ import type { Candle, Expiry, Product } from './delta'
 
 export type OptionKind = 'call' | 'put'
 
-/** Loss stopped at 100% of the premium — the mark reaching twice the entry. */
-export const STOP_LOSS_MULTIPLE = 2
+/**
+ * The multiple of the entry premium a stop percentage lands on, which is the
+ * form the level is easiest to sanity-check in:
+ *
+ *     100% → 2.00x entry — a $4 short stops at $8, the whole premium given back
+ *      50% → 1.50x entry — a $4 short stops at $6
+ *
+ * The engine arms `avg_entry_price × stopMultiple(pct)` on the mark. Zero means
+ * no stop at all, so this returns null rather than 1x — a stop *at* the entry.
+ */
+export function stopMultiple(stopLossPct: number): number | null {
+  if (!(stopLossPct > 0)) return null
+  return 1 + stopLossPct / 100
+}
 
 /**
  * How far the traded strike sits from the money. ITM is capped at 2 and OTM at
@@ -67,6 +79,13 @@ export interface StrategyConfig {
    * date, which is what the strategy did before the rule existed.
    */
   expiryRule: ExpiryRule
+  /**
+   * Stop-loss as a percent of the premium collected, watched on the option's own
+   * mark — see `stopLevel`. 100 stops a $4 short at $8, which is the whole premium
+   * given back. Zero arms no stop at all, leaving only the window flatten and
+   * expiry settlement to close the position.
+   */
+  stopLossPct: number
 }
 
 export const DEFAULT_CONFIG: StrategyConfig = {
@@ -81,6 +100,8 @@ export const DEFAULT_CONFIG: StrategyConfig = {
   // Same-day only. Selling a multi-day option because today's is unlisted was the
   // behaviour this rule was added to stop, so it is not the default.
   expiryRule: 'today',
+  // 100% is the 2x-entry stop the strategy was hardcoded to before it was a setting.
+  stopLossPct: 100,
 }
 
 // ---------------------------------------------------------------------------
