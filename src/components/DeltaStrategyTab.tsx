@@ -68,7 +68,7 @@ export function DeltaStrategyTab({
             book is flattened and nothing new is opened. The readout's Session field
             says which it is. */}
         <Field
-          label="Days · IST"
+          label="Trading days"
           help="Which days it trades. A day switched off is treated as closed: everything is bought back and nothing new is opened."
         >
           <DayPicker value={config.tradeDays} onChange={(tradeDays) => setConfig({ tradeDays })} />
@@ -86,7 +86,7 @@ export function DeltaStrategyTab({
         </Field>
 
         <Field
-          label="Lands on"
+          label="Correct back to"
           help="Once it starts fixing, where should the position delta end up — back at the edge you crossed, or all the way to the middle of the range? The middle moves the position a lot further."
         >
           <Select

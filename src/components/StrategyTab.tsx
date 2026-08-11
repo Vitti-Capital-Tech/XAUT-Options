@@ -63,7 +63,7 @@ export function StrategyTab({
       </Field>
 
       <Field
-        label="Trading hours · IST"
+        label="Session · IST"
         help="When it trades, on the IST clock. Inside these hours it sells; past the end it stops and buys back whatever it holds, so nothing is held overnight."
       >
         <div className="flex items-center gap-2">
