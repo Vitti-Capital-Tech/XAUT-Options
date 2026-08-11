@@ -27,6 +27,9 @@ import { shortImRate, summarizeAccount, type Side } from './engine/paper'
 import { supabaseConfigured } from './lib/supabase'
 import { ADMIN_KEYWORD } from './lib/admin'
 
+/** Same namespace the selected account uses, so one prefix owns our storage. */
+const PAGE_KEY = 'delta-paper.page'
+
 export default function App() {
   const { session, user, loading: authLoading } = useAuth()
 
@@ -53,11 +56,21 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
   const [activeExpiry, setActiveExpiry] = useState<string | null>(null)
   const [marketError, setMarketError] = useState<string | null>(null)
   const [ticket, setTicket] = useState<TicketRequest | null>(null)
-  // Always starts closed: signing in lands on the chain, and the panel is
-  // opened deliberately from there.
+  // Always starts closed, whichever page is restored — the panel is opened
+  // deliberately, never landed on.
   const [adminOpen, setAdminOpen] = useState(false)
-  // Which top-level page is showing. Signing in lands on the chain.
-  const [page, setPage] = useState<Page>('chain')
+  // Which top-level page is showing, remembered across reloads — watching a
+  // strategy means refreshing the tab, and being thrown back to the chain every
+  // time is its own small tax. Validated against the union rather than trusted,
+  // so a stale or hand-edited value cannot render nothing.
+  const [page, setPage] = useState<Page>(() => {
+    const saved = localStorage.getItem(PAGE_KEY)
+    return saved === 'chain' || saved === 'strategy' || saved === 'delta' ? saved : 'chain'
+  })
+
+  useEffect(() => {
+    localStorage.setItem(PAGE_KEY, page)
+  }, [page])
 
   // The book the header, ticket and admin panel act on — whichever page is up.
   const accounts =
