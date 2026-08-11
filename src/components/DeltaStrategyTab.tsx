@@ -368,36 +368,67 @@ export function DeltaStrategyTab({
         </div>
       </div>
 
-      {/* Readout. Where Δp sits, what the session has spent, and the next move. */}
-      <div className="flex flex-wrap items-center gap-x-6 gap-y-3 border-t border-line px-5 py-2.5">
-        <Readout label="Net Δp" tone={plan?.breach ? 'warn' : 'ok'}>
-          {dp === null ? '—' : greek(dp, 2)}
-        </Readout>
-        <Readout label="Band">
-          {price(config.bandLow, 2)} – {price(config.bandHigh, 2)}
-        </Readout>
+      {/* Readout, in two strips.
+
+          Δp is the one number this strategy is actually about, so it leads at a size
+          nothing else competes with, and the band meter sits directly under it as
+          part of the same reading rather than as a sixth equal statistic. The old
+          `Band` figure is gone: the meter prints those two numbers at its ends now,
+          and a readout that repeats its neighbour is noise.
+
+          The next action is a sentence, not a statistic, so it gets its own strip
+          and the full width — right-aligned in the stat row it truncated exactly
+          when it had most to say. */}
+      <div className="flex flex-wrap items-center gap-x-7 gap-y-4 border-t border-line px-5 py-3">
+        {/* The hero: Δp over its own meter. */}
+        <div className="flex items-end gap-4">
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[9px] font-semibold tracking-[0.14em] text-ink-3 uppercase">
+              Net Δp
+            </span>
+            <span
+              className={`num text-[26px] leading-none font-semibold tracking-tight ${
+                plan?.breach ? 'text-brand-text' : 'text-ink'
+              }`}
+            >
+              {dp === null ? '—' : greek(dp, 2)}
+            </span>
+          </div>
+          <BandMeter low={config.bandLow} high={config.bandHigh} dp={dp} />
+        </div>
+
+        <GroupRule />
+
+        {/* State: what the session is doing and what it has spent. */}
+        <PhaseChip label={plan ? phaseLabel(plan.phase, plan.tradingDay) : '—'} open={plan?.phase === 'open'} />
         <Readout label="ITM queue">{plan ? plan.queue.length : '—'}</Readout>
         <Readout label="Rolls left C / P" tone={callsLeft === 0 || putsLeft === 0 ? 'warn' : 'ok'}>
           {callsLeft} / {putsLeft}
         </Readout>
-        <Readout label="Session">
-          {plan ? phaseLabel(plan.phase, plan.tradingDay) : '—'}
-        </Readout>
-        {/* The two marks every short is bought back at, take-profit then stop. */}
+
+        <GroupRule />
+
+        {/* The two marks every short is bought back at, take-profit then stop. An
+            em dash when neither is armed, rather than the word "none" twice. */}
         <Readout label="TP / SL">
-          {config.takeProfitMark > 0 ? price(config.takeProfitMark, 2) : 'none'}
-          {' / '}
-          {config.stopLossMark > 0 ? price(config.stopLossMark, 2) : 'none'}
+          {config.takeProfitMark <= 0 && config.stopLossMark <= 0 ? (
+            '—'
+          ) : (
+            <>
+              {config.takeProfitMark > 0 ? price(config.takeProfitMark, 2) : '—'}
+              <span className="text-ink-4"> / </span>
+              {config.stopLossMark > 0 ? price(config.stopLossMark, 2) : '—'}
+            </>
+          )}
         </Readout>
+      </div>
 
-        <BandMeter low={config.bandLow} high={config.bandHigh} dp={dp} />
-
-        <div className="ml-auto flex min-w-0 items-center gap-2">
-          <span className="shrink-0 text-[10px] font-semibold tracking-[0.14em] text-ink-3 uppercase">
-            Next
-          </span>
-          <span className="truncate text-[12px] text-ink-2">{plan?.reason ?? 'Starting up…'}</span>
-        </div>
+      {/* What it is about to do, in its own strip so a long reason reads in full. */}
+      <div className="flex min-w-0 items-baseline gap-2.5 border-t border-line px-5 py-2">
+        <span className="shrink-0 text-[9px] font-semibold tracking-[0.14em] text-ink-3 uppercase">
+          Next
+        </span>
+        <span className="truncate text-[12.5px] text-ink-2">{plan?.reason ?? 'Starting up…'}</span>
       </div>
 
       {error && (
@@ -438,26 +469,50 @@ function BandMeter({ low, high, dp }: { low: number; high: number; dp: number | 
   const frac = dp === null || !(span > 0) ? null : Math.min(1, Math.max(0, (dp - low) / span))
   const breached = dp !== null && (dp < low || dp > high)
 
+  // No eyebrow of its own: it sits under the Net Δp figure, which names it, and the
+  // two end labels say what the track spans. A third label would only repeat one of
+  // the other two.
   return (
-    <div className="flex w-56 flex-col gap-1">
-      <span className="text-[9px] font-semibold tracking-[0.14em] text-ink-3 uppercase">Δp in band</span>
-      {/* The set range at each end, so the marker's position reads against real
-          numbers rather than an unlabelled track. */}
-      <div className="flex items-center gap-2">
-        <span className="num shrink-0 text-[10px] text-ink-3">{price(low, 2)}</span>
-        <div className="relative h-2 flex-1 rounded-full border border-raised-3 bg-surface">
-          {frac !== null && (
-            <span
-              className={`absolute top-1/2 h-3 w-[3px] -translate-x-1/2 -translate-y-1/2 rounded-full ${
-                breached ? 'bg-brand-text' : 'bg-pos-solid'
-              }`}
-              style={{ left: `${frac * 100}%` }}
-            />
-          )}
-        </div>
-        <span className="num shrink-0 text-[10px] text-ink-3">{price(high, 2)}</span>
+    <div className="flex w-56 items-center gap-2 pb-0.5">
+      <span className="num shrink-0 text-[10px] text-ink-3">{price(low, 2)}</span>
+      <div className="relative h-1.5 flex-1 rounded-full border border-raised-3 bg-surface">
+        {/* The mid-point, so the marker's drift off centre reads at a glance. */}
+        <span className="absolute top-1/2 left-1/2 h-2 w-px -translate-x-1/2 -translate-y-1/2 bg-raised-3" />
+        {frac !== null && (
+          <span
+            className={`absolute top-1/2 h-3 w-[3px] -translate-x-1/2 -translate-y-1/2 rounded-full transition-all duration-300 ${
+              breached ? 'bg-brand-text' : 'bg-pos-solid'
+            }`}
+            style={{ left: `${frac * 100}%` }}
+          />
+        )}
       </div>
+      <span className="num shrink-0 text-[10px] text-ink-3">{price(high, 2)}</span>
     </div>
+  )
+}
+
+/**
+ * The session's state as a chip rather than a label-and-value pair.
+ *
+ * It is the one readout that is a state rather than a number, and a live dot says
+ * "trading" faster than the word does. Off day and Closed both read muted — the
+ * distinction between them is in the word, not the colour, because neither is a
+ * condition to act on.
+ */
+function PhaseChip({ label, open }: { label: string; open: boolean }) {
+  return (
+    <span
+      className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium ${
+        open ? 'border-pos-on-muted bg-pos-muted text-pos' : 'border-raised-3 bg-raised-2 text-ink-3'
+      }`}
+    >
+      <span
+        className={`h-1.5 w-1.5 rounded-full ${open ? 'bg-pos-solid' : 'bg-ink-4'}`}
+        aria-hidden
+      />
+      {label}
+    </span>
   )
 }
 
