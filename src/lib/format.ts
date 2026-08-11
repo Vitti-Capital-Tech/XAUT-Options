@@ -120,6 +120,38 @@ export function dateTimeParts(iso: string): { date: string; time: string } {
   }
 }
 
+/**
+ * `YYYY-MM-DD` in the display zone — a stable key for grouping a ledger by day.
+ *
+ * Carries the year, unlike the `05 Aug` a row shows, so two Augusts a year apart
+ * cannot land in the same group.
+ */
+export function dayKey(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-CA', { timeZone: DISPLAY_ZONE })
+}
+
+/**
+ * A day heading — `Today`, `Yesterday`, or `Mon 10 Aug 2026`.
+ *
+ * The two relative labels are worth the special case: on a ledger you read every
+ * day, "Today" is the group you are looking for, and scanning for its date is
+ * work. IST has no daylight saving, so stepping back a fixed 24 hours to find
+ * yesterday is exact.
+ */
+export function dayLabel(iso: string): string {
+  const key = dayKey(iso)
+  const now = Date.now()
+  if (key === dayKey(new Date(now).toISOString())) return 'Today'
+  if (key === dayKey(new Date(now - 86_400_000).toISOString())) return 'Yesterday'
+  return new Date(iso).toLocaleDateString('en-GB', {
+    weekday: 'short',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    timeZone: DISPLAY_ZONE,
+  })
+}
+
 /** Tailwind text colour for a signed number. */
 export function pnlClass(v: number | null | undefined): string {
   if (v === null || v === undefined || !Number.isFinite(v) || v === 0) return 'text-zinc-400'

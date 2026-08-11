@@ -1,10 +1,10 @@
-import { useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import type { Product, Ticker } from '../lib/delta'
 import { UNDERLYING } from '../lib/delta'
 import { market, useMarketTick } from '../lib/marketStore'
 import { shortImRate, valuePosition, type PositionRow, type TriggerSource } from '../engine/paper'
 import type { FillRow } from '../hooks/useTrading'
-import { dateTimeParts, ivShort, pct, pnlClass, price } from '../lib/format'
+import { dateTimeParts, dayKey, dayLabel, ivShort, pct, pnlClass, price } from '../lib/format'
 
 type Tab = 'positions' | 'history'
 
@@ -992,7 +992,56 @@ function fillKind(f: FillRow): { label: string; cls: string } {
   return { label: 'Trade', cls: 'text-ink-2' }
 }
 
+/**
+ * A day's band across the ledger — the date, how many fills it holds and what they
+ * realized between them.
+ *
+ * The day's total is the number a trader actually wants from a grouped ledger, so
+ * it belongs in the heading rather than needing to be added up by eye. A day that
+ * netted nothing shows no figure at all instead of a `$0.00` that reads like a
+ * result.
+ */
+function DayHeader({ iso, count, realized }: { iso: string; count: number; realized: number }) {
+  return (
+    <tr className="bg-sub">
+      <td colSpan={8} className="border-y border-line px-3 py-1.5">
+        <div className="flex items-baseline justify-between gap-4">
+          <span className="text-[11px] font-semibold tracking-[0.1em] text-ink-2 uppercase">
+            {dayLabel(iso)}
+          </span>
+          <span className="text-[11px] text-ink-3">
+            {count} fill{count === 1 ? '' : 's'}
+            {realized !== 0 && (
+              <>
+                {' · '}
+                <span className={pnlClass(realized)}>
+                  <Money value={realized} signed suffix="inherit" />
+                </span>
+              </>
+            )}
+          </span>
+        </div>
+      </td>
+    </tr>
+  )
+}
+
 function HistoryTable({ fills }: { fills: FillRow[] }) {
+  // Per-day counts and realized totals, over the whole ledger rather than the
+  // visible page — a day split across two pages must report the same figures on
+  // both, or the header becomes a per-page artefact.
+  const byDay = useMemo(() => {
+    const m = new Map<string, { count: number; realized: number }>()
+    for (const f of fills) {
+      const k = dayKey(f.created_at)
+      const e = m.get(k) ?? { count: 0, realized: 0 }
+      e.count += 1
+      e.realized += Number(f.realized_pnl)
+      m.set(k, e)
+    }
+    return m
+  }, [fills])
+
   if (fills.length === 0) return <Empty>No trades yet.</Empty>
 
   return (
@@ -1036,14 +1085,23 @@ function HistoryTable({ fills }: { fills: FillRow[] }) {
         </tr>
       </thead>
       <tbody>
-        {visible.map((f) => {
+        {visible.map((f, i) => {
           const realized = Number(f.realized_pnl)
           const buy = f.side === 'buy'
           const size = f.qty * Number(f.contract_value)
           const kind = fillKind(f)
           const at = dateTimeParts(f.created_at)
+          // A heading whenever the day changes, and on the first row of a page even
+          // mid-day, so a page never opens on rows belonging to no visible date.
+          const key = dayKey(f.created_at)
+          const newDay = i === 0 || key !== dayKey(visible[i - 1].created_at)
+          const day = byDay.get(key)
           return (
-            <tr key={f.id} className="border-b border-line hover:bg-raised">
+            <Fragment key={f.id}>
+              {newDay && (
+                <DayHeader iso={f.created_at} count={day?.count ?? 0} realized={day?.realized ?? 0} />
+              )}
+            <tr className="border-b border-line hover:bg-raised">
               <Td align="left" wall="start">
                 <Instrument symbol={f.symbol} accent={buy ? 'pos' : 'neg'} />
               </Td>
@@ -1067,11 +1125,13 @@ function HistoryTable({ fills }: { fills: FillRow[] }) {
               <Td align="center" className={realized === 0 ? 'text-ink-4' : pnlClass(realized)}>
                 {realized === 0 ? '—' : <Money value={realized} signed suffix="inherit" />}
               </Td>
-              <Td align="center" wall="end" className="leading-tight text-ink-2">
-                <div>{at.date}</div>
-                <div>{at.time}</div>
+              {/* Time only — the date is the group's now, and repeating it on every
+                  row of the same day was the redundancy grouping removes. */}
+              <Td align="center" wall="end" className="text-ink-2">
+                {at.time}
               </Td>
             </tr>
+            </Fragment>
           )
         })}
       </tbody>
