@@ -354,6 +354,21 @@ export function DayPicker({ value, onChange }: { value: number[]; onChange: (v: 
   )
 }
 
+/**
+ * A hairline between groups of controls on a strategy bar.
+ *
+ * Sixteen fields in one wrapping row read as a wall; the rules split into a few
+ * plain groups — when it trades, what it sells, the band, the rolls, the exits —
+ * and a rule at each seam makes that structure visible without a second row of
+ * headings.
+ *
+ * Hidden below `lg`, where the row wraps enough that a rule would land mid-line and
+ * separate nothing.
+ */
+export function GroupRule() {
+  return <span aria-hidden className="hidden h-9 w-px self-center bg-line lg:block" />
+}
+
 export function RunSwitch({
   on,
   onChange,

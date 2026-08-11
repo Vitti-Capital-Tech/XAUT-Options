@@ -1,7 +1,7 @@
 import { MONEYNESS_ORDER, stopMultiple, takeProfitMultiple, type Moneyness } from '../lib/strategy'
 import { expiryIsLive, expiryOptions, type Expiry } from '../lib/delta'
 import type { StrategyApi } from '../hooks/useAutoStrategy'
-import { DayPicker, Field, NumInput, RunSwitch, Select, TimePicker } from './controls'
+import { DayPicker, Field, GroupRule, NumInput, RunSwitch, Select, TimePicker } from './controls'
 
 /**
  * The auto-strategy's controls — a compact bar above its trades table. The signal
@@ -12,6 +12,10 @@ import { DayPicker, Field, NumInput, RunSwitch, Select, TimePicker } from './con
  *
  * Trading hours are both ends of the day: it sells only inside them, and buys back
  * whatever it holds once past them, so nothing is carried overnight.
+ *
+ * The bar is grouped the way the delta strategy's is, and in the same order — when it
+ * may trade, what it sells, then the bracket — so moving between the two tabs does
+ * not mean relearning where anything is.
  *
  * Where a label needed explaining it says what the setting does; where the trading
  * term was already the clearest name — Strike, Quantity, Stop loss, Take profit —
@@ -38,31 +42,6 @@ export function StrategyTab({
   return (
     <div className="flex flex-wrap items-center gap-x-6 gap-y-4 border-b border-line bg-raised px-5 py-3.5">
       <Field
-        label="Strike"
-        help="How far from gold's price to sell. ATM is the listed strike nearest spot; OTM 2 is two strikes further out, ITM 1 one strike closer in. If it runs out of listed strikes it takes the furthest one rather than skipping the trade."
-      >
-        <Select
-          value={config.moneyness}
-          onChange={(m) => setConfig({ moneyness: m })}
-          options={MONEYNESS_ORDER.map((m) => ({ value: m, label: label(m) }))}
-        />
-      </Field>
-
-      <Field
-        label="Quantity"
-        help="How much to sell each time it fires, in XAUT. It is turned into lots when the order is placed."
-      >
-        <NumInput
-          value={config.qty}
-          min={1}
-          step={1}
-          unit="XAUT"
-          width="w-24"
-          onChange={(qty) => setConfig({ qty })}
-        />
-      </Field>
-
-      <Field
         label="Session · IST"
         help="When it trades, on the IST clock. Inside these hours it sells; past the end it stops and buys back whatever it holds, so nothing is held overnight."
       >
@@ -79,6 +58,8 @@ export function StrategyTab({
       >
         <DayPicker value={config.tradeDays} onChange={(tradeDays) => setConfig({ tradeDays })} />
       </Field>
+
+      <GroupRule />
 
       {/* The listed expiries by date, as the chain's tabs show them. A date does not
           roll: once the chosen one settles the strategy skips its bars rather than
@@ -100,6 +81,17 @@ export function StrategyTab({
         </div>
       </Field>
 
+      <Field
+        label="Strike"
+        help="How far from gold's price to sell. ATM is the listed strike nearest spot; OTM 2 is two strikes further out, ITM 1 one strike closer in. If it runs out of listed strikes it takes the furthest one rather than skipping the trade."
+      >
+        <Select
+          value={config.moneyness}
+          onChange={(m) => setConfig({ moneyness: m })}
+          options={MONEYNESS_ORDER.map((m) => ({ value: m, label: label(m) }))}
+        />
+      </Field>
+
       {/* The premium floor: a bar whose strike is bid under this is skipped
           rather than sold. Zero turns the filter off. */}
       <Field
@@ -115,6 +107,22 @@ export function StrategyTab({
           onChange={(minPremium) => setConfig({ minPremium })}
         />
       </Field>
+
+      <Field
+        label="Quantity"
+        help="How much to sell each time it fires, in XAUT. It is turned into lots when the order is placed."
+      >
+        <NumInput
+          value={config.qty}
+          min={1}
+          step={1}
+          unit="XAUT"
+          width="w-24"
+          onChange={(qty) => setConfig({ qty })}
+        />
+      </Field>
+
+      <GroupRule />
 
       {/* The stop, as a share of the premium collected. The multiple it works out
           to sits beside the box, since that is the form it is easiest to check —
