@@ -13,8 +13,10 @@ import { DayPicker, Field, NumInput, RunSwitch, Select, TimePicker } from './con
  * Trading hours are both ends of the day: it sells only inside them, and buys back
  * whatever it holds once past them, so nothing is carried overnight.
  *
- * Every label says what the setting does rather than what the code calls it — this
- * bar is read under time pressure, and a wrong guess here costs money.
+ * Where a label needed explaining it says what the setting does; where the trading
+ * term was already the clearest name — Strike, Quantity, Stop loss, Take profit —
+ * it keeps it. Either way the `?` carries the explanation, because this bar is read
+ * under time pressure and a wrong guess here costs money.
  */
 export function StrategyTab({
   strategy,
@@ -36,7 +38,7 @@ export function StrategyTab({
   return (
     <div className="flex flex-wrap items-center gap-x-6 gap-y-4 border-b border-line bg-raised px-5 py-3.5">
       <Field
-        label="Strike distance"
+        label="Strike"
         help="How far from gold's price to sell. ATM is the listed strike nearest spot; OTM 2 is two strikes further out, ITM 1 one strike closer in. If it runs out of listed strikes it takes the furthest one rather than skipping the trade."
       >
         <Select
@@ -47,7 +49,7 @@ export function StrategyTab({
       </Field>
 
       <Field
-        label="Size per trade · XAUT"
+        label="Quantity"
         help="How much to sell each time it fires, in XAUT. It is turned into lots when the order is placed."
       >
         <NumInput
@@ -101,8 +103,8 @@ export function StrategyTab({
       {/* The premium floor: a bar whose strike is bid under this is skipped
           rather than sold. Zero turns the filter off. */}
       <Field
-        label="Never sell below"
-        help="A price floor. If the strike it would sell is bid under this, that hour is skipped rather than sold. It will not go looking for a better-paying strike — which strike to sell is Strike distance's to decide."
+        label="Min premium"
+        help="A price floor. If the strike it would sell is bid under this, that hour is skipped rather than sold. It will not go looking for a better-paying strike — which strike to sell is the Strike setting's to decide."
       >
         <NumInput
           value={config.minPremium}
