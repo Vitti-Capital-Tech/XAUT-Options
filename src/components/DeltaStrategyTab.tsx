@@ -54,8 +54,8 @@ export function DeltaStrategyTab({
           simply more of them here. */}
       <div className="flex flex-wrap items-start gap-x-6 gap-y-4 px-5 py-3.5">
         <Field
-          label="Session · IST"
-          help="Trading hours on the IST clock, the same clock the auto strategy uses. The opening pair is sold at the open and everything is bought back at the close, so no position is ever carried overnight."
+          label="Trading hours · IST"
+          help="When it trades, on the IST clock. It sells the pair at the start and buys everything back at the end, so nothing is held overnight."
         >
           <div className="flex items-center gap-2">
             <TimePicker value={config.sessionOpen} onChange={(v) => setConfig({ sessionOpen: v })} />
@@ -68,15 +68,15 @@ export function DeltaStrategyTab({
             book is flattened and nothing new is opened. The readout's Session field
             says which it is. */}
         <Field
-          label="Days · IST"
-          help="Weekdays the session runs, on the IST clock. A day switched off reads as a closed session — the book is flattened and nothing new is opened."
+          label="Trading days"
+          help="Which days it trades. A day switched off is treated as closed: everything is bought back and nothing new is opened."
         >
           <DayPicker value={config.tradeDays} onChange={(tradeDays) => setConfig({ tradeDays })} />
         </Field>
 
         <Field
-          label="Band L / U"
-          help="The net portfolio delta (Δp) you will tolerate — the whole book's exposure, not one option's. Inside the band the engine does nothing; outside it corrects. Negatives are fine, so −2 to 1 is a valid band."
+          label="Position delta"
+          help="The delta of everything you hold, added up. Inside this range it does nothing at all; outside it, it fixes the position. This is the whole position, not one option — so it can be any size, and negatives are fine. −2 to 1 is a valid range."
         >
           <div className="flex items-center gap-2">
             <NumInput value={config.bandLow} step={0.1} width="w-16" onChange={(v) => setConfig({ bandLow: v })} />
@@ -86,23 +86,23 @@ export function DeltaStrategyTab({
         </Field>
 
         <Field
-          label="Lands on"
-          help="Where a correction aims once the band breaks: back to the edge you crossed, or all the way to the band's midpoint. On an asymmetric band the midpoint pulls the book much further."
+          label="Correct back to"
+          help="Once it starts fixing, where should the position delta end up — back at the edge you crossed, or all the way to the middle of the range? The middle moves the position a lot further."
         >
           <Select
             value={config.targetLanding}
             width="w-32"
             onChange={(v) => setConfig({ targetLanding: v })}
             options={[
-              { value: 'edge', label: 'Breached edge' },
-              { value: 'mid', label: 'Band midpoint' },
+              { value: 'edge', label: 'The edge crossed' },
+              { value: 'mid', label: 'Middle of range' },
             ]}
           />
         </Field>
 
         <Field
-          label="Buffer B"
-          help="How far inside the breached edge to land. At 0 it aims for the edge itself, which often sizes to zero contracts and does nothing at all — 0.4 is what makes corrections actually fire."
+          label="Land inside by"
+          help="How far back inside the range to come, rather than stopping on the line. At 0 it aims for the line itself, which usually works out to zero contracts and so does nothing — 0.4 is what makes fixes actually happen."
         >
           <NumInput
             value={config.bandBuffer}
@@ -114,8 +114,8 @@ export function DeltaStrategyTab({
         </Field>
 
         <Field
-          label="ITM trigger"
-          help="Points of spot-to-strike before a short leg counts as needing management. It only makes a leg eligible — the band breach is what triggers action, never this on its own."
+          label="In the money by"
+          help="How far past its strike gold must be before that sold option can be fixed. On its own this never starts anything — the position delta leaving its range is what does."
         >
           <NumInput
             value={config.itmTrigger}
@@ -128,8 +128,8 @@ export function DeltaStrategyTab({
         </Field>
 
         <Field
-          label="Max rolls / side"
-          help="Rolls each side gets per day. Once spent that side is exit-only: the next trigger closes the leg in full and books the loss. This is the risk control — no stop-loss is ever set."
+          label="Max fixes per side"
+          help="How many times a day the calls (or the puts) can be fixed by moving them further out. Once used up, the next problem on that side is closed in full and the loss taken. This is the risk control — there is no stop-loss."
         >
           <NumInput
             value={config.maxRolls}
@@ -141,23 +141,23 @@ export function DeltaStrategyTab({
         </Field>
 
         <Field
-          label="A roll is"
-          help="A roll buys back part of a losing short and sells the same type further out. This says whether one corrective pass draws a single roll from the budget, or every strike it touches draws its own."
+          label="Count a fix as"
+          help="A fix buys back part of the option that is hurting and sells the same type further out. This decides whether one round of fixing counts as one, or every strike it touches counts as one."
         >
           <Select
             value={config.rollCounts}
             width="w-32"
             onChange={(v) => setConfig({ rollCounts: v })}
             options={[
-              { value: 'pass', label: 'One pass' },
-              { value: 'strike', label: 'Per strike' },
+              { value: 'pass', label: 'One whole round' },
+              { value: 'strike', label: 'Each strike' },
             ]}
           />
         </Field>
 
         <Field
-          label="Entry / floor $"
-          help="Left: the price to aim for when selling the opening pair and every roll replacement — it takes whichever listed strike is quoted nearest it. Right: a hard floor, nothing is ever sold cheaper than this."
+          label="Sell at / never below"
+          help="Left: the premium to aim for — it picks whichever strike is quoted closest to this. Right: a hard floor. Nothing is ever sold cheaper than this, anywhere."
         >
           <div className="flex items-center gap-2">
             <NumInput
@@ -179,8 +179,8 @@ export function DeltaStrategyTab({
         </Field>
 
         <Field
-          label="Strike Δ range"
-          help="One option's own delta, used only to pick which fresh strike to sell when no ITM leg is left to roll — not the portfolio's delta, which is Band L / U. A single option's delta is always between −1 and 1, so keep this small and positive. The sign is handled for you: 0.15–0.25 already matches a put at −0.20."
+          label="New option delta"
+          help="When there is nothing left to fix and it has to sell a fresh option, this is how big that one option's delta should be. Keep it small so each contract moves the position a little — 0.15 to 0.25. One option's delta is always between −1 and 1, so this can never be −2. Ignore the sign: 0.15–0.25 already matches a put at −0.20."
         >
           <div className="flex items-center gap-2">
             <NumInput
@@ -202,8 +202,8 @@ export function DeltaStrategyTab({
         </Field>
 
         <Field
-          label="N pairs"
-          help="How many call/put pairs to sell at the open. Multiplies the lots Qty resolves to, so 2 pairs of a 1-lot Qty is 2 lots a leg."
+          label="Pairs at open"
+          help="How many call-and-put pairs to sell when trading starts. It multiplies the size below, so 2 pairs at a 1-lot size is 2 lots per option."
         >
           <NumInput
             value={config.pairs}
@@ -218,8 +218,8 @@ export function DeltaStrategyTab({
             out to beside the box — lots are what Δp actually counts, so seeing them
             is the difference between a sane band and a permanently breached one. */}
         <Field
-          label="Qty · XAUT"
-          help="XAUT sold per leg at the open, converted to lots by the contract's own value — the same as the auto tab's Quantity. Careful: Δp counts lots, so raising this scales Δp by the same factor and Band L / U has to be scaled with it or the band stops meaning anything."
+          label="Size per option · XAUT"
+          help="How much to sell of each option, in XAUT — the same idea as Quantity on the auto tab. Careful: position delta counts lots, so doubling this doubles the delta. Raise the Position delta range by the same amount or it will sit outside its range all day."
         >
           <div className="flex items-center gap-2">
             <NumInput
@@ -236,17 +236,17 @@ export function DeltaStrategyTab({
         </Field>
 
         <Field
-          label="Tie-break"
-          help="Which strike wins when several sit near the entry premium: the absolute closest, or the nearest one above or below it."
+          label="If two strikes tie"
+          help="When two strikes are priced about equally close to what you asked for, this decides which one wins."
         >
           <Select
             value={config.tieBreak}
             width="w-32"
             onChange={(v) => setConfig({ tieBreak: v })}
             options={[
-              { value: 'closest', label: 'Absolute closest' },
-              { value: 'above', label: 'Nearest above' },
-              { value: 'below', label: 'Nearest below' },
+              { value: 'closest', label: 'Closest either way' },
+              { value: 'above', label: 'The pricier one' },
+              { value: 'below', label: 'The cheaper one' },
             ]}
           />
         </Field>
@@ -256,7 +256,7 @@ export function DeltaStrategyTab({
             moving to a contract nobody picked, so the stale case is called out. */}
         <Field
           label="Expiry"
-          help="Which expiry to trade, by date. A date does not roll — once it settles the strategy stands down until you pick a new one, rather than quietly trading a different contract."
+          help="Which expiry to trade, by date. The date does not move on its own — once that expiry is gone, trading stops until you pick a new one. It will never quietly switch to a different one."
         >
           <div className="flex items-center gap-2">
             <Select
@@ -276,7 +276,7 @@ export function DeltaStrategyTab({
             so this brings a cycle forward to within that, not to this instant. */}
         <Field
           label="Refresh"
-          help="How often the engine re-reads the book. It takes at most one action per refresh, sized on prices fetched then — never a batch. The button clears the wait so the next engine tick acts; the engine ticks once a minute, so a cycle arrives within that rather than instantly."
+          help="How often it looks at the position and acts. One action per check, never several at once. The button skips the wait so the next check happens sooner — it runs every minute, so that means within a minute, not instantly."
         >
           <div className="flex items-center gap-2">
             <NumInput
@@ -310,8 +310,8 @@ export function DeltaStrategyTab({
         {/* Take profit as a price on the option's own mark — 0.7 buys any short
             leg back at $0.70, whatever it sold for. No stop is ever set. */}
         <Field
-          label="TP mark"
-          help="Take-profit as a price on the option's own mark, not a percentage. At 0.70 any short is bought back once it is worth 70 cents, whatever it sold for. No stop is ever set."
+          label="Buy back at"
+          help="Any option it sold is bought back once its price falls to this. At $0.70, a leg sold for $4 closes at 70 cents and you keep most of the premium. This is a price, not a percentage."
         >
           <NumInput
             value={config.takeProfitMark}
@@ -346,14 +346,14 @@ export function DeltaStrategyTab({
 
       {/* Readout. Where Δp sits, what the session has spent, and the next move. */}
       <div className="flex flex-wrap items-center gap-x-6 gap-y-3 border-t border-line px-5 py-2.5">
-        <Readout label="Net Δp" tone={plan?.breach ? 'warn' : 'ok'}>
+        <Readout label="Position delta" tone={plan?.breach ? 'warn' : 'ok'}>
           {dp === null ? '—' : greek(dp, 2)}
         </Readout>
-        <Readout label="Band">
+        <Readout label="Allowed range">
           {price(config.bandLow, 2)} – {price(config.bandHigh, 2)}
         </Readout>
-        <Readout label="ITM queue">{plan ? plan.queue.length : '—'}</Readout>
-        <Readout label="Rolls left C / P" tone={callsLeft === 0 || putsLeft === 0 ? 'warn' : 'ok'}>
+        <Readout label="Legs to fix">{plan ? plan.queue.length : '—'}</Readout>
+        <Readout label="Fixes left C / P" tone={callsLeft === 0 || putsLeft === 0 ? 'warn' : 'ok'}>
           {callsLeft} / {putsLeft}
         </Readout>
         <Readout label="Session">
@@ -361,7 +361,7 @@ export function DeltaStrategyTab({
         </Readout>
         {/* The mark every short is bought back at. No stop, so there is nothing
             to show beside it. */}
-        <Readout label="TP / SL">
+        <Readout label="Buy back / stop">
           {config.takeProfitMark > 0 ? `${price(config.takeProfitMark, 2)} / none` : 'none / none'}
         </Readout>
 
@@ -415,7 +415,7 @@ function BandMeter({ low, high, dp }: { low: number; high: number; dp: number | 
 
   return (
     <div className="flex w-40 flex-col gap-1">
-      <span className="text-[9px] font-semibold tracking-[0.14em] text-ink-3 uppercase">Δp in band</span>
+      <span className="text-[9px] font-semibold tracking-[0.14em] text-ink-3 uppercase">Where delta sits</span>
       <div className="relative h-2 rounded-full border border-raised-3 bg-surface">
         {frac !== null && (
           <span

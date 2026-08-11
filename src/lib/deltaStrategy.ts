@@ -642,14 +642,14 @@ export function planCycle(input: CycleInput): CyclePlan {
 
   // ---- Daily entry ---------------------------------------------------------
   if (session.enteredDay !== day) {
-    if (cfg.pairs <= 0) return { ...base, action: null, reason: 'N is zero — no entry to place' }
+    if (cfg.pairs <= 0) return { ...base, action: null, reason: 'Pairs at open is zero — nothing to sell' }
     const call = pickByPremium(expiry, 'call', cfg, tickerFor)
     const put = pickByPremium(expiry, 'put', cfg, tickerFor)
     if (!call || !put) {
       return {
         ...base,
         action: null,
-        reason: `No ${!call ? 'call' : 'put'} strike at or above the $${cfg.minPremium} floor yet`,
+        reason: `No ${!call ? 'call' : 'put'} strike at $${cfg.minPremium} or better yet`,
       }
     }
     const callLots = entryLots(call.product, cfg)
@@ -669,12 +669,12 @@ export function planCycle(input: CycleInput): CyclePlan {
 
   // ---- Rebalance -----------------------------------------------------------
   if (dp === null) {
-    return { ...base, action: null, reason: `Waiting on greeks for ${missing.length} leg(s)` }
+    return { ...base, action: null, reason: `Waiting for delta data on ${missing.length} leg(s)` }
   }
 
   const breach = bandBreach(dp, cfg)
   if (!breach) {
-    return { ...base, breach, action: null, reason: `Δp ${fmt(dp)} — inside the band` }
+    return { ...base, breach, action: null, reason: `Position delta ${fmt(dp)} — inside range` }
   }
 
   const target = landingTarget(cfg, breach)
@@ -697,7 +697,7 @@ export function planCycle(input: CycleInput): CyclePlan {
         ...base,
         breach,
         action: { type: 'roll', side: rollSide, leg, exitQty: open, replace: null },
-        reason: `${rollSide === 'call' ? 'Calls' : 'Puts'} exit-only — closing ${leg.strike} in full`,
+        reason: `${rollSide === 'call' ? 'Calls' : 'Puts'} out of fixes — closing ${leg.strike} in full`,
       }
     }
 
@@ -716,7 +716,7 @@ export function planCycle(input: CycleInput): CyclePlan {
         exitQty: q,
         replace: { product: replacement.product, qty: q },
       },
-      reason: `Δp ${fmt(dp)} → ${fmt(target)} — rolling ${q} of ${leg.strike} out to ${replacement.strike}`,
+      reason: `Delta ${fmt(dp)} → ${fmt(target)} — moving ${q} of ${leg.strike} out to ${replacement.strike}`,
     }
   }
 
@@ -728,19 +728,19 @@ export function planCycle(input: CycleInput): CyclePlan {
       ...base,
       breach,
       action: null,
-      reason: `Δp ${fmt(dp)} outside the band — no ${sellSide} strike in the ${cfg.bandDeltaLow}–${cfg.bandDeltaHigh} delta range`,
+      reason: `Delta ${fmt(dp)} outside range — no ${sellSide} strike with a ${cfg.bandDeltaLow}–${cfg.bandDeltaHigh} delta`,
     }
   }
   const q = bandQty(target, dp, pick.optionDelta)
   if (q <= 0) {
-    return { ...base, breach, action: null, reason: `Δp ${fmt(dp)} — breach is under one contract` }
+    return { ...base, breach, action: null, reason: `Delta ${fmt(dp)} — the fix works out to less than one contract` }
   }
 
   return {
     ...base,
     breach,
     action: { type: 'band', side: sellSide, product: pick.product, qty: q },
-    reason: `Δp ${fmt(dp)} → ${fmt(target)} — band correction, selling ${q} × ${pick.strike}${sellSide === 'call' ? 'C' : 'P'}`,
+    reason: `Delta ${fmt(dp)} → ${fmt(target)} — selling ${q} × ${pick.strike}${sellSide === 'call' ? 'C' : 'P'} to fix it`,
   }
 }
 
