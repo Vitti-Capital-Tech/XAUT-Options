@@ -310,8 +310,8 @@ export function DeltaStrategyTab({
         {/* Take profit as a price on the option's own mark — 0.7 buys any short
             leg back at $0.70, whatever it sold for. No stop is ever set. */}
         <Field
-          label="TP mark"
-          help="Take-profit, as a price on the option's own mark. Any option it sold is bought back once its price falls to this: at $0.70, a leg sold for $4 closes at 70 cents and you keep most of the premium. It is a price, not a percentage. No stop-loss is ever set."
+          label="Buy back at"
+          help="Any option it sold is bought back once its price falls to this — the take-profit. At $0.70, a leg sold for $4 closes at 70 cents and you keep most of the premium. It is a price on the option's own mark, not a percentage. No stop-loss is ever set."
         >
           <NumInput
             value={config.takeProfitMark}
@@ -361,7 +361,7 @@ export function DeltaStrategyTab({
         </Readout>
         {/* The mark every short is bought back at. No stop, so there is nothing
             to show beside it. */}
-        <Readout label="TP / SL">
+        <Readout label="Buy back / stop">
           {config.takeProfitMark > 0 ? `${price(config.takeProfitMark, 2)} / none` : 'none / none'}
         </Readout>
 
@@ -415,7 +415,7 @@ function BandMeter({ low, high, dp }: { low: number; high: number; dp: number | 
 
   return (
     <div className="flex w-40 flex-col gap-1">
-      <span className="text-[9px] font-semibold tracking-[0.14em] text-ink-3 uppercase">Where delta sits</span>
+      <span className="text-[9px] font-semibold tracking-[0.14em] text-ink-3 uppercase">Delta in range</span>
       <div className="relative h-2 rounded-full border border-raised-3 bg-surface">
         {frac !== null && (
           <span
