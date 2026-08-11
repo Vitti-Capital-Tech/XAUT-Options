@@ -54,7 +54,7 @@ export function DeltaStrategyTab({
           simply more of them here. */}
       <div className="flex flex-wrap items-start gap-x-6 gap-y-4 px-5 py-3.5">
         <Field
-          label="Trading hours · IST"
+          label="Session · IST"
           help="When it trades, on the IST clock. It sells the pair at the start and buys everything back at the end, so nothing is held overnight."
         >
           <div className="flex items-center gap-2">
@@ -68,14 +68,14 @@ export function DeltaStrategyTab({
             book is flattened and nothing new is opened. The readout's Session field
             says which it is. */}
         <Field
-          label="Trading days"
+          label="Days · IST"
           help="Which days it trades. A day switched off is treated as closed: everything is bought back and nothing new is opened."
         >
           <DayPicker value={config.tradeDays} onChange={(tradeDays) => setConfig({ tradeDays })} />
         </Field>
 
         <Field
-          label="Position delta"
+          label="Band L / U"
           help="The delta of everything you hold, added up. Inside this range it does nothing at all; outside it, it fixes the position. This is the whole position, not one option — so it can be any size, and negatives are fine. −2 to 1 is a valid range."
         >
           <div className="flex items-center gap-2">
@@ -86,7 +86,7 @@ export function DeltaStrategyTab({
         </Field>
 
         <Field
-          label="Correct back to"
+          label="Lands on"
           help="Once it starts fixing, where should the position delta end up — back at the edge you crossed, or all the way to the middle of the range? The middle moves the position a lot further."
         >
           <Select
@@ -94,14 +94,14 @@ export function DeltaStrategyTab({
             width="w-32"
             onChange={(v) => setConfig({ targetLanding: v })}
             options={[
-              { value: 'edge', label: 'The edge crossed' },
-              { value: 'mid', label: 'Middle of range' },
+              { value: 'edge', label: 'Breached edge' },
+              { value: 'mid', label: 'Band midpoint' },
             ]}
           />
         </Field>
 
         <Field
-          label="Land inside by"
+          label="Buffer B"
           help="How far back inside the range to come, rather than stopping on the line. At 0 it aims for the line itself, which usually works out to zero contracts and so does nothing — 0.4 is what makes fixes actually happen."
         >
           <NumInput
@@ -114,7 +114,7 @@ export function DeltaStrategyTab({
         </Field>
 
         <Field
-          label="In the money by"
+          label="ITM trigger"
           help="How far past its strike gold must be before that sold option can be fixed. On its own this never starts anything — the position delta leaving its range is what does."
         >
           <NumInput
@@ -128,7 +128,7 @@ export function DeltaStrategyTab({
         </Field>
 
         <Field
-          label="Max fixes per side"
+          label="Max rolls / side"
           help="How many times a day the calls (or the puts) can be fixed by moving them further out. Once used up, the next problem on that side is closed in full and the loss taken. This is the risk control — there is no stop-loss."
         >
           <NumInput
@@ -141,7 +141,7 @@ export function DeltaStrategyTab({
         </Field>
 
         <Field
-          label="Count a fix as"
+          label="A roll is"
           help="A fix buys back part of the option that is hurting and sells the same type further out. This decides whether one round of fixing counts as one, or every strike it touches counts as one."
         >
           <Select
@@ -149,14 +149,14 @@ export function DeltaStrategyTab({
             width="w-32"
             onChange={(v) => setConfig({ rollCounts: v })}
             options={[
-              { value: 'pass', label: 'One whole round' },
-              { value: 'strike', label: 'Each strike' },
+              { value: 'pass', label: 'One pass' },
+              { value: 'strike', label: 'Per strike' },
             ]}
           />
         </Field>
 
         <Field
-          label="Sell at / never below"
+          label="Entry / floor $"
           help="Left: the premium to aim for — it picks whichever strike is quoted closest to this. Right: a hard floor. Nothing is ever sold cheaper than this, anywhere."
         >
           <div className="flex items-center gap-2">
@@ -179,8 +179,8 @@ export function DeltaStrategyTab({
         </Field>
 
         <Field
-          label="New option delta"
-          help="When there is nothing left to fix and it has to sell a fresh option, this is how big that one option's delta should be. Keep it small so each contract moves the position a little — 0.15 to 0.25. One option's delta is always between −1 and 1, so this can never be −2. Ignore the sign: 0.15–0.25 already matches a put at −0.20."
+          label="Strike Δ range"
+          help="When there is nothing left to fix and it has to sell a fresh option, this is how big that one option's delta should be — not the whole position's, which is Band L / U. Keep it small so each contract moves the position a little — 0.15 to 0.25. One option's delta is always between −1 and 1, so this can never be −2. Ignore the sign: 0.15–0.25 already matches a put at −0.20."
         >
           <div className="flex items-center gap-2">
             <NumInput
@@ -202,7 +202,7 @@ export function DeltaStrategyTab({
         </Field>
 
         <Field
-          label="Pairs at open"
+          label="N pairs"
           help="How many call-and-put pairs to sell when trading starts. It multiplies the size below, so 2 pairs at a 1-lot size is 2 lots per option."
         >
           <NumInput
@@ -218,8 +218,8 @@ export function DeltaStrategyTab({
             out to beside the box — lots are what Δp actually counts, so seeing them
             is the difference between a sane band and a permanently breached one. */}
         <Field
-          label="Size per option · XAUT"
-          help="How much to sell of each option, in XAUT — the same idea as Quantity on the auto tab. Careful: position delta counts lots, so doubling this doubles the delta. Raise the Position delta range by the same amount or it will sit outside its range all day."
+          label="Qty · XAUT"
+          help="How much to sell of each option, in XAUT — the same idea as Quantity on the auto tab. Careful: position delta counts lots, so doubling this doubles the delta. Raise Band L / U by the same amount or it will sit outside its band all day."
         >
           <div className="flex items-center gap-2">
             <NumInput
@@ -236,7 +236,7 @@ export function DeltaStrategyTab({
         </Field>
 
         <Field
-          label="If two strikes tie"
+          label="Tie-break"
           help="When two strikes are priced about equally close to what you asked for, this decides which one wins."
         >
           <Select
@@ -244,9 +244,9 @@ export function DeltaStrategyTab({
             width="w-32"
             onChange={(v) => setConfig({ tieBreak: v })}
             options={[
-              { value: 'closest', label: 'Closest either way' },
-              { value: 'above', label: 'The pricier one' },
-              { value: 'below', label: 'The cheaper one' },
+              { value: 'closest', label: 'Absolute closest' },
+              { value: 'above', label: 'Nearest above' },
+              { value: 'below', label: 'Nearest below' },
             ]}
           />
         </Field>
@@ -310,7 +310,7 @@ export function DeltaStrategyTab({
         {/* Take profit as a price on the option's own mark — 0.7 buys any short
             leg back at $0.70, whatever it sold for. No stop is ever set. */}
         <Field
-          label="Buy back at"
+          label="TP mark"
           help="Any option it sold is bought back once its price falls to this — the take-profit. At $0.70, a leg sold for $4 closes at 70 cents and you keep most of the premium. It is a price on the option's own mark, not a percentage. No stop-loss is ever set."
         >
           <NumInput
@@ -346,14 +346,14 @@ export function DeltaStrategyTab({
 
       {/* Readout. Where Δp sits, what the session has spent, and the next move. */}
       <div className="flex flex-wrap items-center gap-x-6 gap-y-3 border-t border-line px-5 py-2.5">
-        <Readout label="Position delta" tone={plan?.breach ? 'warn' : 'ok'}>
+        <Readout label="Net Δp" tone={plan?.breach ? 'warn' : 'ok'}>
           {dp === null ? '—' : greek(dp, 2)}
         </Readout>
-        <Readout label="Allowed range">
+        <Readout label="Band">
           {price(config.bandLow, 2)} – {price(config.bandHigh, 2)}
         </Readout>
-        <Readout label="Legs to fix">{plan ? plan.queue.length : '—'}</Readout>
-        <Readout label="Fixes left C / P" tone={callsLeft === 0 || putsLeft === 0 ? 'warn' : 'ok'}>
+        <Readout label="ITM queue">{plan ? plan.queue.length : '—'}</Readout>
+        <Readout label="Rolls left C / P" tone={callsLeft === 0 || putsLeft === 0 ? 'warn' : 'ok'}>
           {callsLeft} / {putsLeft}
         </Readout>
         <Readout label="Session">
@@ -361,7 +361,7 @@ export function DeltaStrategyTab({
         </Readout>
         {/* The mark every short is bought back at. No stop, so there is nothing
             to show beside it. */}
-        <Readout label="Buy back / stop">
+        <Readout label="TP / SL">
           {config.takeProfitMark > 0 ? `${price(config.takeProfitMark, 2)} / none` : 'none / none'}
         </Readout>
 
@@ -415,7 +415,7 @@ function BandMeter({ low, high, dp }: { low: number; high: number; dp: number | 
 
   return (
     <div className="flex w-40 flex-col gap-1">
-      <span className="text-[9px] font-semibold tracking-[0.14em] text-ink-3 uppercase">Delta in range</span>
+      <span className="text-[9px] font-semibold tracking-[0.14em] text-ink-3 uppercase">Δp in band</span>
       <div className="relative h-2 rounded-full border border-raised-3 bg-surface">
         {frac !== null && (
           <span
