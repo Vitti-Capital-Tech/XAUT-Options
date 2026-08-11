@@ -50,9 +50,18 @@ export type ExpiryPick = 'nearest' | 'next'
  * with the app shell, which subscribes that expiry's strikes to the feed —
  * picking a strike by premium or by delta needs quotes across the whole chain,
  * not just the legs already held.
+ *
+ * An explicit `expiryLabel` wins, and only while that expiry is still listed:
+ * null once it settles, which is what stands the strategy down rather than
+ * quietly moving it to a contract nobody chose. With no label the `expiryPick`
+ * rule applies.
  */
-export function pickExpiry(expiries: Expiry[], pick: ExpiryPick): Expiry | null {
-  if (pick === 'next') return expiries[1] ?? expiries[0] ?? null
+export function pickExpiry(
+  expiries: Expiry[],
+  cfg: Pick<DeltaConfig, 'expiryPick'> & { expiryLabel?: string | null },
+): Expiry | null {
+  if (cfg.expiryLabel) return expiries.find((e) => e.label === cfg.expiryLabel) ?? null
+  if (cfg.expiryPick === 'next') return expiries[1] ?? expiries[0] ?? null
   return expiries[0] ?? null
 }
 
@@ -93,7 +102,15 @@ export interface DeltaConfig {
    */
   qty: number
   tieBreak: TieBreak
+  /** The rule used only while `expiryLabel` is unset. */
   expiryPick: ExpiryPick
+  /**
+   * The chosen expiry as `ddmmyy`, picked from the live chain the way the option
+   * chain's tabs are. A date does not roll: once it settles the strategy stands
+   * down until a new one is chosen, rather than falling through to another
+   * contract. Null falls back to `expiryPick`.
+   */
+  expiryLabel: string | null
   cycleSeconds: number
   /**
    * Take-profit on every short the strategy opens, as a price on the option's
@@ -124,6 +141,8 @@ export const DEFAULT_DELTA_CONFIG: DeltaConfig = {
   qty: 0.001,
   tieBreak: 'closest',
   expiryPick: 'nearest',
+  // Unset until the trader picks a date, so a new account trades the nearest.
+  expiryLabel: null,
   cycleSeconds: 30,
   takeProfitMark: 0.7,
 }

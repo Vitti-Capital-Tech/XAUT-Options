@@ -159,11 +159,16 @@ trade. Days are ISO weekdays (Mon 1 – Sun 7) on the same IST clock as the
 window, and the day tested is the one the window *opened* on, so a window that
 wraps past midnight belongs to the day it started.
 
-`expiry_rule` decides which expiry an entry lands in
-([`0018`](supabase/migrations/0018_auto_strategy_expiry_rule.sql)). The default,
+The **expiry is picked by date**, from the live chain, the way the option chain's
+own tabs list them ([`0023`](supabase/migrations/0023_explicit_expiry.sql)). A date
+does not roll: once the chosen expiry settles the strategy skips its bars until a
+new one is picked, rather than selling a contract nobody chose. The tab marks a
+settled selection so the reason it stopped is on screen.
+
+With no date chosen, `expiry_rule` still applies
+([`0018`](supabase/migrations/0018_auto_strategy_expiry_rule.sql)). Its default,
 **`today`**, sells only the same-day contract on the IST clock and **skips the bar
-when there is none** — it never falls through to a later expiry, which is the
-behaviour it exists to stop. Two consequences worth knowing before arming it:
+when there is none**. Two consequences worth knowing:
 
 - XAUT does not list a contract every calendar day (a live set of Mon 10 / Tue 11
   / Fri 14 Aug leaves Wednesday and Thursday with no same-day expiry at all).

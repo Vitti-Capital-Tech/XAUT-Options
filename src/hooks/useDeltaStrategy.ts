@@ -81,6 +81,7 @@ interface Row {
   qty: string | number
   tie_break: string
   expiry_pick: string
+  expiry_label: string | null
   cycle_seconds: number
   take_profit_mark: string | number | null
   trade_days: number[] | null
@@ -92,7 +93,7 @@ interface Row {
 }
 
 const COLS =
-  'account_id, armed, session_open, session_close, band_low, band_high, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, min_premium, band_delta_low, band_delta_high, pairs, qty, tie_break, expiry_pick, cycle_seconds, take_profit_mark, trade_days, session_day, rolls_used_call, rolls_used_put, entered_day, flattened_day'
+  'account_id, armed, session_open, session_close, band_low, band_high, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, min_premium, band_delta_low, band_delta_high, pairs, qty, tie_break, expiry_pick, expiry_label, cycle_seconds, take_profit_mark, trade_days, session_day, rolls_used_call, rolls_used_put, entered_day, flattened_day'
 
 // Postgres numerics come back as strings over PostgREST.
 const n = (v: string | number) => Number(v)
@@ -116,6 +117,7 @@ function rowToConfig(row: Row): DeltaConfig {
     qty: n(row.qty),
     tieBreak: row.tie_break as TieBreak,
     expiryPick: row.expiry_pick as ExpiryPick,
+    expiryLabel: row.expiry_label,
     cycleSeconds: row.cycle_seconds,
     // Null is the column's "no take-profit"; the config carries that as 0.
     takeProfitMark: row.take_profit_mark === null ? 0 : n(row.take_profit_mark),
@@ -145,6 +147,7 @@ function configToRow(cfg: DeltaConfig) {
     qty: cfg.qty,
     tie_break: cfg.tieBreak,
     expiry_pick: cfg.expiryPick,
+    expiry_label: cfg.expiryLabel,
     cycle_seconds: cfg.cycleSeconds,
     take_profit_mark: cfg.takeProfitMark > 0 ? cfg.takeProfitMark : null,
     trade_days: cfg.tradeDays,
@@ -351,7 +354,7 @@ export function useDeltaStrategy(accountId: string | null, deps: DeltaEngineDeps
           cfg,
           session: sess,
           positions: d.positions,
-          expiry: pickExpiry(d.expiries, cfg.expiryPick),
+          expiry: pickExpiry(d.expiries, cfg),
           spot: market.spot,
           tickerFor: (symbol) => market.get(symbol),
           // The engine's touched set lives in the database and is its business.
@@ -369,7 +372,7 @@ export function useDeltaStrategy(accountId: string | null, deps: DeltaEngineDeps
   // Any listed contract of the traded expiry answers this — they share a contract
   // value — so the readout uses the venue's number rather than assuming one.
   const entryLots = useMemo(() => {
-    const expiry = pickExpiry(deps.expiries, config.expiryPick)
+    const expiry = pickExpiry(deps.expiries, config)
     const product = expiry?.calls.values().next().value ?? expiry?.puts.values().next().value
     return product ? entryLotsFor(product, config) : null
   }, [deps.expiries, config])

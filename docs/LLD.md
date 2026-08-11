@@ -74,6 +74,7 @@ erDiagram
         smallint_array trade_days "ISO weekdays, IST"
         numeric min_premium "floor on the bid; 0 off"
         text expiry_rule "today | nearest"
+        text expiry_label "ddmmyy, or null"
         numeric stop_loss_pct "% of premium; 0 = no stop"
         numeric take_profit_pct "% of premium kept; 0 = none"
         bigint last_acted "unix sec of last bar"
@@ -96,6 +97,7 @@ erDiagram
         numeric band_delta_high
         integer pairs "N"
         numeric qty "XAUT per leg -> lots"
+        text expiry_label "ddmmyy, or null"
         text session_day "IST YYYY-MM-DD"
         integer rolls_used_call
         integer rolls_used_put
@@ -590,6 +592,19 @@ by premium, so there the floor narrows a search rather than blocking one. A
 skipped bar consumes `last_acted`, like every other skip path: the poll only
 fetches in the first minutes of an hour, so the bar cannot be retried, and leaving
 it unconsumed would re-log the same decision every minute for the rest of it.
+
+**An expiry chosen by date does not roll.** `expiry_label` on both settings tables
+holds a `ddmmyy` picked from the live chain
+([`0023`](../supabase/migrations/0023_explicit_expiry.sql)), and each engine honours
+it only while that expiry is still listed and unsettled. When it is not, the auto
+strategy skips the bar and the delta strategy stands down — neither falls through
+to another contract, because silently trading an expiry nobody selected is the
+fault `0018` was written to remove and an explicit choice deserves the same
+guarantee. Null falls back to the rule, which is what a fresh account uses.
+
+One ordering detail in `apply_delta_strategy`: the session-close flatten sits
+*before* the expiry lookup, so a stale expiry can never strand an open book. The
+flatten reads positions, not settings.
 
 **Nearest-unsettled is not the same as today.** `apply_strategy` sold the nearest
 expiry still to settle, which diverges from the same-day contract two ways: XAUT

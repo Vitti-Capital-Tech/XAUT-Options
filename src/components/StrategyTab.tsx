@@ -1,4 +1,5 @@
 import { MONEYNESS_ORDER, stopMultiple, takeProfitMultiple, type Moneyness } from '../lib/strategy'
+import { expiryIsLive, expiryOptions, type Expiry } from '../lib/delta'
 import type { StrategyApi } from '../hooks/useAutoStrategy'
 import { DayPicker, Field, NumInput, RunSwitch, Select, TimePicker } from './controls'
 
@@ -12,10 +13,22 @@ import { DayPicker, Field, NumInput, RunSwitch, Select, TimePicker } from './con
  * The window is both ends of the day: the engine sells only inside it, and
  * flattens the account once past it, so nothing is carried overnight.
  */
-export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
+export function StrategyTab({
+  strategy,
+  expiries,
+}: {
+  strategy: StrategyApi
+  expiries: Expiry[]
+}) {
   const { config, setConfig, armed, setArmed, hasAccount } = strategy
   const mult = stopMultiple(config.stopLossPct)
   const tpMult = takeProfitMultiple(config.takeProfitPct)
+
+  const expiryChoices = expiryOptions(expiries, config.expiryLabel)
+  const expiryLive = expiryIsLive(expiries, config.expiryLabel)
+  // With nothing chosen the engine falls back to its rule, whose usual answer is
+  // the nearest listed expiry — so show that rather than an empty box.
+  const expiryValue = config.expiryLabel ?? expiries[0]?.label ?? ''
 
   return (
     <div className="flex flex-wrap items-center gap-x-6 gap-y-4 border-b border-line bg-raised px-5 py-3.5">
@@ -62,23 +75,24 @@ export function StrategyTab({ strategy }: { strategy: StrategyApi }) {
         <DayPicker value={config.tradeDays} onChange={(tradeDays) => setConfig({ tradeDays })} />
       </Field>
 
-      {/* Which expiry an entry lands in. 'Today only' skips the bar when XAUT
-          lists no same-day contract, or once the same-day one has settled at
-          21:30 IST — deliberately, since selling a multi-day option in its place
-          is what the rule exists to stop. */}
+      {/* The listed expiries by date, as the chain's tabs show them. A date does not
+          roll: once the chosen one settles the strategy skips its bars rather than
+          selling a contract nobody picked, so the stale case is called out. */}
       <Field
         label="Expiry"
-        help="Today only sells the same-day contract and skips the bar when there is none — XAUT does not list one every day, and the same-day contract settles at 21:30 IST. Nearest live takes the nearest unsettled expiry instead, whatever its date."
+        help="Which expiry to sell, by date. A date does not roll — once it settles the strategy stops trading until you pick a new one, rather than quietly selling a different contract. Today's expiry settles at 21:30 IST."
       >
-        <Select
-          value={config.expiryRule}
-          width="w-32"
-          onChange={(expiryRule) => setConfig({ expiryRule })}
-          options={[
-            { value: 'today', label: 'Today only' },
-            { value: 'nearest', label: 'Nearest live' },
-          ]}
-        />
+        <div className="flex items-center gap-2">
+          <Select
+            value={expiryValue}
+            width="w-32"
+            onChange={(expiryLabel) => setConfig({ expiryLabel })}
+            options={expiryChoices}
+          />
+          {!expiryLive && (
+            <span className="text-[11px] whitespace-nowrap text-warn">Settled — pick a date</span>
+          )}
+        </div>
       </Field>
 
       {/* The premium floor: a bar whose strike is bid under this is skipped

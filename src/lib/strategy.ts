@@ -94,7 +94,15 @@ export interface StrategyConfig {
    * trades on either. `nearest` takes the nearest unsettled expiry, whatever its
    * date, which is what the strategy did before the rule existed.
    */
+  /** The rule used only while `expiryLabel` is unset. */
   expiryRule: ExpiryRule
+  /**
+   * The chosen expiry as `ddmmyy`, picked from the live chain the way the option
+   * chain's tabs are. A date does not roll: once it settles the strategy skips its
+   * bars until a new one is chosen, rather than selling a contract nobody chose.
+   * Null falls back to `expiryRule`.
+   */
+  expiryLabel: string | null
   /**
    * Stop-loss as a percent of the premium collected, watched on the option's own
    * mark — see `stopLevel`. 100 stops a $4 short at $8, which is the whole premium
@@ -123,6 +131,8 @@ export const DEFAULT_CONFIG: StrategyConfig = {
   // Same-day only. Selling a multi-day option because today's is unlisted was the
   // behaviour this rule was added to stop, so it is not the default.
   expiryRule: 'today',
+  // Unset until the trader picks a date, so a new account uses the rule above.
+  expiryLabel: null,
   // 100% is the 2x-entry stop the strategy was hardcoded to before it was a setting.
   stopLossPct: 100,
   // No take-profit by default: the strategy had none, and the window flatten already

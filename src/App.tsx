@@ -150,7 +150,7 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
     positions: deltaTrading.positions,
     expiries,
   })
-  const deltaExpiry = pickExpiry(expiries, deltaStrategy.config.expiryPick)
+  const deltaExpiry = pickExpiry(expiries, deltaStrategy.config)
 
   // ---- Live stream ---------------------------------------------------------
   const [stream] = useState(() => new MarketStream())
@@ -333,7 +333,7 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
       ) : page === 'strategy' ? (
         <div className="flex min-h-screen flex-col">
           {topBar}
-          <StrategyTab strategy={strategy} />
+          <StrategyTab strategy={strategy} expiries={expiries} />
           {/* The strategy's own book — its positions and trade history, on the
               auto account, entirely separate from the chain's. */}
           <BottomPanel
@@ -349,7 +349,7 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
       ) : (
         <div className="flex min-h-screen flex-col">
           {topBar}
-          <DeltaStrategyTab strategy={deltaStrategy} />
+          <DeltaStrategyTab strategy={deltaStrategy} expiries={expiries} />
           {/* The delta strategy's own book, on the delta account — separate
               again from both the chain's and the auto strategy's. */}
           <BottomPanel

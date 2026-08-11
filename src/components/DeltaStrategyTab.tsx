@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useMarketTick } from '../lib/marketStore'
+import { expiryIsLive, expiryOptions, type Expiry } from '../lib/delta'
 import type { DeltaStrategyApi } from '../hooks/useDeltaStrategy'
 import { greek, price } from '../lib/format'
 import { DayPicker, Field, NumInput, RunSwitch, Select, TimePicker } from './controls'
@@ -23,10 +24,22 @@ import { DayPicker, Field, NumInput, RunSwitch, Select, TimePicker } from './con
  * selection and the cycle frequency — so the choice is on screen rather than
  * buried in an engine.
  */
-export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
+export function DeltaStrategyTab({
+  strategy,
+  expiries,
+}: {
+  strategy: DeltaStrategyApi
+  expiries: Expiry[]
+}) {
   const { config, setConfig, armed, setArmed, session, hasAccount, plan, error, refresh, entryLots } =
     strategy
   const [refreshing, setRefreshing] = useState(false)
+
+  const expiryChoices = expiryOptions(expiries, config.expiryLabel)
+  const expiryLive = expiryIsLive(expiries, config.expiryLabel)
+  // With nothing chosen the engine trades the nearest, so show that as selected
+  // rather than an empty box — the displayed date is the one it will trade.
+  const expiryValue = config.expiryLabel ?? expiries[0]?.label ?? ''
   // The plan is rebuilt on the engine's own cycle, but Δp moves with every tick;
   // subscribing keeps the band meter honest between cycles.
   useMarketTick()
@@ -238,19 +251,24 @@ export function DeltaStrategyTab({ strategy }: { strategy: DeltaStrategyApi }) {
           />
         </Field>
 
+        {/* The listed expiries by date, as the chain's tabs show them. A date does
+            not roll: once the chosen one settles the cycle stands down rather than
+            moving to a contract nobody picked, so the stale case is called out. */}
         <Field
           label="Expiry"
-          help="Which listed expiry to trade — the nearest one still to settle, or the one after it."
+          help="Which expiry to trade, by date. A date does not roll — once it settles the strategy stands down until you pick a new one, rather than quietly trading a different contract."
         >
-          <Select
-            value={config.expiryPick}
-            width="w-28"
-            onChange={(v) => setConfig({ expiryPick: v })}
-            options={[
-              { value: 'nearest', label: 'Nearest' },
-              { value: 'next', label: 'Next out' },
-            ]}
-          />
+          <div className="flex items-center gap-2">
+            <Select
+              value={expiryValue}
+              width="w-32"
+              onChange={(v) => setConfig({ expiryLabel: v })}
+              options={expiryChoices}
+            />
+            {!expiryLive && (
+              <span className="text-[11px] whitespace-nowrap text-warn">Settled — pick a date</span>
+            )}
+          </div>
         </Field>
 
         {/* The interval, plus a way to skip the wait. The button clears the spacing

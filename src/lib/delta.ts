@@ -129,6 +129,32 @@ export function formatExpiry(label: string): string {
   return `${String(d.getUTCDate()).padStart(2, '0')} ${MONTHS[d.getUTCMonth()]} ${String(d.getUTCFullYear()).slice(2)}`
 }
 
+/**
+ * Choices for a strategy's expiry picker — every listed expiry, formatted as the
+ * chain's tabs are.
+ *
+ * A stored expiry that is no longer listed is kept at the top and marked, rather
+ * than dropped. It is the reason that strategy has stopped trading, so hiding it
+ * would hide the diagnosis; the engine honours a chosen date only while it is
+ * listed and unsettled, and never falls through to another.
+ */
+export function expiryOptions(
+  expiries: Expiry[],
+  selected: string | null,
+): { value: string; label: string }[] {
+  const listed = expiries.map((e) => ({ value: e.label, label: formatExpiry(e.label) }))
+  if (selected && !expiries.some((e) => e.label === selected)) {
+    return [{ value: selected, label: `${formatExpiry(selected)} · settled` }, ...listed]
+  }
+  return listed
+}
+
+/** Whether a stored expiry is still tradeable, i.e. still in the live chain. */
+export function expiryIsLive(expiries: Expiry[], selected: string | null): boolean {
+  if (!selected) return true // nothing chosen yet — the engine's rule still applies
+  return expiries.some((e) => e.label === selected)
+}
+
 // ---------------------------------------------------------------------------
 // REST bootstrap
 // ---------------------------------------------------------------------------

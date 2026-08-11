@@ -36,12 +36,13 @@ interface Row {
   trade_days: number[] | null
   min_premium: string | number
   expiry_rule: string
+  expiry_label: string | null
   stop_loss_pct: string | number
   take_profit_pct: string | number
 }
 
 const COLS =
-  'account_id, armed, moneyness, qty, window_start, window_end, trade_days, min_premium, expiry_rule, stop_loss_pct, take_profit_pct'
+  'account_id, armed, moneyness, qty, window_start, window_end, trade_days, min_premium, expiry_rule, expiry_label, stop_loss_pct, take_profit_pct'
 
 export function useAutoStrategy(accountId: string | null): StrategyApi {
   const [config, setConfigState] = useState<StrategyConfig>(DEFAULT_CONFIG)
@@ -63,6 +64,7 @@ export function useAutoStrategy(accountId: string | null): StrategyApi {
       // Postgres numerics come back as strings over PostgREST.
       minPremium: Number(row.min_premium),
       expiryRule: row.expiry_rule as ExpiryRule,
+      expiryLabel: row.expiry_label,
       stopLossPct: Number(row.stop_loss_pct),
       takeProfitPct: Number(row.take_profit_pct),
     })
@@ -100,6 +102,7 @@ export function useAutoStrategy(accountId: string | null): StrategyApi {
           trade_days: DEFAULT_CONFIG.tradeDays,
           min_premium: DEFAULT_CONFIG.minPremium,
           expiry_rule: DEFAULT_CONFIG.expiryRule,
+          expiry_label: DEFAULT_CONFIG.expiryLabel,
           stop_loss_pct: DEFAULT_CONFIG.stopLossPct,
           take_profit_pct: DEFAULT_CONFIG.takeProfitPct,
         }
@@ -183,6 +186,7 @@ export function useAutoStrategy(accountId: string | null): StrategyApi {
           trade_days: next.tradeDays,
           min_premium: next.minPremium,
           expiry_rule: next.expiryRule,
+          expiry_label: next.expiryLabel,
           stop_loss_pct: next.stopLossPct,
           take_profit_pct: next.takeProfitPct,
         })
