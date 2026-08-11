@@ -356,7 +356,7 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
             positions={deltaTrading.positions}
             fills={deltaTrading.fills}
             productsBySymbol={productsBySymbol}
-            emptyPositions="No open positions. Set it Running and it sells its first pairs at the session open."
+            emptyPositions="No open positions. Set it Running and it sells its first pair at the session open."
             onClosePosition={(pos, product) => deltaTrading.closePosition(pos, product)}
             onSetTpSl={deltaTrading.setTpSl}
             onPickSymbol={(product) => openTicket(product, 'buy', null)}

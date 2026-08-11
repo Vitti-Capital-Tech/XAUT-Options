@@ -52,14 +52,16 @@ functions the earlier ones created, so skipping or reordering will fail.
 | `0021_qty_and_take_profit` | `qty` on the delta strategy (size in XAUT, as the auto tab does it) and `take_profit_pct` on the auto strategy (the mirror of its stop) |
 | `0022_delta_session_ist` | The delta session, days filter and session day move from the Sydney clock to IST, so both engines keep one clock |
 | `0023_explicit_expiry` | `expiry_label` on both strategies — pick the expiry by date from the live chain instead of by rule |
+| `0024_drop_pairs_and_fix_reentry` | Drops the delta strategy's `pairs` (folded into `qty`, one size control), and **fixes a session that closes and reopens the same day refusing to re-enter** |
 
 The first ten create the schema; `0011` is a bug fix, `0012` moves the delta
 strategy's engine server-side, `0013`–`0014` bracket what it sells, `0015` gives
 the auto strategy a close to match its open, `0016`–`0018` add its entry filters,
 `0019` fixes the delta strategy's daily entry, `0020`–`0021` make the auto bracket
 configurable and give delta a size in XAUT, `0022` puts both engines on the IST
-clock, and `0023` lets each pick its expiry by date. A fresh install wants all
-twenty-three.
+clock, `0023` lets each pick its expiry by date, and `0024` collapses the delta
+strategy's two size controls into one and fixes its re-entry. A fresh install wants
+all twenty-four.
 
 > `0021` adds `delta_strategy_settings.qty`, defaulting to one lot so nothing
 > changes on its own. **Raising it means rescaling `band_low`/`band_high` by the
@@ -76,6 +78,9 @@ twenty-three.
 > settles, that strategy stops trading until a new one is picked — deliberately,
 > rather than falling through to a contract nobody chose. Leaving `expiry_label`
 > null keeps the old rule (`expiry_rule` / `expiry_pick`).
+
+> `0024` folds `pairs` into `qty` before dropping it, so no account's size changes
+> — an account on `qty 0.01, pairs 3` becomes `qty 0.03`.
 
 > `0018` changes behaviour on an existing account: `expiry_rule` defaults to
 > `today`, so an armed auto account stops trading on a day XAUT lists no same-day

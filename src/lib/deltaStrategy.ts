@@ -6,7 +6,7 @@
  *
  * The rules come from Gold_Options_Delta_Strategy.docx. It is sell-only: no leg
  * is ever bought to reduce delta. Every session opens flat, sells N symmetric
- * call/put pairs near the entry premium, keeps net portfolio delta inside the
+ * a call/put pair near the entry premium, keeps net portfolio delta inside the
  * band by rolling in-the-money shorts, falls back to fresh out-of-the-money
  * sells when nothing is left to roll, and flattens at the close.
  *
@@ -89,11 +89,13 @@ export interface DeltaConfig {
   minPremium: number
   bandDeltaLow: number
   bandDeltaHigh: number
-  /** N — call/put pairs sold at the open. Multiplies the lots `qty` resolves to. */
-  pairs: number
   /**
    * XAUT sold per leg at the open, converted to lots by the contract's own value
-   * the way the auto strategy's `qty` is: `lots = round(qty / contractValue) × pairs`.
+   * the way the auto strategy's `qty` is: `lots = round(qty / contractValue)`.
+   *
+   * This is the spec's N, in XAUT rather than lots. N meant "repeat the pair sale
+   * this many times", and since the strike rule gives the same answer each repeat,
+   * that was only ever a lot count — so one control expresses both.
    *
    * Δp counts lots with no contract-value factor, so lots scale Δp one-for-one —
    * raising this means scaling `bandLow`/`bandHigh` by the same factor or the band
@@ -136,8 +138,7 @@ export const DEFAULT_DELTA_CONFIG: DeltaConfig = {
   minPremium: 2,
   bandDeltaLow: 0.15,
   bandDeltaHigh: 0.25,
-  pairs: 1,
-  // One lot at the venue's 0.001 contract value — the size before qty existed.
+  // One lot at the venue's 0.001 contract value.
   qty: 0.001,
   tieBreak: 'closest',
   expiryPick: 'nearest',
@@ -404,15 +405,14 @@ function floorContracts(q: number): number {
 }
 
 /**
- * Lots an entry leg is worth: the XAUT size over that contract's own value, times
- * the number of pairs. Mirrors `delta_sell_entry` in
+ * Lots an entry leg is worth: the XAUT size over that contract's own value.
+ * Mirrors `delta_sell_entry` in
  * [`0021`](../../supabase/migrations/0021_qty_and_take_profit.sql) — a missing or
  * zero contract value falls back to one lot rather than sizing off a guess.
  */
-export function entryLots(product: Product, cfg: Pick<DeltaConfig, 'qty' | 'pairs'>): number {
+export function entryLots(product: Product, cfg: Pick<DeltaConfig, 'qty'>): number {
   const cv = Number(product.contract_value)
-  const perPair = cv > 0 ? Math.max(1, Math.round(cfg.qty / cv)) : 1
-  return perPair * cfg.pairs
+  return cv > 0 ? Math.max(1, Math.round(cfg.qty / cv)) : 1
 }
 
 /**
@@ -554,7 +554,7 @@ export function pickByDelta(
 // ---------------------------------------------------------------------------
 
 export type Action =
-  /** Daily entry — N symmetric pairs at the strikes nearest the entry premium. */
+  /** Daily entry — a symmetric pair at the strikes nearest the entry premium. */
   | { type: 'entry'; legs: { product: Product; qty: number }[] }
   /** Session close — buy back everything and stand flat overnight. */
   | { type: 'flatten'; positions: PositionRow[] }
@@ -642,7 +642,6 @@ export function planCycle(input: CycleInput): CyclePlan {
 
   // ---- Daily entry ---------------------------------------------------------
   if (session.enteredDay !== day) {
-    if (cfg.pairs <= 0) return { ...base, action: null, reason: 'N is zero — no entry to place' }
     const call = pickByPremium(expiry, 'call', cfg, tickerFor)
     const put = pickByPremium(expiry, 'put', cfg, tickerFor)
     if (!call || !put) {

@@ -95,7 +95,6 @@ erDiagram
         numeric min_premium "hard floor"
         numeric band_delta_low
         numeric band_delta_high
-        integer pairs "N"
         numeric qty "XAUT per leg -> lots"
         text expiry_label "ddmmyy, or null"
         text session_day "IST YYYY-MM-DD"
@@ -522,8 +521,10 @@ it as XAUT-denominated delta would put every band figure out by 1000×.
 
 > Which is why `qty` ([`0021`](../supabase/migrations/0021_qty_and_take_profit.sql))
 > is the one setting that cannot be changed in isolation. It sizes the entry in
-> XAUT the way the auto strategy does — `lots = round(qty / contract_value) ×
-> pairs` — and Δp counts lots, so lots scale Δp one-for-one. At 1 XAUT a leg is
+> XAUT the way the auto strategy does — `lots = round(qty / contract_value)`, and it
+> is the spec's `N` in XAUT rather than lots, `pairs` having been folded into it by
+> [`0024`](../supabase/migrations/0024_drop_pairs_and_fix_reentry.sql). Δp counts
+> lots, so lots scale Δp one-for-one. At 1 XAUT a leg is
 > 1000 lots and a 0.30-delta option contributes 300, which breaches the default
 > `[-1, 1]` from the first fill and never recovers. The sizing formulas are
 > scale-free and will compute correct contract counts either way; the *band* is
@@ -690,6 +691,15 @@ it in a moving market.
 specification in TypeScript and PL/pgSQL. Only the first is covered by
 assertions, and nothing checks that they agree — a divergence would surface as
 the readout predicting one thing and the engine doing another.
+
+> A second instance, found the day a teammate toggled a weekday off and on again:
+> the flatten stamped `flattened_day` but left `entered_day` set, so the reopened
+> session read "already entered today" and sat flat for the rest of the day
+> reporting Δp = 0 — indistinguishable from a balanced book. Fixed in
+> [`0024`](../supabase/migrations/0024_drop_pairs_and_fix_reentry.sql): the flatten
+> clears `entered_day` and the entry clears `flattened_day`, because clearing only
+> the first would leave the close-flatten stamped and carry a position overnight.
+> The two flags have to move in step.
 
 > This is not hypothetical. The S4 entry diverged for seven migrations:
 > `planCycle` left the day unstamped when no strike cleared the floor, so it

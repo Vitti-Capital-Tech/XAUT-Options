@@ -44,7 +44,7 @@ export interface DeltaStrategyApi {
    */
   refresh: () => Promise<void>
   /**
-   * Lots one entry leg resolves to at the current `qty` and `pairs`, off the traded
+   * Lots one entry leg resolves to at the current `qty`, off the traded
    * expiry's own contract value. Null until an expiry is listed — better than
    * showing a number computed against an assumed contract size.
    */
@@ -77,7 +77,6 @@ interface Row {
   min_premium: string | number
   band_delta_low: string | number
   band_delta_high: string | number
-  pairs: number
   qty: string | number
   tie_break: string
   expiry_pick: string
@@ -93,7 +92,7 @@ interface Row {
 }
 
 const COLS =
-  'account_id, armed, session_open, session_close, band_low, band_high, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, min_premium, band_delta_low, band_delta_high, pairs, qty, tie_break, expiry_pick, expiry_label, cycle_seconds, take_profit_mark, trade_days, session_day, rolls_used_call, rolls_used_put, entered_day, flattened_day'
+  'account_id, armed, session_open, session_close, band_low, band_high, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, min_premium, band_delta_low, band_delta_high, qty, tie_break, expiry_pick, expiry_label, cycle_seconds, take_profit_mark, trade_days, session_day, rolls_used_call, rolls_used_put, entered_day, flattened_day'
 
 // Postgres numerics come back as strings over PostgREST.
 const n = (v: string | number) => Number(v)
@@ -113,7 +112,6 @@ function rowToConfig(row: Row): DeltaConfig {
     minPremium: n(row.min_premium),
     bandDeltaLow: n(row.band_delta_low),
     bandDeltaHigh: n(row.band_delta_high),
-    pairs: row.pairs,
     qty: n(row.qty),
     tieBreak: row.tie_break as TieBreak,
     expiryPick: row.expiry_pick as ExpiryPick,
@@ -143,7 +141,6 @@ function configToRow(cfg: DeltaConfig) {
     min_premium: cfg.minPremium,
     band_delta_low: cfg.bandDeltaLow,
     band_delta_high: cfg.bandDeltaHigh,
-    pairs: cfg.pairs,
     qty: cfg.qty,
     tie_break: cfg.tieBreak,
     expiry_pick: cfg.expiryPick,

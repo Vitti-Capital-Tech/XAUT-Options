@@ -201,25 +201,12 @@ export function DeltaStrategyTab({
           </div>
         </Field>
 
-        <Field
-          label="N pairs"
-          help="How many call-and-put pairs to sell when trading starts. It multiplies the size below, so 2 pairs at a 1-lot size is 2 lots per option."
-        >
-          <NumInput
-            value={config.pairs}
-            step={1}
-            min={0}
-            width="w-16"
-            onChange={(v) => setConfig({ pairs: Math.round(v) })}
-          />
-        </Field>
-
         {/* Size in XAUT, the way the auto tab expresses it, with the lots it works
             out to beside the box — lots are what Δp actually counts, so seeing them
             is the difference between a sane band and a permanently breached one. */}
         <Field
           label="Qty · XAUT"
-          help="How much to sell of each option, in XAUT — the same idea as Quantity on the auto tab. Careful: position delta counts lots, so doubling this doubles the delta. Raise Net delta range by the same amount or it will sit outside it all day."
+          help="How much to sell of each option, in XAUT — the same idea as Quantity on the auto tab, and the spec's N expressed in XAUT rather than lots. Careful: position delta counts lots, so doubling this doubles the delta. Raise Net delta range by the same amount or it will sit outside it all day."
         >
           <div className="flex items-center gap-2">
             <NumInput
