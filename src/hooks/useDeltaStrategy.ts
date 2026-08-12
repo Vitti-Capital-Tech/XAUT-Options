@@ -52,10 +52,10 @@ export interface DeltaStrategyApi {
    * showing a number computed against an assumed contract size.
    */
   entryLots: number | null
-  /** Push the current TP/SL marks onto the open shorts — what the Save button calls. */
-  applyTpSl: () => void
-  /** An open short's bracket differs from the current marks — shows the Save button. */
-  tpslDirty: boolean
+  /** Write every staged filter change and arm the open shorts — the Apply button. */
+  apply: () => void
+  /** The draft has unsaved edits — shows the Apply button. */
+  dirty: boolean
 }
 
 /** What the readout needs to price the book. Nothing here places an order. */
@@ -212,28 +212,41 @@ export function useDeltaStrategy(
   deps: DeltaEngineDeps,
   reloadPositions: () => void | Promise<void> = () => {},
 ): DeltaStrategyApi {
+  // `config` is the editable draft; `savedConfig` is what the database holds.
+  // Every field is staged here and only written on Apply, so nothing reaches the
+  // engine mid-edit — the gap between the two is what lights the Apply button.
   const [config, setConfigState] = useState<DeltaConfig>(DEFAULT_DELTA_CONFIG)
+  const [savedConfig, setSavedConfig] = useState<DeltaConfig>(DEFAULT_DELTA_CONFIG)
   const [armed, setArmedState] = useState(false)
   const [session, setSession] = useState<SessionState>(EMPTY_SESSION)
   const [loading, setLoading] = useState(true)
   const [plan, setPlan] = useState<CyclePlan | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  // Skip a background sync right after a local edit, so an in-flight write is
-  // not clobbered by a stale read.
+  // Skip a background sync right after Apply, so an in-flight write is not
+  // clobbered by a stale read.
   const lastEditRef = useRef(0)
-  // The open book and its reloader, through refs so re-arming on a TP/SL edit
-  // sees the current shorts and refreshes them without making setConfig depend
-  // on either.
+  // The open book and its reloader, through refs so applying a change sees the
+  // current shorts and refreshes them without making the callbacks depend on either.
   const positionsRef = useRef(deps.positions)
   positionsRef.current = deps.positions
   const reloadRef = useRef(reloadPositions)
   reloadRef.current = reloadPositions
 
+  // Unsaved edits: the draft differs from the database. Through a ref so applyRow
+  // can leave the draft alone while it is dirty even as it takes armed/session.
+  const dirty = !sameConfig(config, savedConfig)
+  const dirtyRef = useRef(dirty)
+  dirtyRef.current = dirty
+
   const applyRow = useCallback((row: Row) => {
-    setConfigState(rowToConfig(row))
+    // Armed and the session counters are the engine's to report, so they always
+    // land; the config is the trader's draft, so a live row updates the saved
+    // baseline but only overwrites what they see when they have no unsaved edits.
+    setSavedConfig(rowToConfig(row))
     setArmedState(row.armed)
     setSession(rowToSession(row))
+    if (!dirtyRef.current) setConfigState(rowToConfig(row))
   }, [])
 
   // ---- Load, seeding a default row for a delta account that has none -------
@@ -336,17 +349,16 @@ export function useDeltaStrategy(
     [accountId],
   )
 
+  // Stage an edit into the draft only — nothing is written until Apply.
   const setConfig = useCallback(
     (patch: Partial<DeltaConfig>) => {
-      setConfigState((prev) => {
-        const next = { ...prev, ...patch }
-        void persist(configToRow(next))
-        return next
-      })
+      setConfigState((prev) => ({ ...prev, ...patch }))
     },
-    [persist],
+    [],
   )
 
+  // Arming is an action, not a filter, so it saves at once rather than waiting on
+  // Apply — a pause you have to remember to confirm is a pause that does not happen.
   const setArmed = useCallback(
     (on: boolean) => {
       setArmedState(on)
@@ -355,28 +367,15 @@ export function useDeltaStrategy(
     [persist],
   )
 
-  // Push the current marks onto the open shorts, on demand. delta_sell only arms
-  // a bracket at fill time, so a changed mark never reaches a short already open —
-  // the Save button in the panel calls this to apply it. Deliberately not
-  // automatic: a live NumInput commits every keystroke, and no half-typed mark
-  // should ever touch a live position.
-  const applyTpSl = useCallback(() => {
+  // Apply: write every staged field, and push the marks onto the open shorts,
+  // which delta_sell only ever arms at fill time. `savedConfig` catches up to the
+  // draft, so the button goes dark until the next edit.
+  const apply = useCallback(() => {
+    if (loading) return
+    setSavedConfig(config)
+    void persist(configToRow(config))
     void rearmOpenPositions(positionsRef.current, config, reloadRef.current)
-  }, [config])
-
-  // Whether any open short's bracket differs from what the current marks would
-  // arm — the "unsaved change" that shows the Save button. Applying it clears the
-  // difference, so the button hides itself once the write lands.
-  const tpslDirty = useMemo(() => {
-    const wantTp = config.takeProfitMark > 0 ? config.takeProfitMark : null
-    const wantSl = config.stopLossMark > 0 ? config.stopLossMark : null
-    return deps.positions.some((p) => {
-      if (p.net_qty >= 0) return false
-      const tp = p.take_profit == null ? null : Number(p.take_profit)
-      const sl = p.stop_loss == null ? null : Number(p.stop_loss)
-      return !approxEq(tp, wantTp) || !approxEq(sl, wantSl)
-    })
-  }, [deps.positions, config.takeProfitMark, config.stopLossMark])
+  }, [config, loading, persist])
 
   // Clearing last_cycle is all a manual refresh can do from here: the engine is
   // server-side and its spacing check is the one gate the client owns. The row is
@@ -453,17 +452,17 @@ export function useDeltaStrategy(
       error,
       refresh,
       entryLots,
-      applyTpSl,
-      tpslDirty,
+      apply,
+      dirty,
     }),
-    [config, setConfig, armed, setArmed, session, accountId, loading, plan, error, refresh, entryLots, applyTpSl, tpslDirty],
+    [config, setConfig, armed, setArmed, session, accountId, loading, plan, error, refresh, entryLots, apply, dirty],
   )
 }
 
-/** Equal within a rounding whisker, treating null (no bracket) as its own value. */
-function approxEq(a: number | null, b: number | null): boolean {
-  if (a === null || b === null) return a === b
-  return Math.abs(a - b) <= 1e-6
+/** Two configs equal field-for-field, order-independent, for the dirty check. */
+function sameConfig(a: DeltaConfig, b: DeltaConfig): boolean {
+  const keys = Object.keys(a).sort()
+  return JSON.stringify(a, keys) === JSON.stringify(b, keys)
 }
 
 /**

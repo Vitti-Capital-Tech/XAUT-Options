@@ -31,7 +31,7 @@ export function DeltaStrategyTab({
   strategy: DeltaStrategyApi
   expiries: Expiry[]
 }) {
-  const { config, setConfig, armed, setArmed, session, hasAccount, plan, error, refresh, entryLots, applyTpSl, tpslDirty } =
+  const { config, setConfig, armed, setArmed, session, hasAccount, plan, error, refresh, entryLots, apply, dirty } =
     strategy
   const [refreshing, setRefreshing] = useState(false)
 
@@ -309,21 +309,6 @@ export function DeltaStrategyTab({
           />
         </Field>
 
-        {/* A changed mark saves to settings live, so the next sell uses it — but it
-            only reaches the shorts already open when this is clicked. It appears
-            solely when an open position's bracket differs from the marks above, and
-            clears itself once applied, so it reads as "apply this TP/SL change". */}
-        {tpslDirty && (
-          <button
-            type="button"
-            onClick={applyTpSl}
-            title="Apply the TP/SL marks above to the positions already open"
-            className="flex h-9 shrink-0 items-center gap-1.5 self-end rounded-md border border-pos-on-muted bg-pos-muted px-3.5 text-[12px] font-medium text-pos transition-colors hover:border-pos hover:bg-pos-on-muted"
-          >
-            Apply
-          </button>
-        )}
-
         <GroupRule />
 
         {/* The interval, plus a way to skip the wait. The button clears the spacing
@@ -363,8 +348,19 @@ export function DeltaStrategyTab({
         </Field>
 
 {/* Run / pause, held to the right so the controls read left-to-right and
-            the switch sits on its own — the same place the auto strategy's is. */}
+            the switch sits on its own — the same place the auto strategy's is. The
+            Apply button lives just before it, shown only when an edit is unsaved. */}
         <div className="ml-auto flex items-center gap-3 self-center">
+          {dirty && (
+            <button
+              type="button"
+              onClick={apply}
+              title="Save every changed field and apply the TP/SL to open positions"
+              className="flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-pos-on-muted bg-pos-muted px-3.5 text-[12px] font-medium text-pos transition-colors hover:border-pos hover:bg-pos-on-muted"
+            >
+              Apply changes
+            </button>
+          )}
           <span className={`text-[15px] font-semibold ${armed ? 'text-pos' : 'text-ink-3'}`}>
             {armed ? 'Running' : 'Paused'}
           </span>

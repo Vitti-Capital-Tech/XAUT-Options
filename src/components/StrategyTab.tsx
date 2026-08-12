@@ -29,7 +29,7 @@ export function StrategyTab({
   strategy: StrategyApi
   expiries: Expiry[]
 }) {
-  const { config, setConfig, armed, setArmed, hasAccount, applyTpSl, tpslDirty } = strategy
+  const { config, setConfig, armed, setArmed, hasAccount, apply, dirty } = strategy
   const mult = stopMultiple(config.stopLossPct)
   const tpMult = takeProfitMultiple(config.takeProfitPct)
 
@@ -168,21 +168,6 @@ export function StrategyTab({
         </div>
       </Field>
 
-      {/* A changed percent saves to settings live, so the next sell uses it — but it
-          only reaches the shorts already open when this is clicked. It appears solely
-          when an open position's bracket differs from the stop/take-profit above, and
-          clears itself once applied, so it reads as "apply this TP/SL change". */}
-      {tpslDirty && (
-        <button
-          type="button"
-          onClick={applyTpSl}
-          title="Apply the stop/take-profit above to the positions already open"
-          className="flex h-9 shrink-0 items-center gap-1.5 self-end rounded-md border border-pos-on-muted bg-pos-muted px-3.5 text-[12px] font-medium text-pos transition-colors hover:border-pos hover:bg-pos-on-muted"
-        >
-          Apply
-        </button>
-      )}
-
       {/* No days selected disables the strategy outright, which is worth saying
           out loud — the run switch still reads "Running". */}
       {config.tradeDays.length === 0 && (
@@ -190,8 +175,19 @@ export function StrategyTab({
       )}
 
       {/* Run / pause, held to the right so the controls read left-to-right and
-          the switch sits on its own. */}
+          the switch sits on its own. The Apply button sits just before it, shown
+          only when an edit is unsaved. */}
       <div className="ml-auto flex items-center gap-3">
+        {dirty && (
+          <button
+            type="button"
+            onClick={apply}
+            title="Save every changed field and apply the stop/take-profit to open positions"
+            className="flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-pos-on-muted bg-pos-muted px-3.5 text-[12px] font-medium text-pos transition-colors hover:border-pos hover:bg-pos-on-muted"
+          >
+            Apply changes
+          </button>
+        )}
         <span className={`text-[15px] font-semibold ${armed ? 'text-pos' : 'text-ink-3'}`}>
           {armed ? 'Running' : 'Paused'}
         </span>

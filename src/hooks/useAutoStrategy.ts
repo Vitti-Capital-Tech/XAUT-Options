@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import {
   DEFAULT_CONFIG,
@@ -27,10 +27,10 @@ export interface StrategyApi {
   setArmed: (on: boolean) => void
   hasAccount: boolean
   loading: boolean
-  /** Push the current TP/SL onto the open shorts — what the Save button calls. */
-  applyTpSl: () => void
-  /** An open short's bracket differs from the current TP/SL — shows the Save button. */
-  tpslDirty: boolean
+  /** Write every staged filter change and arm the open shorts — the Apply button. */
+  apply: () => void
+  /** The draft has unsaved edits — shows the Apply button. */
+  dirty: boolean
 }
 
 interface Row {
@@ -56,11 +56,16 @@ export function useAutoStrategy(
   positions: PositionRow[] = [],
   reloadPositions: () => void | Promise<void> = () => {},
 ): StrategyApi {
+  // `config` is the editable draft; `savedConfig` is what is actually in the
+  // database. Every field is staged here and only written on Apply, so nothing
+  // reaches the engine mid-edit — the difference between the two is what lights
+  // the Apply button.
   const [config, setConfigState] = useState<StrategyConfig>(DEFAULT_CONFIG)
+  const [savedConfig, setSavedConfig] = useState<StrategyConfig>(DEFAULT_CONFIG)
   const [armed, setArmedState] = useState(false)
   const [loading, setLoading] = useState(true)
-  // When the user last changed something here, so a background sync does not
-  // overwrite a write that may still be in flight.
+  // When the user last applied, so a background sync does not overwrite a write
+  // that may still be in flight.
   const lastEditRef = useRef(0)
   // The open book and its reloader, read through refs so re-arming on a TP/SL
   // edit sees the current positions and refreshes them without making setConfig
@@ -70,8 +75,15 @@ export function useAutoStrategy(
   const reloadRef = useRef(reloadPositions)
   reloadRef.current = reloadPositions
 
+  // Unsaved edits: the draft differs from the database. A ref of it lets the sync
+  // effect below skip a refetch while the trader is mid-edit, so a poll never
+  // wipes changes they have not applied yet.
+  const dirty = !sameConfig(config, savedConfig)
+  const dirtyRef = useRef(dirty)
+  dirtyRef.current = dirty
+
   const applyRow = useCallback((row: Row) => {
-    setConfigState({
+    const cfg: StrategyConfig = {
       moneyness: row.moneyness as Moneyness,
       qty: Number(row.qty),
       windowStart: row.window_start,
@@ -85,7 +97,11 @@ export function useAutoStrategy(
       expiryLabel: row.expiry_label,
       stopLossPct: Number(row.stop_loss_pct),
       takeProfitPct: Number(row.take_profit_pct),
-    })
+    }
+    // Reset the draft to what the database holds — the two are equal right after a
+    // load, so the Apply button stays dark until the trader changes something.
+    setConfigState(cfg)
+    setSavedConfig(cfg)
     setArmedState(row.armed)
   }, [])
 
@@ -142,7 +158,9 @@ export function useAutoStrategy(
   useEffect(() => {
     if (!accountId) return
     const refetch = async () => {
-      if (Date.now() - lastEditRef.current < 3000) return
+      // Hold off while there are unsaved edits or a just-applied write may still be
+      // in flight, so neither clobbers the draft the trader is looking at.
+      if (dirtyRef.current || Date.now() - lastEditRef.current < 3000) return
       const { data } = await supabase
         .from('strategy_settings')
         .select(COLS)
@@ -192,28 +210,13 @@ export function useAutoStrategy(
     [accountId],
   )
 
-  const setConfig = useCallback(
-    (patch: Partial<StrategyConfig>) => {
-      setConfigState((prev) => {
-        const next = { ...prev, ...patch }
-        persist({
-          moneyness: next.moneyness,
-          qty: next.qty,
-          window_start: next.windowStart,
-          window_end: next.windowEnd,
-          trade_days: next.tradeDays,
-          min_premium: next.minPremium,
-          expiry_rule: next.expiryRule,
-          expiry_label: next.expiryLabel,
-          stop_loss_pct: next.stopLossPct,
-          take_profit_pct: next.takeProfitPct,
-        })
-        return next
-      })
-    },
-    [persist],
-  )
+  // Stage an edit into the draft only — nothing is written until Apply.
+  const setConfig = useCallback((patch: Partial<StrategyConfig>) => {
+    setConfigState((prev) => ({ ...prev, ...patch }))
+  }, [])
 
+  // Arming is an action, not a filter, so it saves at once rather than waiting on
+  // Apply — a pause you have to remember to confirm is a pause that does not happen.
   const setArmed = useCallback(
     (on: boolean) => {
       setArmedState(on)
@@ -222,29 +225,26 @@ export function useAutoStrategy(
     [persist],
   )
 
-  // Push the current TP/SL onto the open shorts, on demand. The engine only ever
-  // arms a bracket at fill time, so a changed stop or take-profit never reaches a
-  // position already open — the Save button in the panel calls this to apply it.
-  // Deliberately not automatic: a live NumInput commits every keystroke, and no
-  // half-typed level should ever touch a live position.
-  const applyTpSl = useCallback(() => {
-    void rearmOpenPositions(positionsRef.current, config, reloadRef.current)
-  }, [config])
-
-  // Whether any open short's bracket differs from what the current TP/SL would
-  // arm — the "unsaved change" that shows the Save button. Applying it clears the
-  // difference, so the button hides itself once the write lands.
-  const tpslDirty = useMemo(() => {
-    const stop = stopMultiple(config.stopLossPct)
-    const take = takeProfitMultiple(config.takeProfitPct)
-    return positions.some((p) => {
-      if (p.net_qty === 0) return false
-      const avg = Number(p.avg_entry_price)
-      const sl = p.stop_loss == null ? null : Number(p.stop_loss)
-      const tp = p.take_profit == null ? null : Number(p.take_profit)
-      return !approxEq(sl, stop === null ? null : avg * stop) || !approxEq(tp, take === null ? null : avg * take)
+  // Apply: write every staged field, and push the bracket onto the open shorts,
+  // which the engine only ever arms at fill time. `savedConfig` catches up to the
+  // draft, so the button goes dark until the next edit.
+  const apply = useCallback(() => {
+    if (loading) return
+    setSavedConfig(config)
+    persist({
+      moneyness: config.moneyness,
+      qty: config.qty,
+      window_start: config.windowStart,
+      window_end: config.windowEnd,
+      trade_days: config.tradeDays,
+      min_premium: config.minPremium,
+      expiry_rule: config.expiryRule,
+      expiry_label: config.expiryLabel,
+      stop_loss_pct: config.stopLossPct,
+      take_profit_pct: config.takeProfitPct,
     })
-  }, [positions, config.stopLossPct, config.takeProfitPct])
+    void rearmOpenPositions(positionsRef.current, config, reloadRef.current)
+  }, [config, loading, persist])
 
   return {
     config,
@@ -253,15 +253,15 @@ export function useAutoStrategy(
     setArmed,
     hasAccount: accountId !== null,
     loading,
-    applyTpSl,
-    tpslDirty,
+    apply,
+    dirty,
   }
 }
 
-/** Equal within a rounding whisker, treating null (no bracket) as its own value. */
-function approxEq(a: number | null, b: number | null): boolean {
-  if (a === null || b === null) return a === b
-  return Math.abs(a - b) <= 1e-6
+/** Two configs equal field-for-field, order-independent, for the dirty check. */
+function sameConfig(a: StrategyConfig, b: StrategyConfig): boolean {
+  const keys = Object.keys(a).sort()
+  return JSON.stringify(a, keys) === JSON.stringify(b, keys)
 }
 
 /**
