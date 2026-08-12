@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { MONEYNESS_ORDER, stopMultiple, takeProfitMultiple, type Moneyness } from '../lib/strategy'
 import { expiryIsLive, expiryOptions, type Expiry } from '../lib/delta'
 import type { StrategyApi } from '../hooks/useAutoStrategy'
@@ -29,7 +30,8 @@ export function StrategyTab({
   strategy: StrategyApi
   expiries: Expiry[]
 }) {
-  const { config, setConfig, armed, setArmed, hasAccount } = strategy
+  const { config, setConfig, armed, setArmed, hasAccount, applyTpSl, openCount } = strategy
+  const [saved, setSaved] = useState(false)
   const mult = stopMultiple(config.stopLossPct)
   const tpMult = takeProfitMultiple(config.takeProfitPct)
 
@@ -166,6 +168,32 @@ export function StrategyTab({
             {tpMult === null ? 'no TP' : `${tpMult.toFixed(2)}× entry`}
           </span>
         </div>
+      </Field>
+
+      {/* The bracket above always applies to the next sell. This pushes it onto the
+          shorts already open too — on demand, never on a keystroke, so a half-typed
+          percent can't reach a live position. */}
+      <Field
+        label="Apply"
+        help="Push the stop and take-profit above onto the positions already open, each read off that position's own entry. New sells use them anyway; this updates the ones open right now. Nothing to apply when the book is empty."
+      >
+        <button
+          type="button"
+          disabled={!hasAccount || openCount === 0}
+          title={
+            openCount === 0
+              ? 'No open positions to update'
+              : `Apply the stop/take-profit above to the ${openCount} open position${openCount === 1 ? '' : 's'}`
+          }
+          onClick={() => {
+            applyTpSl()
+            setSaved(true)
+            window.setTimeout(() => setSaved(false), 1500)
+          }}
+          className="flex h-9 items-center gap-1.5 rounded-md border border-raised-3 bg-surface px-3 text-[12px] text-ink-2 transition-colors hover:border-ink-3 hover:text-ink disabled:opacity-40"
+        >
+          {saved ? 'Saved ✓' : openCount > 0 ? `Save · ${openCount}` : 'Save'}
+        </button>
       </Field>
 
       {/* No days selected disables the strategy outright, which is worth saying

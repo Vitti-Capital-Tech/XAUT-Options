@@ -27,6 +27,10 @@ export interface StrategyApi {
   setArmed: (on: boolean) => void
   hasAccount: boolean
   loading: boolean
+  /** Push the current TP/SL onto the open shorts — what the Save button calls. */
+  applyTpSl: () => void
+  /** Open shorts the Save button would touch; zero disables it. */
+  openCount: number
 }
 
 interface Row {
@@ -218,33 +222,26 @@ export function useAutoStrategy(
     [persist],
   )
 
-  // Re-arm the open shorts whenever the trader moves TP/SL. The engine only ever
-  // arms a bracket at fill time, so without this a changed stop or take-profit
-  // never reaches a position already open. A ref of the last-applied values keeps
-  // this to real edits: it stays quiet on load and on a plain positions refresh.
-  const armedForRef = useRef<{ sl: number; tp: number } | null>(null)
-  useEffect(() => {
-    if (loading) return
-    const now = { sl: config.stopLossPct, tp: config.takeProfitPct }
-    const was = armedForRef.current
-    // First settle after a load adopts the values without touching positions;
-    // an unchanged pair is a plain re-render, not an edit.
-    if (was === null) {
-      armedForRef.current = now
-      return
-    }
-    if (was.sl === now.sl && was.tp === now.tp) return
-    // A live NumInput commits every parseable keystroke, so typing 100 lands 1
-    // then 10 then 100. Wait for the value to settle before writing to a live
-    // position, so an intermediate 1 never arms a stop that could fire on it.
-    const id = setTimeout(() => {
-      armedForRef.current = now
-      void rearmOpenPositions(positionsRef.current, config, reloadRef.current)
-    }, 600)
-    return () => clearTimeout(id)
-  }, [config, loading])
+  // Push the current TP/SL onto the open shorts, on demand. The engine only ever
+  // arms a bracket at fill time, so a changed stop or take-profit never reaches a
+  // position already open — the Save button in the panel calls this to apply it.
+  // Deliberately not automatic: a live NumInput commits every keystroke, and no
+  // half-typed level should ever touch a live position.
+  const openCount = positions.reduce((n, p) => (p.net_qty !== 0 ? n + 1 : n), 0)
+  const applyTpSl = useCallback(() => {
+    void rearmOpenPositions(positionsRef.current, config, reloadRef.current)
+  }, [config])
 
-  return { config, setConfig, armed, setArmed, hasAccount: accountId !== null, loading }
+  return {
+    config,
+    setConfig,
+    armed,
+    setArmed,
+    hasAccount: accountId !== null,
+    loading,
+    applyTpSl,
+    openCount,
+  }
 }
 
 /**

@@ -52,6 +52,10 @@ export interface DeltaStrategyApi {
    * showing a number computed against an assumed contract size.
    */
   entryLots: number | null
+  /** Push the current TP/SL marks onto the open shorts — what the Save button calls. */
+  applyTpSl: () => void
+  /** Open shorts the Save button would touch; zero disables it. */
+  openCount: number
 }
 
 /** What the readout needs to price the book. Nothing here places an order. */
@@ -351,31 +355,15 @@ export function useDeltaStrategy(
     [persist],
   )
 
-  // Re-arm the open shorts whenever the trader moves TP/SL. delta_sell only arms
-  // a bracket at fill time, so without this a changed mark never reaches a short
-  // already open. A ref of the last-applied marks keeps this to real edits: it
-  // stays quiet on load and on a plain positions refresh.
-  const armedForRef = useRef<{ tp: number; sl: number } | null>(null)
-  useEffect(() => {
-    if (loading) return
-    const now = { tp: config.takeProfitMark, sl: config.stopLossMark }
-    const was = armedForRef.current
-    // First settle after a load adopts the marks without touching positions;
-    // an unchanged pair is a plain re-render, not an edit.
-    if (was === null) {
-      armedForRef.current = now
-      return
-    }
-    if (was.tp === now.tp && was.sl === now.sl) return
-    // A live NumInput commits every parseable keystroke, so typing 46 lands 4
-    // then 46. Wait for the value to settle before writing to a live position,
-    // so an intermediate 4 never arms a bracket that could fire on it.
-    const id = setTimeout(() => {
-      armedForRef.current = now
-      void rearmOpenPositions(positionsRef.current, config, reloadRef.current)
-    }, 600)
-    return () => clearTimeout(id)
-  }, [config, loading])
+  // Push the current marks onto the open shorts, on demand. delta_sell only arms
+  // a bracket at fill time, so a changed mark never reaches a short already open —
+  // the Save button in the panel calls this to apply it. Deliberately not
+  // automatic: a live NumInput commits every keystroke, and no half-typed mark
+  // should ever touch a live position.
+  const openCount = deps.positions.reduce((n, p) => (p.net_qty < 0 ? n + 1 : n), 0)
+  const applyTpSl = useCallback(() => {
+    void rearmOpenPositions(positionsRef.current, config, reloadRef.current)
+  }, [config])
 
   // Clearing last_cycle is all a manual refresh can do from here: the engine is
   // server-side and its spacing check is the one gate the client owns. The row is
@@ -452,8 +440,10 @@ export function useDeltaStrategy(
       error,
       refresh,
       entryLots,
+      applyTpSl,
+      openCount,
     }),
-    [config, setConfig, armed, setArmed, session, accountId, loading, plan, error, refresh, entryLots],
+    [config, setConfig, armed, setArmed, session, accountId, loading, plan, error, refresh, entryLots, applyTpSl, openCount],
   )
 }
 

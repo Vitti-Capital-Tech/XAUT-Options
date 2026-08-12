@@ -31,9 +31,10 @@ export function DeltaStrategyTab({
   strategy: DeltaStrategyApi
   expiries: Expiry[]
 }) {
-  const { config, setConfig, armed, setArmed, session, hasAccount, plan, error, refresh, entryLots } =
+  const { config, setConfig, armed, setArmed, session, hasAccount, plan, error, refresh, entryLots, applyTpSl, openCount } =
     strategy
   const [refreshing, setRefreshing] = useState(false)
+  const [saved, setSaved] = useState(false)
 
   const expiryChoices = expiryOptions(expiries, config.expiryLabel)
   const expiryLive = expiryIsLive(expiries, config.expiryLabel)
@@ -307,6 +308,32 @@ export function DeltaStrategyTab({
             width="w-16"
             onChange={(v) => setConfig({ stopLossMark: v })}
           />
+        </Field>
+
+        {/* The marks above always apply to the next sell. This pushes them onto the
+            shorts already open too — on demand, never on a keystroke, so a half-typed
+            mark can't reach a live position. */}
+        <Field
+          label="Apply"
+          help="Push the TP and SL marks above onto the positions already open. New sells use them anyway; this updates the ones open right now. Nothing to apply when the book is empty."
+        >
+          <button
+            type="button"
+            disabled={!hasAccount || openCount === 0}
+            title={
+              openCount === 0
+                ? 'No open positions to update'
+                : `Apply the TP/SL above to the ${openCount} open position${openCount === 1 ? '' : 's'}`
+            }
+            onClick={() => {
+              applyTpSl()
+              setSaved(true)
+              window.setTimeout(() => setSaved(false), 1500)
+            }}
+            className="flex h-9 items-center gap-1.5 rounded-md border border-raised-3 bg-surface px-3 text-[12px] text-ink-2 transition-colors hover:border-ink-3 hover:text-ink disabled:opacity-40"
+          >
+            {saved ? 'Saved ✓' : openCount > 0 ? `Save · ${openCount}` : 'Save'}
+          </button>
         </Field>
 
         <GroupRule />
