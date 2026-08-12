@@ -103,27 +103,22 @@ export function DeltaStrategyTab({
             </div>
           </Field>
 
+          {/* The one price rule the strategy has: every sale — the open, a roll
+              replacement, a band correction — takes the strike quoted closest to
+              this. A separate floor used to sit beside it and is gone: asking for
+              the closest to a price already decides what may be sold. */}
           <Field
-            label="Entry premium / min premium"
-            help="Left: the premium to aim for — it picks whichever strike is quoted closest to this. Right: a hard floor. Nothing is ever sold cheaper than this, anywhere."
+            label="Entry premium"
+            help="The premium to aim for. It sells whichever strike is quoted closest to this — at the open, when rolling a leg further out, and when correcting the band."
           >
-            <div className="flex items-center gap-2">
-              <NumInput
-                value={config.entryPremium}
-                step={0.5}
-                min={0}
-                width="w-16"
-                onChange={(v) => setConfig({ entryPremium: v })}
-              />
-              <span className="text-ink-4">/</span>
-              <NumInput
-                value={config.minPremium}
-                step={0.5}
-                min={0}
-                width="w-16"
-                onChange={(v) => setConfig({ minPremium: v })}
-              />
-            </div>
+            <NumInput
+              value={config.entryPremium}
+              step={0.5}
+              min={0}
+              unit="$"
+              width="w-20"
+              onChange={(v) => setConfig({ entryPremium: v })}
+            />
           </Field>
 
           <Field
@@ -258,28 +253,10 @@ export function DeltaStrategyTab({
             />
           </Field>
 
-          <Field
-            label="Band correction delta"
-            help="When there is nothing left to fix and it has to sell a fresh option, this is how big that one option's delta should be — not the whole position's, which is Target delta band. Keep it small so each contract moves the position a little — 0.15 to 0.25. One option's delta is always between −1 and 1, so this can never be −2. Ignore the sign: 0.15–0.25 already matches a put at −0.20."
-          >
-            <div className="flex items-center gap-2">
-              <NumInput
-                value={config.bandDeltaLow}
-                step={0.05}
-                min={0}
-                width="w-16"
-                onChange={(v) => setConfig({ bandDeltaLow: v })}
-              />
-              <span className="text-ink-4">–</span>
-              <NumInput
-                value={config.bandDeltaHigh}
-                step={0.05}
-                min={0}
-                width="w-16"
-                onChange={(v) => setConfig({ bandDeltaHigh: v })}
-              />
-            </div>
-          </Field>
+          {/* A band-correction delta range used to sit here, picking the fresh sell
+              by delta instead of by price. It is gone: corrections take the same
+              Entry premium every other sale does, so there is one price rule on
+              screen rather than two that have to be kept in step. */}
 
           <GroupRule />
 

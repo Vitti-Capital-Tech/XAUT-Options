@@ -85,10 +85,14 @@ export interface DeltaConfig {
   itmTrigger: number
   maxRolls: number
   rollCounts: RollCounts
+  /**
+   * The premium every sale aims for — the strike quoted closest to this wins.
+   * It is the only price rule the strategy has: entries, roll replacements and
+   * band corrections all pick against it, so a correction sits where an entry
+   * would. There is no separate floor, and none is needed — asking for the
+   * closest to a price already says what to sell.
+   */
   entryPremium: number
-  minPremium: number
-  bandDeltaLow: number
-  bandDeltaHigh: number
   /**
    * XAUT sold per leg at the open, converted to lots by the contract's own value
    * the way the auto strategy's `qty` is: `lots = round(qty / contractValue)`.
@@ -145,9 +149,6 @@ export const DEFAULT_DELTA_CONFIG: DeltaConfig = {
   maxRolls: 3,
   rollCounts: 'pass',
   entryPremium: 4,
-  minPremium: 2,
-  bandDeltaLow: 0.15,
-  bandDeltaHigh: 0.25,
   // One lot at the venue's 0.001 contract value.
   qty: 0.001,
   tieBreak: 'closest',
@@ -493,7 +494,7 @@ function furtherOtm(strike: number, from: number, kind: OptionKind): boolean {
 export function pickByPremium(
   expiry: Expiry,
   kind: OptionKind,
-  cfg: Pick<DeltaConfig, 'entryPremium' | 'minPremium' | 'tieBreak'>,
+  cfg: Pick<DeltaConfig, 'entryPremium' | 'tieBreak'>,
   tickerFor: (symbol: string) => Ticker | undefined,
   beyond?: number,
 ): StrikePick | null {
@@ -505,8 +506,6 @@ export function pickByPremium(
     const premium = salePremium(ticker)
     const optionDelta = tickerDelta(ticker)
     if (premium === null || optionDelta === null) continue
-    // Section 6: nothing is ever sold below the floor.
-    if (premium < cfg.minPremium) continue
     candidates.push({ product, strike, premium, optionDelta })
   }
 
@@ -527,38 +526,6 @@ export function pickByPremium(
     return below.length ? below.reduce((b, c) => (c.premium > b.premium ? c : b)) : closest()
   }
   return closest()
-}
-
-/**
- * The strike to sell for a band correction: one inside the band-correction delta
- * range, deliberately further out than the entry strikes so each contract moves
- * Δp less. The floor still applies. Of those in range, the one nearest the
- * middle of it.
- */
-export function pickByDelta(
-  expiry: Expiry,
-  kind: OptionKind,
-  cfg: Pick<DeltaConfig, 'bandDeltaLow' | 'bandDeltaHigh' | 'minPremium'>,
-  tickerFor: (symbol: string) => Ticker | undefined,
-): StrikePick | null {
-  const lo = Math.min(cfg.bandDeltaLow, cfg.bandDeltaHigh)
-  const hi = Math.max(cfg.bandDeltaLow, cfg.bandDeltaHigh)
-  const mid = (lo + hi) / 2
-
-  let best: StrikePick | null = null
-  for (const [strike, product] of book(expiry, kind)) {
-    const ticker = tickerFor(product.symbol)
-    const premium = salePremium(ticker)
-    const optionDelta = tickerDelta(ticker)
-    if (premium === null || optionDelta === null) continue
-    if (premium < cfg.minPremium) continue
-    const mag = Math.abs(optionDelta)
-    if (mag < lo || mag > hi) continue
-    if (!best || Math.abs(mag - mid) < Math.abs(Math.abs(best.optionDelta) - mid)) {
-      best = { product, strike, premium, optionDelta }
-    }
-  }
-  return best
 }
 
 // ---------------------------------------------------------------------------
@@ -666,7 +633,7 @@ export function planCycle(input: CycleInput): CyclePlan {
       return {
         ...base,
         action: null,
-        reason: `No ${!call ? 'call' : 'put'} strike at or above the $${cfg.minPremium} floor yet`,
+        reason: `No ${!call ? 'call' : 'put'} strike quoted yet`,
       }
     }
     const callLots = entryLots(call.product, cfg)
@@ -742,15 +709,18 @@ export function planCycle(input: CycleInput): CyclePlan {
     }
   }
 
-  // Step 2 — nothing left to roll: correct the band with fresh OTM sells.
+  // Step 2 — nothing left to roll: correct the band with fresh sells, picked at
+  // the entry premium like every other sale. The spec sized these off a separate
+  // delta range, but a price rule already says which strike that is, and one rule
+  // the trader can see beats two that have to agree.
   const sellSide = correctiveSellSide(breach)
-  const pick = pickByDelta(expiry, sellSide, cfg, tickerFor)
+  const pick = pickByPremium(expiry, sellSide, cfg, tickerFor)
   if (!pick) {
     return {
       ...base,
       breach,
       action: null,
-      reason: `Δp ${fmt(dp)} outside the band — no ${sellSide} strike in the ${cfg.bandDeltaLow}–${cfg.bandDeltaHigh} delta range`,
+      reason: `Δp ${fmt(dp)} outside the band — no ${sellSide} strike quoted to correct with`,
     }
   }
   const q = bandQty(targetLots, dpl, pick.optionDelta)
