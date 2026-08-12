@@ -204,12 +204,6 @@ export function useAutoStrategy(
           stop_loss_pct: next.stopLossPct,
           take_profit_pct: next.takeProfitPct,
         })
-        // The engine only arms brackets at fill time, so a moved stop or
-        // take-profit would never reach the shorts already open. Push it onto
-        // them here — the same avg-entry × multiple the engine would have used.
-        if (next.stopLossPct !== prev.stopLossPct || next.takeProfitPct !== prev.takeProfitPct) {
-          void rearmOpenPositions(positionsRef.current, next, reloadRef.current)
-        }
         return next
       })
     },
@@ -223,6 +217,22 @@ export function useAutoStrategy(
     },
     [persist],
   )
+
+  // Re-arm the open shorts whenever the trader moves TP/SL. The engine only ever
+  // arms a bracket at fill time, so without this a changed stop or take-profit
+  // never reaches a position already open. A ref of the last-applied values keeps
+  // this to real edits: it stays quiet on load and on a plain positions refresh.
+  const armedForRef = useRef<{ sl: number; tp: number } | null>(null)
+  useEffect(() => {
+    if (loading) return
+    const now = { sl: config.stopLossPct, tp: config.takeProfitPct }
+    const was = armedForRef.current
+    armedForRef.current = now
+    // First settle after a load adopts the values without touching positions;
+    // only a subsequent change is a trader moving the fields.
+    if (was === null || (was.sl === now.sl && was.tp === now.tp)) return
+    void rearmOpenPositions(positionsRef.current, config, reloadRef.current)
+  }, [config, loading])
 
   return { config, setConfig, armed, setArmed, hasAccount: accountId !== null, loading }
 }

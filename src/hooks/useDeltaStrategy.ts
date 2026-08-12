@@ -337,11 +337,6 @@ export function useDeltaStrategy(
       setConfigState((prev) => {
         const next = { ...prev, ...patch }
         void persist(configToRow(next))
-        // delta_sell only arms brackets at fill time, so a moved mark would never
-        // reach the shorts already open. Push it onto them here.
-        if (next.takeProfitMark !== prev.takeProfitMark || next.stopLossMark !== prev.stopLossMark) {
-          void rearmOpenPositions(positionsRef.current, next, reloadRef.current)
-        }
         return next
       })
     },
@@ -355,6 +350,20 @@ export function useDeltaStrategy(
     },
     [persist],
   )
+
+  // Re-arm the open shorts whenever the trader moves TP/SL. delta_sell only arms
+  // a bracket at fill time, so without this a changed mark never reaches a short
+  // already open. A ref of the last-applied marks keeps this to real edits: it
+  // stays quiet on load and on a plain positions refresh.
+  const armedForRef = useRef<{ tp: number; sl: number } | null>(null)
+  useEffect(() => {
+    if (loading) return
+    const now = { tp: config.takeProfitMark, sl: config.stopLossMark }
+    const was = armedForRef.current
+    armedForRef.current = now
+    if (was === null || (was.tp === now.tp && was.sl === now.sl)) return
+    void rearmOpenPositions(positionsRef.current, config, reloadRef.current)
+  }, [config, loading])
 
   // Clearing last_cycle is all a manual refresh can do from here: the engine is
   // server-side and its spacing check is the one gate the client owns. The row is
