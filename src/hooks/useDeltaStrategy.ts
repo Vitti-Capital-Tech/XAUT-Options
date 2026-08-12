@@ -214,6 +214,10 @@ export function useDeltaStrategy(accountId: string | null, deps: DeltaEngineDeps
   // Skip a background sync right after a local edit, so an in-flight write is
   // not clobbered by a stale read.
   const lastEditRef = useRef(0)
+  // The open book, through a ref so re-arming on a TP/SL edit sees the current
+  // shorts without making setConfig depend on them.
+  const positionsRef = useRef(deps.positions)
+  positionsRef.current = deps.positions
 
   const applyRow = useCallback((row: Row) => {
     setConfigState(rowToConfig(row))
@@ -326,6 +330,11 @@ export function useDeltaStrategy(accountId: string | null, deps: DeltaEngineDeps
       setConfigState((prev) => {
         const next = { ...prev, ...patch }
         void persist(configToRow(next))
+        // delta_sell only arms brackets at fill time, so a moved mark would never
+        // reach the shorts already open. Push it onto them here.
+        if (next.takeProfitMark !== prev.takeProfitMark || next.stopLossMark !== prev.stopLossMark) {
+          rearmOpenPositions(positionsRef.current, next)
+        }
         return next
       })
     },
@@ -418,4 +427,23 @@ export function useDeltaStrategy(accountId: string | null, deps: DeltaEngineDeps
     }),
     [config, setConfig, armed, setArmed, session, accountId, loading, plan, error, refresh, entryLots],
   )
+}
+
+/**
+ * Re-arm every open short's bracket to the current marks, mirroring delta_sell:
+ * absolute levels, each armed only when set and only on the side the entry can
+ * still reach — a take-profit below the entry, a stop above it — and cleared
+ * (null) otherwise.
+ */
+function rearmOpenPositions(positions: PositionRow[], config: DeltaConfig): void {
+  for (const p of positions) {
+    if (p.net_qty >= 0) continue
+    const avg = Number(p.avg_entry_price)
+    void supabase.rpc('set_position_tpsl', {
+      p_position_id: p.id,
+      p_take_profit: config.takeProfitMark > 0 && avg > config.takeProfitMark ? config.takeProfitMark : null,
+      p_stop_loss: config.stopLossMark > 0 && avg < config.stopLossMark ? config.stopLossMark : null,
+      p_trigger: 'mark',
+    })
+  }
 }

@@ -153,7 +153,7 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
   // Just the settings the server-side engine watches (see 0008_strategy_engine):
   // arming, strike, size and window for the selected auto account. The placing
   // and the stops run on the server, so nothing here depends on the tab.
-  const strategy = useAutoStrategy(autoAccounts.selectedId)
+  const strategy = useAutoStrategy(autoAccounts.selectedId, autoTrading.positions)
 
   // ---- Delta management strategy -------------------------------------------
   // Settings and a readout only. The cycle itself runs on pg_cron (see
