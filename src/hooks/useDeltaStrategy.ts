@@ -54,8 +54,8 @@ export interface DeltaStrategyApi {
   entryLots: number | null
   /** Push the current TP/SL marks onto the open shorts — what the Save button calls. */
   applyTpSl: () => void
-  /** Open shorts the Save button would touch; zero disables it. */
-  openCount: number
+  /** An open short's bracket differs from the current marks — shows the Save button. */
+  tpslDirty: boolean
 }
 
 /** What the readout needs to price the book. Nothing here places an order. */
@@ -360,10 +360,23 @@ export function useDeltaStrategy(
   // the Save button in the panel calls this to apply it. Deliberately not
   // automatic: a live NumInput commits every keystroke, and no half-typed mark
   // should ever touch a live position.
-  const openCount = deps.positions.reduce((n, p) => (p.net_qty < 0 ? n + 1 : n), 0)
   const applyTpSl = useCallback(() => {
     void rearmOpenPositions(positionsRef.current, config, reloadRef.current)
   }, [config])
+
+  // Whether any open short's bracket differs from what the current marks would
+  // arm — the "unsaved change" that shows the Save button. Applying it clears the
+  // difference, so the button hides itself once the write lands.
+  const tpslDirty = useMemo(() => {
+    const wantTp = config.takeProfitMark > 0 ? config.takeProfitMark : null
+    const wantSl = config.stopLossMark > 0 ? config.stopLossMark : null
+    return deps.positions.some((p) => {
+      if (p.net_qty >= 0) return false
+      const tp = p.take_profit == null ? null : Number(p.take_profit)
+      const sl = p.stop_loss == null ? null : Number(p.stop_loss)
+      return !approxEq(tp, wantTp) || !approxEq(sl, wantSl)
+    })
+  }, [deps.positions, config.takeProfitMark, config.stopLossMark])
 
   // Clearing last_cycle is all a manual refresh can do from here: the engine is
   // server-side and its spacing check is the one gate the client owns. The row is
@@ -441,10 +454,16 @@ export function useDeltaStrategy(
       refresh,
       entryLots,
       applyTpSl,
-      openCount,
+      tpslDirty,
     }),
-    [config, setConfig, armed, setArmed, session, accountId, loading, plan, error, refresh, entryLots, applyTpSl, openCount],
+    [config, setConfig, armed, setArmed, session, accountId, loading, plan, error, refresh, entryLots, applyTpSl, tpslDirty],
   )
+}
+
+/** Equal within a rounding whisker, treating null (no bracket) as its own value. */
+function approxEq(a: number | null, b: number | null): boolean {
+  if (a === null || b === null) return a === b
+  return Math.abs(a - b) <= 1e-6
 }
 
 /**

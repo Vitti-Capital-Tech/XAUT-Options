@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { MONEYNESS_ORDER, stopMultiple, takeProfitMultiple, type Moneyness } from '../lib/strategy'
 import { expiryIsLive, expiryOptions, type Expiry } from '../lib/delta'
 import type { StrategyApi } from '../hooks/useAutoStrategy'
@@ -30,8 +29,7 @@ export function StrategyTab({
   strategy: StrategyApi
   expiries: Expiry[]
 }) {
-  const { config, setConfig, armed, setArmed, hasAccount, applyTpSl, openCount } = strategy
-  const [saved, setSaved] = useState(false)
+  const { config, setConfig, armed, setArmed, hasAccount, applyTpSl, tpslDirty } = strategy
   const mult = stopMultiple(config.stopLossPct)
   const tpMult = takeProfitMultiple(config.takeProfitPct)
 
@@ -170,31 +168,20 @@ export function StrategyTab({
         </div>
       </Field>
 
-      {/* The bracket above always applies to the next sell. This pushes it onto the
-          shorts already open too — on demand, never on a keystroke, so a half-typed
-          percent can't reach a live position. */}
-      <Field
-        label="Apply"
-        help="Push the stop and take-profit above onto the positions already open, each read off that position's own entry. New sells use them anyway; this updates the ones open right now. Nothing to apply when the book is empty."
-      >
+      {/* A changed percent saves to settings live, so the next sell uses it — but it
+          only reaches the shorts already open when this is clicked. It appears solely
+          when an open position's bracket differs from the stop/take-profit above, and
+          clears itself once applied, so it reads as "apply this TP/SL change". */}
+      {tpslDirty && (
         <button
           type="button"
-          disabled={!hasAccount || openCount === 0}
-          title={
-            openCount === 0
-              ? 'No open positions to update'
-              : `Apply the stop/take-profit above to the ${openCount} open position${openCount === 1 ? '' : 's'}`
-          }
-          onClick={() => {
-            applyTpSl()
-            setSaved(true)
-            window.setTimeout(() => setSaved(false), 1500)
-          }}
-          className="flex h-9 items-center gap-1.5 rounded-md border border-raised-3 bg-surface px-3 text-[12px] text-ink-2 transition-colors hover:border-ink-3 hover:text-ink disabled:opacity-40"
+          onClick={applyTpSl}
+          title="Apply the stop/take-profit above to the positions already open"
+          className="flex h-9 shrink-0 items-center gap-1.5 self-end rounded-md border border-pos-on-muted bg-pos-muted px-3.5 text-[12px] font-medium text-pos transition-colors hover:border-pos hover:bg-pos-on-muted"
         >
-          {saved ? 'Saved ✓' : openCount > 0 ? `Save · ${openCount}` : 'Save'}
+          Save TP/SL
         </button>
-      </Field>
+      )}
 
       {/* No days selected disables the strategy outright, which is worth saying
           out loud — the run switch still reads "Running". */}

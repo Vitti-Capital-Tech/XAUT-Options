@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import {
   DEFAULT_CONFIG,
@@ -29,8 +29,8 @@ export interface StrategyApi {
   loading: boolean
   /** Push the current TP/SL onto the open shorts — what the Save button calls. */
   applyTpSl: () => void
-  /** Open shorts the Save button would touch; zero disables it. */
-  openCount: number
+  /** An open short's bracket differs from the current TP/SL — shows the Save button. */
+  tpslDirty: boolean
 }
 
 interface Row {
@@ -227,10 +227,24 @@ export function useAutoStrategy(
   // position already open — the Save button in the panel calls this to apply it.
   // Deliberately not automatic: a live NumInput commits every keystroke, and no
   // half-typed level should ever touch a live position.
-  const openCount = positions.reduce((n, p) => (p.net_qty !== 0 ? n + 1 : n), 0)
   const applyTpSl = useCallback(() => {
     void rearmOpenPositions(positionsRef.current, config, reloadRef.current)
   }, [config])
+
+  // Whether any open short's bracket differs from what the current TP/SL would
+  // arm — the "unsaved change" that shows the Save button. Applying it clears the
+  // difference, so the button hides itself once the write lands.
+  const tpslDirty = useMemo(() => {
+    const stop = stopMultiple(config.stopLossPct)
+    const take = takeProfitMultiple(config.takeProfitPct)
+    return positions.some((p) => {
+      if (p.net_qty === 0) return false
+      const avg = Number(p.avg_entry_price)
+      const sl = p.stop_loss == null ? null : Number(p.stop_loss)
+      const tp = p.take_profit == null ? null : Number(p.take_profit)
+      return !approxEq(sl, stop === null ? null : avg * stop) || !approxEq(tp, take === null ? null : avg * take)
+    })
+  }, [positions, config.stopLossPct, config.takeProfitPct])
 
   return {
     config,
@@ -240,8 +254,14 @@ export function useAutoStrategy(
     hasAccount: accountId !== null,
     loading,
     applyTpSl,
-    openCount,
+    tpslDirty,
   }
+}
+
+/** Equal within a rounding whisker, treating null (no bracket) as its own value. */
+function approxEq(a: number | null, b: number | null): boolean {
+  if (a === null || b === null) return a === b
+  return Math.abs(a - b) <= 1e-6
 }
 
 /**
