@@ -155,7 +155,9 @@ export const DEFAULT_DELTA_CONFIG: DeltaConfig = {
   expiryPick: 'nearest',
   // Unset until the trader picks a date, so a new account trades the nearest.
   expiryLabel: null,
-  cycleSeconds: 30,
+  // The engine's own jobs run every 5s (0029), and this is a floor on top of
+  // them, so anything higher here is what decides the cadence.
+  cycleSeconds: 5,
   takeProfitMark: 0.7,
   // No stop, which is what the rules document specifies.
   stopLossMark: 0,

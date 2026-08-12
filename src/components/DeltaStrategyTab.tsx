@@ -298,7 +298,7 @@ export function DeltaStrategyTab({
               so this brings a cycle forward to within that, not to this instant. */}
           <Field
             label="Refresh"
-            help="How often it looks at the position and acts. One action per check, never several at once. The button skips the wait so the next check happens sooner — it runs every minute, so that means within a minute, not instantly."
+            help="How often it looks at the position and acts. One action per check, never several at once. The engine itself wakes every 5 seconds, so 5 is as fast as this goes — set it higher to make it act less often. The button skips the wait, so the next check happens within about 5 seconds rather than instantly."
           >
             <div className="flex items-center gap-2">
               <NumInput

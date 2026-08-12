@@ -42,7 +42,7 @@ export interface DeltaStrategyApi {
   /**
    * Run a cycle now rather than waiting out the refresh interval: clears
    * `last_cycle`, which is the only thing holding the engine back, and re-reads the
-   * row. The engine's own tick is every minute, so this brings the next cycle
+   * row. The engine's own tick is every 5 seconds, so this brings the next cycle
    * forward to within that — it cannot make the engine act this instant.
    */
   refresh: () => Promise<void>
