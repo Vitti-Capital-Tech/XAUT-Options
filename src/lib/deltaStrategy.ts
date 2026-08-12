@@ -625,7 +625,13 @@ export function planCycle(input: CycleInput): CyclePlan {
 
   const live = positions.filter((p) => p.net_qty !== 0)
   const { legs, missing } = bookDeltas(live, tickerFor, spot)
-  const dp = missing.length === 0 ? portfolioDelta(legs) : null
+  // Δp in qty (underlying) units, the same unit the band is set in: net_qty counts
+  // venue lots, so each leg's lot-sized delta is scaled by the contract value to
+  // read as the book's own delta. `dpLots` keeps the unscaled sum, because sizing a
+  // correction still counts in lots — see the roll and band-correction steps below.
+  const cv = bookContractValue(legs, expiry)
+  const dpLots = missing.length === 0 ? portfolioDelta(legs) : null
+  const dp = dpLots === null ? null : dpLots * cv
   const queue = itmQueue(legs, cfg)
   const base = { dp, breach: null as Breach, phase, day, tradingDay, queue }
 
@@ -688,7 +694,12 @@ export function planCycle(input: CycleInput): CyclePlan {
     return { ...base, breach, action: null, reason: `Δp ${fmt(dp)} — inside the band` }
   }
 
+  // Sizing counts in lots, so it works from the unscaled Δp and a target scaled
+  // back the same way — `target` is a band figure, in qty units, so `target / cv`
+  // brings it into the lot space `dpLots` lives in.
+  const dpl = dpLots as number
   const target = landingTarget(cfg, breach)
+  const targetLots = target / cv
   const rollSide = correctiveRollSide(breach)
   const used = rollSide === 'call' ? session.rollsUsedCall : session.rollsUsedPut
   const exitOnly = used >= cfg.maxRolls
@@ -714,7 +725,7 @@ export function planCycle(input: CycleInput): CyclePlan {
 
     const replacement = pickByPremium(expiry, rollSide, cfg, tickerFor, leg.strike)
     if (!replacement) continue
-    const q = Math.min(open, rollQty(target, dp, leg.optionDelta, replacement.optionDelta))
+    const q = Math.min(open, rollQty(targetLots, dpl, leg.optionDelta, replacement.optionDelta))
     if (q <= 0) continue
 
     return {
@@ -742,7 +753,7 @@ export function planCycle(input: CycleInput): CyclePlan {
       reason: `Δp ${fmt(dp)} outside the band — no ${sellSide} strike in the ${cfg.bandDeltaLow}–${cfg.bandDeltaHigh} delta range`,
     }
   }
-  const q = bandQty(target, dp, pick.optionDelta)
+  const q = bandQty(targetLots, dpl, pick.optionDelta)
   if (q <= 0) {
     return { ...base, breach, action: null, reason: `Δp ${fmt(dp)} — breach is under one contract` }
   }
@@ -757,4 +768,18 @@ export function planCycle(input: CycleInput): CyclePlan {
 
 function fmt(n: number): string {
   return n.toFixed(2)
+}
+
+/**
+ * The book's contract value, for scaling lot-sized delta into the qty units the
+ * band is set in. It is uniform across a XAUT expiry, so any open leg answers, and
+ * a listed strike stands in before the book has any. Falls back to 1 — leaving Δp
+ * in lot units — rather than zeroing the reading if no value is to be had.
+ */
+function bookContractValue(legs: LegDelta[], expiry: Expiry | null): number {
+  const fromLeg = legs.length > 0 ? Number(legs[0].position.contract_value) : NaN
+  if (fromLeg > 0) return fromLeg
+  const product = expiry?.calls.values().next().value ?? expiry?.puts.values().next().value
+  const cv = product ? Number(product.contract_value) : NaN
+  return cv > 0 ? cv : 1
 }
