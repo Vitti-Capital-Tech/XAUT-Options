@@ -203,7 +203,11 @@ function rowToSession(row: Row): SessionState {
  * and the line saying what is about to happen. It never places an order. Two
  * engines on one book would double every correction.
  */
-export function useDeltaStrategy(accountId: string | null, deps: DeltaEngineDeps): DeltaStrategyApi {
+export function useDeltaStrategy(
+  accountId: string | null,
+  deps: DeltaEngineDeps,
+  reloadPositions: () => void | Promise<void> = () => {},
+): DeltaStrategyApi {
   const [config, setConfigState] = useState<DeltaConfig>(DEFAULT_DELTA_CONFIG)
   const [armed, setArmedState] = useState(false)
   const [session, setSession] = useState<SessionState>(EMPTY_SESSION)
@@ -214,10 +218,13 @@ export function useDeltaStrategy(accountId: string | null, deps: DeltaEngineDeps
   // Skip a background sync right after a local edit, so an in-flight write is
   // not clobbered by a stale read.
   const lastEditRef = useRef(0)
-  // The open book, through a ref so re-arming on a TP/SL edit sees the current
-  // shorts without making setConfig depend on them.
+  // The open book and its reloader, through refs so re-arming on a TP/SL edit
+  // sees the current shorts and refreshes them without making setConfig depend
+  // on either.
   const positionsRef = useRef(deps.positions)
   positionsRef.current = deps.positions
+  const reloadRef = useRef(reloadPositions)
+  reloadRef.current = reloadPositions
 
   const applyRow = useCallback((row: Row) => {
     setConfigState(rowToConfig(row))
@@ -333,7 +340,7 @@ export function useDeltaStrategy(accountId: string | null, deps: DeltaEngineDeps
         // delta_sell only arms brackets at fill time, so a moved mark would never
         // reach the shorts already open. Push it onto them here.
         if (next.takeProfitMark !== prev.takeProfitMark || next.stopLossMark !== prev.stopLossMark) {
-          rearmOpenPositions(positionsRef.current, next)
+          void rearmOpenPositions(positionsRef.current, next, reloadRef.current)
         }
         return next
       })
@@ -433,17 +440,29 @@ export function useDeltaStrategy(accountId: string | null, deps: DeltaEngineDeps
  * Re-arm every open short's bracket to the current marks, mirroring delta_sell:
  * absolute levels, each armed only when set and only on the side the entry can
  * still reach — a take-profit below the entry, a stop above it — and cleared
- * (null) otherwise.
+ * (null) otherwise. Then reload the book so the change shows at once.
  */
-function rearmOpenPositions(positions: PositionRow[], config: DeltaConfig): void {
-  for (const p of positions) {
-    if (p.net_qty >= 0) continue
-    const avg = Number(p.avg_entry_price)
-    void supabase.rpc('set_position_tpsl', {
-      p_position_id: p.id,
-      p_take_profit: config.takeProfitMark > 0 && avg > config.takeProfitMark ? config.takeProfitMark : null,
-      p_stop_loss: config.stopLossMark > 0 && avg < config.stopLossMark ? config.stopLossMark : null,
-      p_trigger: 'mark',
-    })
-  }
+async function rearmOpenPositions(
+  positions: PositionRow[],
+  config: DeltaConfig,
+  reload: () => void | Promise<void>,
+): Promise<void> {
+  const open = positions.filter((p) => p.net_qty < 0)
+  if (open.length === 0) return
+  await Promise.all(
+    open.map((p) => {
+      const avg = Number(p.avg_entry_price)
+      return supabase
+        .rpc('set_position_tpsl', {
+          p_position_id: p.id,
+          p_take_profit: config.takeProfitMark > 0 && avg > config.takeProfitMark ? config.takeProfitMark : null,
+          p_stop_loss: config.stopLossMark > 0 && avg < config.stopLossMark ? config.stopLossMark : null,
+          p_trigger: 'mark',
+        })
+        .then(({ error }) => {
+          if (error) console.error('delta re-arm failed:', error.message)
+        })
+    }),
+  )
+  await reload()
 }

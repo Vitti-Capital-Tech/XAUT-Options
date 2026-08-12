@@ -153,16 +153,20 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
   // Just the settings the server-side engine watches (see 0008_strategy_engine):
   // arming, strike, size and window for the selected auto account. The placing
   // and the stops run on the server, so nothing here depends on the tab.
-  const strategy = useAutoStrategy(autoAccounts.selectedId, autoTrading.positions)
+  const strategy = useAutoStrategy(autoAccounts.selectedId, autoTrading.positions, autoTrading.reload)
 
   // ---- Delta management strategy -------------------------------------------
   // Settings and a readout only. The cycle itself runs on pg_cron (see
   // 0012_delta_strategy_engine), so the strategy trades with no tab open; the
   // positions here are what it needs to show Δp against the band.
-  const deltaStrategy = useDeltaStrategy(deltaAccounts.selectedId, {
-    positions: deltaTrading.positions,
-    expiries,
-  })
+  const deltaStrategy = useDeltaStrategy(
+    deltaAccounts.selectedId,
+    {
+      positions: deltaTrading.positions,
+      expiries,
+    },
+    deltaTrading.reload,
+  )
   const deltaExpiry = pickExpiry(expiries, deltaStrategy.config)
 
   // ---- Live stream ---------------------------------------------------------

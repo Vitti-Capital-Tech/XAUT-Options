@@ -47,17 +47,24 @@ interface Row {
 const COLS =
   'account_id, armed, moneyness, qty, window_start, window_end, trade_days, min_premium, expiry_rule, expiry_label, stop_loss_pct, take_profit_pct'
 
-export function useAutoStrategy(accountId: string | null, positions: PositionRow[] = []): StrategyApi {
+export function useAutoStrategy(
+  accountId: string | null,
+  positions: PositionRow[] = [],
+  reloadPositions: () => void | Promise<void> = () => {},
+): StrategyApi {
   const [config, setConfigState] = useState<StrategyConfig>(DEFAULT_CONFIG)
   const [armed, setArmedState] = useState(false)
   const [loading, setLoading] = useState(true)
   // When the user last changed something here, so a background sync does not
   // overwrite a write that may still be in flight.
   const lastEditRef = useRef(0)
-  // The open book, read through a ref so re-arming on a TP/SL edit sees the
-  // current positions without making setConfig depend on them.
+  // The open book and its reloader, read through refs so re-arming on a TP/SL
+  // edit sees the current positions and refreshes them without making setConfig
+  // depend on either.
   const positionsRef = useRef(positions)
   positionsRef.current = positions
+  const reloadRef = useRef(reloadPositions)
+  reloadRef.current = reloadPositions
 
   const applyRow = useCallback((row: Row) => {
     setConfigState({
@@ -201,7 +208,7 @@ export function useAutoStrategy(accountId: string | null, positions: PositionRow
         // take-profit would never reach the shorts already open. Push it onto
         // them here — the same avg-entry × multiple the engine would have used.
         if (next.stopLossPct !== prev.stopLossPct || next.takeProfitPct !== prev.takeProfitPct) {
-          rearmOpenPositions(positionsRef.current, next)
+          void rearmOpenPositions(positionsRef.current, next, reloadRef.current)
         }
         return next
       })
@@ -224,18 +231,31 @@ export function useAutoStrategy(accountId: string | null, positions: PositionRow
  * Re-arm every open short's bracket to the current TP/SL, mirroring what the
  * engine writes at fill time: stop and take-profit as avg_entry × the multiple,
  * on the mark, with a zero percent clearing that side (null, never a level at 0).
+ * Then reload the book so the change shows at once rather than on the next poll.
  */
-function rearmOpenPositions(positions: PositionRow[], config: StrategyConfig): void {
+async function rearmOpenPositions(
+  positions: PositionRow[],
+  config: StrategyConfig,
+  reload: () => void | Promise<void>,
+): Promise<void> {
   const stop = stopMultiple(config.stopLossPct)
   const take = takeProfitMultiple(config.takeProfitPct)
-  for (const p of positions) {
-    if (p.net_qty === 0) continue
-    const avg = Number(p.avg_entry_price)
-    void supabase.rpc('set_position_tpsl', {
-      p_position_id: p.id,
-      p_take_profit: take === null ? null : avg * take,
-      p_stop_loss: stop === null ? null : avg * stop,
-      p_trigger: 'mark',
-    })
-  }
+  const open = positions.filter((p) => p.net_qty !== 0)
+  if (open.length === 0) return
+  await Promise.all(
+    open.map((p) => {
+      const avg = Number(p.avg_entry_price)
+      return supabase
+        .rpc('set_position_tpsl', {
+          p_position_id: p.id,
+          p_take_profit: take === null ? null : avg * take,
+          p_stop_loss: stop === null ? null : avg * stop,
+          p_trigger: 'mark',
+        })
+        .then(({ error }) => {
+          if (error) console.error('auto re-arm failed:', error.message)
+        })
+    }),
+  )
+  await reload()
 }
