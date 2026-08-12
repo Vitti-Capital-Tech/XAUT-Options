@@ -29,7 +29,9 @@ export interface StrategyApi {
   loading: boolean
   /** Write every staged filter change and arm the open shorts — the Apply button. */
   apply: () => void
-  /** The draft has unsaved edits — shows the Apply button. */
+  /** Drop the staged edits and snap back to the saved config — the Cancel button. */
+  cancel: () => void
+  /** The draft has unsaved edits — enables Apply and Cancel. */
   dirty: boolean
 }
 
@@ -246,6 +248,11 @@ export function useAutoStrategy(
     void rearmOpenPositions(positionsRef.current, config, reloadRef.current)
   }, [config, loading, persist])
 
+  // Cancel: throw the draft away and snap back to what the database holds.
+  const cancel = useCallback(() => {
+    setConfigState(savedConfig)
+  }, [savedConfig])
+
   return {
     config,
     setConfig,
@@ -254,6 +261,7 @@ export function useAutoStrategy(
     hasAccount: accountId !== null,
     loading,
     apply,
+    cancel,
     dirty,
   }
 }

@@ -31,7 +31,7 @@ export function DeltaStrategyTab({
   strategy: DeltaStrategyApi
   expiries: Expiry[]
 }) {
-  const { config, setConfig, armed, setArmed, session, hasAccount, plan, error, refresh, entryLots, apply, dirty } =
+  const { config, setConfig, armed, setArmed, session, hasAccount, plan, error, refresh, entryLots, apply, cancel, dirty } =
     strategy
   const [refreshing, setRefreshing] = useState(false)
 
@@ -348,19 +348,30 @@ export function DeltaStrategyTab({
         </Field>
 
 {/* Run / pause, held to the right so the controls read left-to-right and
-            the switch sits on its own — the same place the auto strategy's is. The
-            Apply button lives just before it, shown only when an edit is unsaved. */}
+            the switch sits on its own — the same place the auto strategy's is.
+            Cancel and Apply sit just before it, always present but inert until an
+            edit is unsaved. */}
         <div className="ml-auto flex items-center gap-3 self-center">
-          {dirty && (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={cancel}
+              disabled={!dirty}
+              title="Discard the unsaved changes and go back to the saved settings"
+              className="flex h-9 shrink-0 items-center rounded-md border border-raised-3 bg-surface px-3.5 text-[12px] font-medium text-ink-2 transition-colors hover:border-ink-3 hover:text-ink disabled:pointer-events-none disabled:opacity-40"
+            >
+              Cancel
+            </button>
             <button
               type="button"
               onClick={apply}
+              disabled={!dirty}
               title="Save every changed field and apply the TP/SL to open positions"
-              className="flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-pos-on-muted bg-pos-muted px-3.5 text-[12px] font-medium text-pos transition-colors hover:border-pos hover:bg-pos-on-muted"
+              className="flex h-9 shrink-0 items-center rounded-md border border-pos-on-muted bg-pos-muted px-3.5 text-[12px] font-medium text-pos transition-colors hover:border-pos hover:bg-pos-on-muted disabled:pointer-events-none disabled:opacity-40"
             >
-              Apply changes
+              Apply
             </button>
-          )}
+          </div>
           <span className={`text-[15px] font-semibold ${armed ? 'text-pos' : 'text-ink-3'}`}>
             {armed ? 'Running' : 'Paused'}
           </span>

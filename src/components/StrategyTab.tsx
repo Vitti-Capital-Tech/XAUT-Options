@@ -29,7 +29,7 @@ export function StrategyTab({
   strategy: StrategyApi
   expiries: Expiry[]
 }) {
-  const { config, setConfig, armed, setArmed, hasAccount, apply, dirty } = strategy
+  const { config, setConfig, armed, setArmed, hasAccount, apply, cancel, dirty } = strategy
   const mult = stopMultiple(config.stopLossPct)
   const tpMult = takeProfitMultiple(config.takeProfitPct)
 
@@ -175,19 +175,29 @@ export function StrategyTab({
       )}
 
       {/* Run / pause, held to the right so the controls read left-to-right and
-          the switch sits on its own. The Apply button sits just before it, shown
-          only when an edit is unsaved. */}
+          the switch sits on its own. Cancel and Apply sit just before it, always
+          present but inert until an edit is unsaved. */}
       <div className="ml-auto flex items-center gap-3">
-        {dirty && (
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={cancel}
+            disabled={!dirty}
+            title="Discard the unsaved changes and go back to the saved settings"
+            className="flex h-9 shrink-0 items-center rounded-md border border-raised-3 bg-surface px-3.5 text-[12px] font-medium text-ink-2 transition-colors hover:border-ink-3 hover:text-ink disabled:pointer-events-none disabled:opacity-40"
+          >
+            Cancel
+          </button>
           <button
             type="button"
             onClick={apply}
+            disabled={!dirty}
             title="Save every changed field and apply the stop/take-profit to open positions"
-            className="flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-pos-on-muted bg-pos-muted px-3.5 text-[12px] font-medium text-pos transition-colors hover:border-pos hover:bg-pos-on-muted"
+            className="flex h-9 shrink-0 items-center rounded-md border border-pos-on-muted bg-pos-muted px-3.5 text-[12px] font-medium text-pos transition-colors hover:border-pos hover:bg-pos-on-muted disabled:pointer-events-none disabled:opacity-40"
           >
-            Apply changes
+            Apply
           </button>
-        )}
+        </div>
         <span className={`text-[15px] font-semibold ${armed ? 'text-pos' : 'text-ink-3'}`}>
           {armed ? 'Running' : 'Paused'}
         </span>

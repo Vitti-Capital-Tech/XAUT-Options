@@ -54,7 +54,9 @@ export interface DeltaStrategyApi {
   entryLots: number | null
   /** Write every staged filter change and arm the open shorts — the Apply button. */
   apply: () => void
-  /** The draft has unsaved edits — shows the Apply button. */
+  /** Drop the staged edits and snap back to the saved config — the Cancel button. */
+  cancel: () => void
+  /** The draft has unsaved edits — enables Apply and Cancel. */
   dirty: boolean
 }
 
@@ -377,6 +379,11 @@ export function useDeltaStrategy(
     void rearmOpenPositions(positionsRef.current, config, reloadRef.current)
   }, [config, loading, persist])
 
+  // Cancel: throw the draft away and snap back to what the database holds.
+  const cancel = useCallback(() => {
+    setConfigState(savedConfig)
+  }, [savedConfig])
+
   // Clearing last_cycle is all a manual refresh can do from here: the engine is
   // server-side and its spacing check is the one gate the client owns. The row is
   // then re-read directly rather than waiting on the background sync, which the
@@ -453,9 +460,10 @@ export function useDeltaStrategy(
       refresh,
       entryLots,
       apply,
+      cancel,
       dirty,
     }),
-    [config, setConfig, armed, setArmed, session, accountId, loading, plan, error, refresh, entryLots, apply, dirty],
+    [config, setConfig, armed, setArmed, session, accountId, loading, plan, error, refresh, entryLots, apply, cancel, dirty],
   )
 }
 
