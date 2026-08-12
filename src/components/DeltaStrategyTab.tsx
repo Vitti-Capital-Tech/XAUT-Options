@@ -53,305 +53,311 @@ export function DeltaStrategyTab({
       {/* Controls, in the order the rules are applied and a trader reasons: when it
           trades, what it sells at the open, the band it defends, how it rolls and
           corrects, where it exits, how often it looks. A hairline at each seam, since
-          sixteen fields in one row otherwise read as a wall. */}
-      <div className="flex flex-wrap items-start gap-x-6 gap-y-4 px-5 py-3.5">
-        <Field
-          label="Session · IST"
-          help="When it trades, on the IST clock. It sells the pair at the start and buys everything back at the end, so nothing is held overnight."
-        >
-          <div className="flex items-center gap-2">
-            <TimePicker value={config.sessionOpen} onChange={(v) => setConfig({ sessionOpen: v })} />
-            <span className="text-ink-4">–</span>
-            <TimePicker value={config.sessionClose} onChange={(v) => setConfig({ sessionClose: v })} />
-          </div>
-        </Field>
+          sixteen fields in one row otherwise read as a wall.
 
-        {/* The days the session runs. A day left out reads as a closed session: the
-            book is flattened and nothing new is opened. The readout's Session field
-            says which it is. */}
-        <Field
-          label="Trading days"
-          help="Which days it trades. A day switched off is treated as closed: everything is bought back and nothing new is opened."
-        >
-          <DayPicker value={config.tradeDays} onChange={(tradeDays) => setConfig({ tradeDays })} />
-        </Field>
+          Two zones rather than one wrapping row: the settings wrap among themselves
+          on the left, the actions keep a rail of their own on the right. Wrapping
+          them together is what stranded Cancel/Apply on a line of their own. */}
+      <div className="flex items-center gap-x-5 px-5 py-3.5">
+        <div className="flex min-w-0 flex-1 flex-wrap items-start gap-x-6 gap-y-4">
+          <Field
+            label="Session · IST"
+            help="When it trades, on the IST clock. It sells the pair at the start and buys everything back at the end, so nothing is held overnight."
+          >
+            <div className="flex items-center gap-2">
+              <TimePicker value={config.sessionOpen} onChange={(v) => setConfig({ sessionOpen: v })} />
+              <span className="text-ink-4">–</span>
+              <TimePicker value={config.sessionClose} onChange={(v) => setConfig({ sessionClose: v })} />
+            </div>
+          </Field>
 
-        <GroupRule />
+          {/* The days the session runs. A day left out reads as a closed session: the
+              book is flattened and nothing new is opened. The readout's Session field
+              says which it is. */}
+          <Field
+            label="Trading days"
+            help="Which days it trades. A day switched off is treated as closed: everything is bought back and nothing new is opened."
+          >
+            <DayPicker value={config.tradeDays} onChange={(tradeDays) => setConfig({ tradeDays })} />
+          </Field>
 
-        {/* The listed expiries by date, as the chain's tabs show them. A date does
-            not roll: once the chosen one settles the cycle stands down rather than
-            moving to a contract nobody picked, so the stale case is called out. */}
-        <Field
-          label="Expiry"
-          help="Which expiry to trade, by date. The date does not move on its own — once that expiry is gone, trading stops until you pick a new one. It will never quietly switch to a different one."
-        >
-          <div className="flex items-center gap-2">
+          <GroupRule />
+
+          {/* The listed expiries by date, as the chain's tabs show them. A date does
+              not roll: once the chosen one settles the cycle stands down rather than
+              moving to a contract nobody picked, so the stale case is called out. */}
+          <Field
+            label="Expiry"
+            help="Which expiry to trade, by date. The date does not move on its own — once that expiry is gone, trading stops until you pick a new one. It will never quietly switch to a different one."
+          >
+            <div className="flex items-center gap-2">
+              <Select
+                value={expiryValue}
+                width="w-32"
+                onChange={(v) => setConfig({ expiryLabel: v })}
+                options={expiryChoices}
+              />
+              {!expiryLive && (
+                <span className="text-[11px] whitespace-nowrap text-warn">Settled — pick a date</span>
+              )}
+            </div>
+          </Field>
+
+          <Field
+            label="Entry premium / min premium"
+            help="Left: the premium to aim for — it picks whichever strike is quoted closest to this. Right: a hard floor. Nothing is ever sold cheaper than this, anywhere."
+          >
+            <div className="flex items-center gap-2">
+              <NumInput
+                value={config.entryPremium}
+                step={0.5}
+                min={0}
+                width="w-16"
+                onChange={(v) => setConfig({ entryPremium: v })}
+              />
+              <span className="text-ink-4">/</span>
+              <NumInput
+                value={config.minPremium}
+                step={0.5}
+                min={0}
+                width="w-16"
+                onChange={(v) => setConfig({ minPremium: v })}
+              />
+            </div>
+          </Field>
+
+          <Field
+            label="Tie goes to"
+            help="When two strikes are priced about equally close to what you asked for, this decides which one wins."
+          >
             <Select
-              value={expiryValue}
+              value={config.tieBreak}
               width="w-32"
-              onChange={(v) => setConfig({ expiryLabel: v })}
-              options={expiryChoices}
+              onChange={(v) => setConfig({ tieBreak: v })}
+              options={[
+                { value: 'closest', label: 'Absolute closest' },
+                { value: 'above', label: 'Nearest above' },
+                { value: 'below', label: 'Nearest below' },
+              ]}
             />
-            {!expiryLive && (
-              <span className="text-[11px] whitespace-nowrap text-warn">Settled — pick a date</span>
-            )}
-          </div>
-        </Field>
+          </Field>
 
-        <Field
-          label="Entry premium / min premium"
-          help="Left: the premium to aim for — it picks whichever strike is quoted closest to this. Right: a hard floor. Nothing is ever sold cheaper than this, anywhere."
-        >
-          <div className="flex items-center gap-2">
-            <NumInput
-              value={config.entryPremium}
-              step={0.5}
-              min={0}
-              width="w-16"
-              onChange={(v) => setConfig({ entryPremium: v })}
+          {/* Size in XAUT, the way the auto tab expresses it, with the lots it works
+              out to beside the box — lots are what Δp actually counts, so seeing them
+              is the difference between a sane band and a permanently breached one. */}
+          <Field
+            label="Qty · XAUT"
+            help="How much to sell of each option, in XAUT — the same idea as Quantity on the auto tab, and the spec's N expressed in XAUT rather than lots. Careful: position delta counts lots, so doubling this doubles the delta. Raise Target delta band by the same amount or it will sit outside it all day."
+          >
+            <div className="flex items-center gap-2">
+              <NumInput
+                value={config.qty}
+                step={0.001}
+                min={0.001}
+                width="w-20"
+                onChange={(v) => setConfig({ qty: v })}
+              />
+              <span className="text-[11px] whitespace-nowrap text-ink-3">
+                {entryLots === null ? '—' : `${entryLots} lot${entryLots === 1 ? '' : 's'} / leg`}
+              </span>
+            </div>
+          </Field>
+
+          <GroupRule />
+
+          <Field
+            label="Target delta band"
+            help="The delta of everything you hold, added up. Inside this range it does nothing at all; outside it, it fixes the position. This is the whole position, not one option — so it can be any size, and negatives are fine. −2 to 1 is a valid range."
+          >
+            <div className="flex items-center gap-2">
+              <NumInput
+                value={config.bandLow}
+                step={0.1}
+                width="w-16"
+                onChange={(v) => setConfig({ bandLow: keepBelow(v, config.bandHigh) })}
+              />
+              <span className="text-ink-4">–</span>
+              <NumInput
+                value={config.bandHigh}
+                step={0.1}
+                width="w-16"
+                onChange={(v) => setConfig({ bandHigh: keepAbove(v, config.bandLow) })}
+              />
+            </div>
+          </Field>
+
+          <Field
+            label="Target landing"
+            help="Once it starts fixing, where should the position delta end up — back at the edge you crossed, or all the way to the middle of the range? The middle moves the position a lot further."
+          >
+            <Select
+              value={config.targetLanding}
+              width="w-32"
+              onChange={(v) => setConfig({ targetLanding: v })}
+              options={[
+                { value: 'edge', label: 'Breached edge' },
+                { value: 'mid', label: 'Band midpoint' },
+              ]}
             />
-            <span className="text-ink-4">/</span>
+          </Field>
+
+          <Field
+            label="B (buffer)"
+            help="How far back inside the range to come, rather than stopping on the line. At 0 it aims for the line itself, which usually works out to zero contracts and so does nothing — 0.4 is what makes fixes actually happen."
+          >
             <NumInput
-              value={config.minPremium}
-              step={0.5}
-              min={0}
-              width="w-16"
-              onChange={(v) => setConfig({ minPremium: v })}
-            />
-          </div>
-        </Field>
-
-        <Field
-          label="Tie goes to"
-          help="When two strikes are priced about equally close to what you asked for, this decides which one wins."
-        >
-          <Select
-            value={config.tieBreak}
-            width="w-32"
-            onChange={(v) => setConfig({ tieBreak: v })}
-            options={[
-              { value: 'closest', label: 'Absolute closest' },
-              { value: 'above', label: 'Nearest above' },
-              { value: 'below', label: 'Nearest below' },
-            ]}
-          />
-        </Field>
-
-        {/* Size in XAUT, the way the auto tab expresses it, with the lots it works
-            out to beside the box — lots are what Δp actually counts, so seeing them
-            is the difference between a sane band and a permanently breached one. */}
-        <Field
-          label="Qty · XAUT"
-          help="How much to sell of each option, in XAUT — the same idea as Quantity on the auto tab, and the spec's N expressed in XAUT rather than lots. Careful: position delta counts lots, so doubling this doubles the delta. Raise Target delta band by the same amount or it will sit outside it all day."
-        >
-          <div className="flex items-center gap-2">
-            <NumInput
-              value={config.qty}
-              step={0.001}
-              min={0.001}
-              width="w-20"
-              onChange={(v) => setConfig({ qty: v })}
-            />
-            <span className="text-[11px] whitespace-nowrap text-ink-3">
-              {entryLots === null ? '—' : `${entryLots} lot${entryLots === 1 ? '' : 's'} / leg`}
-            </span>
-          </div>
-        </Field>
-
-        <GroupRule />
-
-        <Field
-          label="Target delta band"
-          help="The delta of everything you hold, added up. Inside this range it does nothing at all; outside it, it fixes the position. This is the whole position, not one option — so it can be any size, and negatives are fine. −2 to 1 is a valid range."
-        >
-          <div className="flex items-center gap-2">
-            <NumInput
-              value={config.bandLow}
-              step={0.1}
-              width="w-16"
-              onChange={(v) => setConfig({ bandLow: keepBelow(v, config.bandHigh) })}
-            />
-            <span className="text-ink-4">–</span>
-            <NumInput
-              value={config.bandHigh}
-              step={0.1}
-              width="w-16"
-              onChange={(v) => setConfig({ bandHigh: keepAbove(v, config.bandLow) })}
-            />
-          </div>
-        </Field>
-
-        <Field
-          label="Target landing"
-          help="Once it starts fixing, where should the position delta end up — back at the edge you crossed, or all the way to the middle of the range? The middle moves the position a lot further."
-        >
-          <Select
-            value={config.targetLanding}
-            width="w-32"
-            onChange={(v) => setConfig({ targetLanding: v })}
-            options={[
-              { value: 'edge', label: 'Breached edge' },
-              { value: 'mid', label: 'Band midpoint' },
-            ]}
-          />
-        </Field>
-
-        <Field
-          label="B (buffer)"
-          help="How far back inside the range to come, rather than stopping on the line. At 0 it aims for the line itself, which usually works out to zero contracts and so does nothing — 0.4 is what makes fixes actually happen."
-        >
-          <NumInput
-            value={config.bandBuffer}
-            step={0.05}
-            min={0}
-            width="w-16"
-            onChange={(v) => setConfig({ bandBuffer: v })}
-          />
-        </Field>
-
-        <GroupRule />
-
-        <Field
-          label="ITM trigger"
-          help="How far past its strike gold must be before that sold option can be fixed. On its own this never starts anything — the position delta leaving its range is what does."
-        >
-          <NumInput
-            value={config.itmTrigger}
-            step={1}
-            min={0}
-            unit="pts"
-            width="w-16"
-            onChange={(v) => setConfig({ itmTrigger: v })}
-          />
-        </Field>
-
-        <Field
-          label="Max rolls per side"
-          help="How many times a day the calls (or the puts) can be fixed by moving them further out. Once used up, the next problem on that side is closed in full and the loss taken. This is the risk control — there is no stop-loss."
-        >
-          <NumInput
-            value={config.maxRolls}
-            step={1}
-            min={0}
-            width="w-16"
-            onChange={(v) => setConfig({ maxRolls: Math.round(v) })}
-          />
-        </Field>
-
-        <Field
-          label="Count rolls by"
-          help="A fix buys back part of the option that is hurting and sells the same type further out. This decides whether one round of fixing counts as one, or every strike it touches counts as one."
-        >
-          <Select
-            value={config.rollCounts}
-            width="w-32"
-            onChange={(v) => setConfig({ rollCounts: v })}
-            options={[
-              { value: 'pass', label: 'One pass' },
-              { value: 'strike', label: 'Per strike' },
-            ]}
-          />
-        </Field>
-
-        <Field
-          label="Band correction delta"
-          help="When there is nothing left to fix and it has to sell a fresh option, this is how big that one option's delta should be — not the whole position's, which is Target delta band. Keep it small so each contract moves the position a little — 0.15 to 0.25. One option's delta is always between −1 and 1, so this can never be −2. Ignore the sign: 0.15–0.25 already matches a put at −0.20."
-        >
-          <div className="flex items-center gap-2">
-            <NumInput
-              value={config.bandDeltaLow}
+              value={config.bandBuffer}
               step={0.05}
               min={0}
               width="w-16"
-              onChange={(v) => setConfig({ bandDeltaLow: v })}
+              onChange={(v) => setConfig({ bandBuffer: v })}
             />
-            <span className="text-ink-4">–</span>
+          </Field>
+
+          <GroupRule />
+
+          <Field
+            label="ITM trigger"
+            help="How far past its strike gold must be before that sold option can be fixed. On its own this never starts anything — the position delta leaving its range is what does."
+          >
             <NumInput
-              value={config.bandDeltaHigh}
-              step={0.05}
+              value={config.itmTrigger}
+              step={1}
+              min={0}
+              unit="pts"
+              width="w-16"
+              onChange={(v) => setConfig({ itmTrigger: v })}
+            />
+          </Field>
+
+          <Field
+            label="Max rolls per side"
+            help="How many times a day the calls (or the puts) can be fixed by moving them further out. Once used up, the next problem on that side is closed in full and the loss taken. This is the risk control — there is no stop-loss."
+          >
+            <NumInput
+              value={config.maxRolls}
+              step={1}
               min={0}
               width="w-16"
-              onChange={(v) => setConfig({ bandDeltaHigh: v })}
+              onChange={(v) => setConfig({ maxRolls: Math.round(v) })}
             />
-          </div>
-        </Field>
+          </Field>
 
-        <GroupRule />
+          <Field
+            label="Count rolls by"
+            help="A fix buys back part of the option that is hurting and sells the same type further out. This decides whether one round of fixing counts as one, or every strike it touches counts as one."
+          >
+            <Select
+              value={config.rollCounts}
+              width="w-32"
+              onChange={(v) => setConfig({ rollCounts: v })}
+              options={[
+                { value: 'pass', label: 'One pass' },
+                { value: 'strike', label: 'Per strike' },
+              ]}
+            />
+          </Field>
 
-        {/* Both brackets, as prices on the option's own mark: the take-profit fires
-            as the mark falls, the stop as it rises. Zero on either arms nothing —
-            which for the stop is the rules document's own behaviour. */}
-        <Field
-          label="TP mark"
-          help="Any option it sold is bought back once its price falls to this — the take-profit. At $0.70, a leg sold for $4 closes at 70 cents and you keep most of the premium. It is a price on the option's own mark, not a percentage. Zero arms no take-profit."
-        >
-          <NumInput
-            value={config.takeProfitMark}
-            step={0.05}
-            min={0}
-            unit="$"
-            width="w-16"
-            onChange={(v) => setConfig({ takeProfitMark: v })}
-          />
-        </Field>
+          <Field
+            label="Band correction delta"
+            help="When there is nothing left to fix and it has to sell a fresh option, this is how big that one option's delta should be — not the whole position's, which is Target delta band. Keep it small so each contract moves the position a little — 0.15 to 0.25. One option's delta is always between −1 and 1, so this can never be −2. Ignore the sign: 0.15–0.25 already matches a put at −0.20."
+          >
+            <div className="flex items-center gap-2">
+              <NumInput
+                value={config.bandDeltaLow}
+                step={0.05}
+                min={0}
+                width="w-16"
+                onChange={(v) => setConfig({ bandDeltaLow: v })}
+              />
+              <span className="text-ink-4">–</span>
+              <NumInput
+                value={config.bandDeltaHigh}
+                step={0.05}
+                min={0}
+                width="w-16"
+                onChange={(v) => setConfig({ bandDeltaHigh: v })}
+              />
+            </div>
+          </Field>
 
-        <Field
-          label="SL mark"
-          help="The other way: a sold option is bought back once its price rises to this. A leg sold for $4 with SL 8 closes at $8, giving back the whole premium. Zero arms no stop — which is what the rules document specifies, since the roll budget and exit-only mode are meant to be the risk control. Set it generously if at all: a losing leg is the one the roll logic exists to fix, and a stop closes it instead."
-        >
-          <NumInput
-            value={config.stopLossMark}
-            step={0.5}
-            min={0}
-            unit="$"
-            width="w-16"
-            onChange={(v) => setConfig({ stopLossMark: v })}
-          />
-        </Field>
+          <GroupRule />
 
-        <GroupRule />
-
-        {/* The interval, plus a way to skip the wait. The button clears the spacing
-            the engine checks, so its next tick acts — the engine runs once a minute,
-            so this brings a cycle forward to within that, not to this instant. */}
-        <Field
-          label="Refresh"
-          help="How often it looks at the position and acts. One action per check, never several at once. The button skips the wait so the next check happens sooner — it runs every minute, so that means within a minute, not instantly."
-        >
-          <div className="flex items-center gap-2">
+          {/* Both brackets, as prices on the option's own mark: the take-profit fires
+              as the mark falls, the stop as it rises. Zero on either arms nothing —
+              which for the stop is the rules document's own behaviour. */}
+          <Field
+            label="TP mark"
+            help="Any option it sold is bought back once its price falls to this — the take-profit. At $0.70, a leg sold for $4 closes at 70 cents and you keep most of the premium. It is a price on the option's own mark, not a percentage. Zero arms no take-profit."
+          >
             <NumInput
-              value={config.cycleSeconds}
-              step={5}
-              min={5}
-              unit="s"
+              value={config.takeProfitMark}
+              step={0.05}
+              min={0}
+              unit="$"
               width="w-16"
-              onChange={(v) => setConfig({ cycleSeconds: Math.round(v) })}
+              onChange={(v) => setConfig({ takeProfitMark: v })}
             />
-            <button
-              type="button"
-              disabled={!hasAccount || refreshing}
-              title={
-                hasAccount
-                  ? 'Run a cycle now — clears the wait so the next engine tick acts'
-                  : 'Create a delta account first'
-              }
-              onClick={() => {
-                setRefreshing(true)
-                void refresh().finally(() => setRefreshing(false))
-              }}
-              className="flex h-9 items-center gap-1.5 rounded-md border border-raised-3 bg-surface px-2.5 text-[12px] text-ink-2 transition-colors hover:border-ink-3 hover:text-ink disabled:opacity-40"
-            >
-              <RefreshIcon spinning={refreshing} />
-              {refreshing ? 'Queued' : 'Now'}
-            </button>
-          </div>
-        </Field>
+          </Field>
 
-{/* Run / pause, held to the right so the controls read left-to-right and
-            the switch sits on its own — the same place the auto strategy's is.
-            Cancel and Apply sit just before it, always present but inert until an
-            edit is unsaved. */}
-        <div className="ml-auto flex items-center gap-3 self-center">
+          <Field
+            label="SL mark"
+            help="The other way: a sold option is bought back once its price rises to this. A leg sold for $4 with SL 8 closes at $8, giving back the whole premium. Zero arms no stop — which is what the rules document specifies, since the roll budget and exit-only mode are meant to be the risk control. Set it generously if at all: a losing leg is the one the roll logic exists to fix, and a stop closes it instead."
+          >
+            <NumInput
+              value={config.stopLossMark}
+              step={0.5}
+              min={0}
+              unit="$"
+              width="w-16"
+              onChange={(v) => setConfig({ stopLossMark: v })}
+            />
+          </Field>
+
+          <GroupRule />
+
+          {/* The interval, plus a way to skip the wait. The button clears the spacing
+              the engine checks, so its next tick acts — the engine runs once a minute,
+              so this brings a cycle forward to within that, not to this instant. */}
+          <Field
+            label="Refresh"
+            help="How often it looks at the position and acts. One action per check, never several at once. The button skips the wait so the next check happens sooner — it runs every minute, so that means within a minute, not instantly."
+          >
+            <div className="flex items-center gap-2">
+              <NumInput
+                value={config.cycleSeconds}
+                step={5}
+                min={5}
+                unit="s"
+                width="w-16"
+                onChange={(v) => setConfig({ cycleSeconds: Math.round(v) })}
+              />
+              <button
+                type="button"
+                disabled={!hasAccount || refreshing}
+                title={
+                  hasAccount
+                    ? 'Run a cycle now — clears the wait so the next engine tick acts'
+                    : 'Create a delta account first'
+                }
+                onClick={() => {
+                  setRefreshing(true)
+                  void refresh().finally(() => setRefreshing(false))
+                }}
+                className="flex h-9 items-center gap-1.5 rounded-md border border-raised-3 bg-surface px-2.5 text-[12px] text-ink-2 transition-colors hover:border-ink-3 hover:text-ink disabled:opacity-40"
+              >
+                <RefreshIcon spinning={refreshing} />
+                {refreshing ? 'Queued' : 'Now'}
+              </button>
+            </div>
+          </Field>
+
+        </div>
+
+        {/* The action rail: what you do to the settings, then whether the strategy is
+            live. Held out of the wrap and behind a hairline so it reads as its own
+            zone rather than one more field — the same rail the auto strategy wears. */}
+        <div className="flex shrink-0 items-center gap-3 self-center border-l border-line pl-5">
           <div className="flex items-center gap-2">
             <button
               type="button"
