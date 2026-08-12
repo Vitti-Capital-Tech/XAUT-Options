@@ -320,7 +320,7 @@ export function DeltaStrategyTab({
             title="Apply the TP/SL marks above to the positions already open"
             className="flex h-9 shrink-0 items-center gap-1.5 self-end rounded-md border border-pos-on-muted bg-pos-muted px-3.5 text-[12px] font-medium text-pos transition-colors hover:border-pos hover:bg-pos-on-muted"
           >
-            Save TP/SL
+            Apply
           </button>
         )}
 
