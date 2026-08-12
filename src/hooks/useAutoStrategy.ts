@@ -227,11 +227,21 @@ export function useAutoStrategy(
     if (loading) return
     const now = { sl: config.stopLossPct, tp: config.takeProfitPct }
     const was = armedForRef.current
-    armedForRef.current = now
     // First settle after a load adopts the values without touching positions;
-    // only a subsequent change is a trader moving the fields.
-    if (was === null || (was.sl === now.sl && was.tp === now.tp)) return
-    void rearmOpenPositions(positionsRef.current, config, reloadRef.current)
+    // an unchanged pair is a plain re-render, not an edit.
+    if (was === null) {
+      armedForRef.current = now
+      return
+    }
+    if (was.sl === now.sl && was.tp === now.tp) return
+    // A live NumInput commits every parseable keystroke, so typing 100 lands 1
+    // then 10 then 100. Wait for the value to settle before writing to a live
+    // position, so an intermediate 1 never arms a stop that could fire on it.
+    const id = setTimeout(() => {
+      armedForRef.current = now
+      void rearmOpenPositions(positionsRef.current, config, reloadRef.current)
+    }, 600)
+    return () => clearTimeout(id)
   }, [config, loading])
 
   return { config, setConfig, armed, setArmed, hasAccount: accountId !== null, loading }

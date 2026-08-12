@@ -360,9 +360,21 @@ export function useDeltaStrategy(
     if (loading) return
     const now = { tp: config.takeProfitMark, sl: config.stopLossMark }
     const was = armedForRef.current
-    armedForRef.current = now
-    if (was === null || (was.tp === now.tp && was.sl === now.sl)) return
-    void rearmOpenPositions(positionsRef.current, config, reloadRef.current)
+    // First settle after a load adopts the marks without touching positions;
+    // an unchanged pair is a plain re-render, not an edit.
+    if (was === null) {
+      armedForRef.current = now
+      return
+    }
+    if (was.tp === now.tp && was.sl === now.sl) return
+    // A live NumInput commits every parseable keystroke, so typing 46 lands 4
+    // then 46. Wait for the value to settle before writing to a live position,
+    // so an intermediate 4 never arms a bracket that could fire on it.
+    const id = setTimeout(() => {
+      armedForRef.current = now
+      void rearmOpenPositions(positionsRef.current, config, reloadRef.current)
+    }, 600)
+    return () => clearTimeout(id)
   }, [config, loading])
 
   // Clearing last_cycle is all a manual refresh can do from here: the engine is
@@ -446,10 +458,11 @@ export function useDeltaStrategy(
 }
 
 /**
- * Re-arm every open short's bracket to the current marks, mirroring delta_sell:
- * absolute levels, each armed only when set and only on the side the entry can
- * still reach — a take-profit below the entry, a stop above it — and cleared
- * (null) otherwise. Then reload the book so the change shows at once.
+ * Re-arm every open short's bracket to the current marks. delta_sell adds an
+ * avg-entry guard at fill time — a take-profit only below the entry, a stop only
+ * above it — but a trader moving the fields means exactly the level typed, the
+ * same as the position's own TP/SL editor, so we set the marks straight: each on
+ * when it is set, cleared (null) when it is zero. Then reload so it shows at once.
  */
 async function rearmOpenPositions(
   positions: PositionRow[],
@@ -459,19 +472,18 @@ async function rearmOpenPositions(
   const open = positions.filter((p) => p.net_qty < 0)
   if (open.length === 0) return
   await Promise.all(
-    open.map((p) => {
-      const avg = Number(p.avg_entry_price)
-      return supabase
+    open.map((p) =>
+      supabase
         .rpc('set_position_tpsl', {
           p_position_id: p.id,
-          p_take_profit: config.takeProfitMark > 0 && avg > config.takeProfitMark ? config.takeProfitMark : null,
-          p_stop_loss: config.stopLossMark > 0 && avg < config.stopLossMark ? config.stopLossMark : null,
+          p_take_profit: config.takeProfitMark > 0 ? config.takeProfitMark : null,
+          p_stop_loss: config.stopLossMark > 0 ? config.stopLossMark : null,
           p_trigger: 'mark',
         })
         .then(({ error }) => {
           if (error) console.error('delta re-arm failed:', error.message)
-        })
-    }),
+        }),
+    ),
   )
   await reload()
 }
