@@ -22,7 +22,7 @@
  */
 
 import type { Expiry, Product, Ticker } from './delta'
-import { bestBid, markPrice, type PositionRow } from '../engine/paper'
+import { bestBid, markPrice, valuePosition, type PositionRow } from '../engine/paper'
 
 export type OptionKind = 'call' | 'put'
 
@@ -135,6 +135,30 @@ export interface DeltaConfig {
    * never replaced and Δp jumps by that leg's whole contribution.
    */
   stopLossMark: number
+  /**
+   * Blocked margin, as a percentage of equity, that puts the book into a cut.
+   *
+   * The strategy is sell-only, and one of its rules — the fresh OTM band
+   * correction — grows the book without bound: every breach with the ITM queue
+   * exhausted sells another leg nothing pairs off. Margin ratchets up while
+   * unrealized losses pull equity down, and with no rule reading either number
+   * the two eventually cross. This is that rule.
+   *
+   * Over the cap the engine stops selling and closes legs instead, most in-the-
+   * money first and preferring the side whose exit pulls Δp back toward the band,
+   * booking the loss rather than declining to close a leg that is down. Zero
+   * disables the guard, the way `takeProfitMark` and `stopLossMark` read zero.
+   */
+  marginCapPct: number
+  /**
+   * Where a cut stops — blocked margin as a percentage of equity.
+   *
+   * Separate from the cap so the control cannot flap: one threshold would cut to
+   * just under it, sell, and cut again. Between the two the book is held rather
+   * than idle — no entry and no band correction, but rolls still run, since a roll
+   * closes q and sells q further out and so cannot grow the book.
+   */
+  marginTargetPct: number
 }
 
 export const DEFAULT_DELTA_CONFIG: DeltaConfig = {
@@ -161,6 +185,9 @@ export const DEFAULT_DELTA_CONFIG: DeltaConfig = {
   takeProfitMark: 0.7,
   // No stop, which is what the rules document specifies.
   stopLossMark: 0,
+  // Cut once margin passes equity, and cut down to 90% of it.
+  marginCapPct: 100,
+  marginTargetPct: 90,
 }
 
 /** State that lives for one session and resets at the next open. */
@@ -312,6 +339,12 @@ export function legKind(pos: PositionRow): OptionKind {
   return pos.contract_type === 'put_options' ? 'put' : 'call'
 }
 
+/** How far in the money a leg is, in points. Negative when out of the money.
+ *  A call is in the money above its strike, a put below it. */
+export function itmDistanceOf(kind: OptionKind, strike: number, spot: number): number {
+  return kind === 'call' ? spot - strike : strike - spot
+}
+
 /**
  * Every leg's delta contribution. Legs whose ticker has no published greek are
  * dropped and reported separately — guessing a delta would quietly corrupt Δp,
@@ -340,8 +373,7 @@ export function bookDeltas(
       strike,
       optionDelta,
       contribution: pos.net_qty * optionDelta,
-      // A call is in the money above its strike, a put below it.
-      itmDistance: kind === 'call' ? spot - strike : strike - spot,
+      itmDistance: itmDistanceOf(kind, strike, spot),
     })
   }
 
@@ -460,6 +492,126 @@ export function bandQty(target: number, dp: number, dSelected: number): number {
 }
 
 // ---------------------------------------------------------------------------
+// The margin guard
+// ---------------------------------------------------------------------------
+
+/**
+ * Where an account sits against its two margin thresholds.
+ *
+ * `cut` is the emergency: blocked margin has passed the cap, so the only thing
+ * the engine may do is close legs. `hold` is the wider zone above the target,
+ * where the book is frozen against new premium but rolls carry on.
+ *
+ * Both read false when `marginCapPct` is zero, which is how the guard is turned
+ * off. Negative equity lands in `cut` on its own arithmetic — every threshold is
+ * then at or below zero, so any open short is over it.
+ */
+export interface MarginState {
+  cut: boolean
+  hold: boolean
+  /** Blocked margin the cut triggers at. */
+  cap: number
+  /** Blocked margin a cut works down to. */
+  goal: number
+  marginBlocked: number
+  equity: number
+  /** Margin as a percentage of equity, or null when equity is zero. */
+  pct: number | null
+}
+
+export function marginState(
+  cfg: Pick<DeltaConfig, 'marginCapPct' | 'marginTargetPct'>,
+  marginBlocked: number,
+  equity: number,
+): MarginState {
+  const cap = (equity * cfg.marginCapPct) / 100
+  const goal = (equity * cfg.marginTargetPct) / 100
+  const on = cfg.marginCapPct > 0
+  return {
+    // `marginBlocked > 0` is not redundant with the cap: on a wiped account every
+    // threshold is negative, so a flat book would read as cutting with nothing to
+    // cut. Nothing with zero blocked margin has anything to close.
+    cut: on && marginBlocked > cap && marginBlocked > 0,
+    hold: on && marginBlocked > goal,
+    cap,
+    goal,
+    marginBlocked,
+    equity,
+    // A ratio against equity that is zero or negative says nothing, so it is not
+    // reported as a number — callers show "over" instead of a nonsense percentage.
+    pct: equity <= 0 ? null : (marginBlocked / equity) * 100,
+  }
+}
+
+/**
+ * Lots to close from one leg to bring margin down to the target.
+ *
+ * Rounded *up*, unlike every other size in this file: a roll rounds down so a
+ * correction cannot overshoot the band, but a cut that lands a hair above the
+ * target has not resolved anything and would simply fire again next cycle.
+ * Capped at what the leg holds, so the remainder falls to the next cycle and the
+ * next leg — which is what keeps the realized loss to the smallest one that
+ * clears the breach.
+ */
+export function cutLots(shortfall: number, marginPerLot: number, openLots: number): number {
+  if (!(shortfall > 0) || !(marginPerLot > 0)) return 0
+  return Math.min(Math.ceil(shortfall / marginPerLot), openLots)
+}
+
+/**
+ * A short leg the guard could close. Deliberately *not* a `LegDelta`: that type
+ * only exists for legs with a published greek, and `bookDeltas` drops the rest
+ * into `missing`. A cut needs the strike, the side and the size — never the delta
+ * — so building candidates straight off the positions is what lets the guard
+ * close a leg whose greek has not arrived. Standing down on a margin breach to
+ * wait for a greek is the one failure this control exists to prevent.
+ */
+export interface CutCandidate {
+  position: PositionRow
+  kind: OptionKind
+  strike: number
+  itmDistance: number
+}
+
+/** Every short in the book, as cut candidates. Longs are excluded: their margin
+ *  is the premium already paid and closing one frees nothing. */
+export function cutCandidates(positions: PositionRow[], spot: number): CutCandidate[] {
+  const out: CutCandidate[] = []
+  for (const pos of positions) {
+    if (pos.net_qty >= 0) continue
+    const kind = legKind(pos)
+    const strike = Number(pos.strike_price)
+    out.push({ position: pos, kind, strike, itmDistance: itmDistanceOf(kind, strike, spot) })
+  }
+  return out
+}
+
+/**
+ * The leg to cut: most in-the-money first, on the side whose exit moves Δp
+ * toward the band.
+ *
+ * Most-ITM first is where both the margin and the risk are concentrated, so it
+ * frees the most per lot closed. The side preference is what makes this a delta
+ * control rather than plain deleveraging — Δp below the band is a book too heavy
+ * in short calls, so closing a call is what lifts it, the same reading
+ * `correctiveRollSide` uses for the roll queue.
+ *
+ * The preference sorts, it does not filter. With the corrective side empty the
+ * walk falls through to the other one, because a margin breach has to resolve
+ * whether or not the tidy version of it is on offer — and with Δp unknown there
+ * is no preference to apply, so ITM distance decides alone.
+ */
+export function pickCutLeg(candidates: CutCandidate[], breach: Breach): CutCandidate | null {
+  if (candidates.length === 0) return null
+  const preferred = breach ? correctiveRollSide(breach) : null
+  const rank = (c: CutCandidate) => (preferred && c.kind === preferred ? 0 : 1)
+  return candidates.reduce((best, c) => {
+    if (rank(c) !== rank(best)) return rank(c) < rank(best) ? c : best
+    return c.itmDistance > best.itmDistance ? c : best
+  })
+}
+
+// ---------------------------------------------------------------------------
 // Strike selection
 // ---------------------------------------------------------------------------
 
@@ -552,6 +704,13 @@ export type Action =
     }
   /** Fresh OTM sell, with no ITM leg left to roll. */
   | { type: 'band'; side: OptionKind; product: Product; qty: number }
+  /**
+   * Margin over the cap: close lots outright, loss booked, no replacement. Not a
+   * roll with `replace: null` — that is the roll budget running out on one side,
+   * which is a delta rule. This one answers to equity and outranks every rule
+   * below the session-close flatten.
+   */
+  | { type: 'cut'; leg: CutCandidate; exitQty: number }
 
 export interface CycleInput {
   now: Date
@@ -563,6 +722,15 @@ export interface CycleInput {
   tickerFor: (symbol: string) => Ticker | undefined
   /** Strikes already acted on in this corrective pass — touched at most once. */
   touched: ReadonlySet<string>
+  /**
+   * The account's blocked margin and equity, from `summarizeAccount`. Omit both
+   * and the margin guard sits out — the readout still prices the book, which is
+   * what lets the panel render before the account summary has loaded.
+   */
+  marginBlocked?: number
+  equity?: number
+  /** Per-symbol initial-margin rate, as `summarizeAccount` takes it. */
+  imRateFor?: (symbol: string) => number | undefined
 }
 
 export interface CyclePlan {
@@ -577,6 +745,8 @@ export interface CyclePlan {
   /** Whether `day` is one of the configured trading days. */
   tradingDay: boolean
   queue: LegDelta[]
+  /** Where the book sits against its margin thresholds; null when not supplied. */
+  margin: MarginState | null
 }
 
 /**
@@ -602,7 +772,11 @@ export function planCycle(input: CycleInput): CyclePlan {
   const dpLots = missing.length === 0 ? portfolioDelta(legs) : null
   const dp = dpLots === null ? null : dpLots * cv
   const queue = itmQueue(legs, cfg)
-  const base = { dp, breach: null as Breach, phase, day, tradingDay, queue }
+  const margin =
+    input.marginBlocked === undefined || input.equity === undefined
+      ? null
+      : marginState(cfg, input.marginBlocked, input.equity)
+  const base = { dp, breach: null as Breach, phase, day, tradingDay, queue, margin }
 
   // ---- Session close: flatten, whatever the band says ----------------------
   if (phase !== 'open') {
@@ -624,11 +798,66 @@ export function planCycle(input: CycleInput): CyclePlan {
     }
   }
 
-  if (!expiry) return { ...base, action: null, reason: 'No expiry listed to trade' }
+  // The spot check comes before the expiry one because the cut below needs a
+  // price and does not need a contract to trade.
   if (!(spot > 0)) return { ...base, action: null, reason: 'Waiting for a spot price' }
+
+  // ---- Margin guard: over the cap, cutting outranks every rule below --------
+  //
+  // Ahead of the expiry check deliberately. Closing a leg needs the leg's own
+  // quote, not the expiry the strategy trades, and an unlisted or settled expiry
+  // standing the strategy down while the book is past its equity is precisely the
+  // failure this control exists to prevent. Only the session-close flatten
+  // outranks it, and that is a strictly larger cut.
+  if (margin?.cut) {
+    // Off `live`, not `legs`: a leg still waiting on its greek is missing from
+    // `legs` but is every bit as much of a margin problem, and cutting it needs
+    // no delta. Δp only decides which side to prefer, so a null one just leaves
+    // ITM distance to decide alone.
+    const leg = pickCutLeg(cutCandidates(live, spot), dp === null ? null : bandBreach(dp, cfg))
+    if (!leg) {
+      return {
+        ...base,
+        action: null,
+        reason: `Margin ${pctOf(margin)} of equity — no short left to cut`,
+      }
+    }
+    const open = Math.abs(leg.position.net_qty)
+    const perLot =
+      valuePosition(
+        leg.position,
+        tickerFor(leg.position.symbol),
+        spot,
+        input.imRateFor?.(leg.position.symbol),
+      ).marginBlocked / open
+    const q = cutLots(margin.marginBlocked - margin.goal, perLot, open)
+    if (q <= 0) {
+      return {
+        ...base,
+        action: null,
+        reason: `Margin ${pctOf(margin)} of equity — cannot price a cut on ${leg.strike}`,
+      }
+    }
+    return {
+      ...base,
+      action: { type: 'cut', leg, exitQty: q },
+      reason: `Margin ${pctOf(margin)} of equity — cutting ${q} of ${leg.strike}${leg.kind === 'call' ? 'C' : 'P'}`,
+    }
+  }
+
+  if (!expiry) return { ...base, action: null, reason: 'No expiry listed to trade' }
 
   // ---- Daily entry ---------------------------------------------------------
   if (session.enteredDay !== day) {
+    // Two fresh shorts is the last thing a book already near its cap should add.
+    // `enteredDay` stays unset, so the entry is retried once margin allows.
+    if (margin?.hold) {
+      return {
+        ...base,
+        action: null,
+        reason: `Margin ${pctOf(margin)} of equity — entry held back`,
+      }
+    }
     const call = pickByPremium(expiry, 'call', cfg, tickerFor)
     const put = pickByPremium(expiry, 'put', cfg, tickerFor)
     if (!call || !put) {
@@ -715,6 +944,20 @@ export function planCycle(input: CycleInput): CyclePlan {
   // the entry premium like every other sale. The spec sized these off a separate
   // delta range, but a price rule already says which strike that is, and one rule
   // the trader can see beats two that have to agree.
+  //
+  // This is the one rule here that grows the book with nothing to pair it off, so
+  // it is the rule the hold zone exists to stop. Δp stays outside the band for
+  // now; the cut above is what brings it back once margin passes the cap, and it
+  // prefers exactly the side this sell would have corrected.
+  if (margin?.hold) {
+    return {
+      ...base,
+      breach,
+      action: null,
+      reason: `Δp ${fmt(dp)} outside the band — margin ${pctOf(margin)} of equity, correction held back`,
+    }
+  }
+
   const sellSide = correctiveSellSide(breach)
   const pick = pickByPremium(expiry, sellSide, cfg, tickerFor)
   if (!pick) {
@@ -740,6 +983,12 @@ export function planCycle(input: CycleInput): CyclePlan {
 
 function fmt(n: number): string {
   return n.toFixed(2)
+}
+
+/** Margin as a percentage of equity, for the status line. Equity at or below
+ *  zero has no meaningful ratio, and saying so beats printing a huge number. */
+function pctOf(m: MarginState): string {
+  return m.pct === null ? 'over' : `${m.pct.toFixed(0)}%`
 }
 
 /**

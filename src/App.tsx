@@ -149,6 +149,21 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
 
   const expiry = expiries.find((e) => e.label === activeExpiry) ?? null
 
+  // ---- Pricing helpers -----------------------------------------------------
+  // Declared here rather than beside the account summary below because the delta
+  // strategy's readout needs them, and that hook is set up further up the body.
+  const tickerFor = useCallback((symbol: string) => market.get(symbol), [])
+  // Margin at the rate the venue publishes for that very contract, not at a rate
+  // of ours. Undefined for a contract no longer in the chain, which is the one
+  // case the engine's fallback is for.
+  const imRateFor = useCallback(
+    (symbol: string) => {
+      const product = productsBySymbol.get(symbol)
+      return product ? shortImRate(product) : undefined
+    },
+    [productsBySymbol],
+  )
+
   // ---- Auto strategy -------------------------------------------------------
   // Just the settings the server-side engine watches (see 0008_strategy_engine):
   // arming, strike, size and window for the selected auto account. The placing
@@ -164,6 +179,10 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
     {
       positions: deltaTrading.positions,
       expiries,
+      // The delta book's own cash, not the header's selected account: the margin
+      // guard measures that book's blocked margin against that book's equity.
+      cashBalance: Number(deltaAccounts.selected?.cash_balance ?? 0),
+      imRateFor,
     },
     deltaTrading.reload,
   )
@@ -217,17 +236,6 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
   ])
 
   // ---- Account summary ----------------------------------------------------
-  const tickerFor = useCallback((symbol: string) => market.get(symbol), [])
-  // Margin at the rate the venue publishes for that very contract, not at a rate
-  // of ours. Undefined for a contract no longer in the chain, which is the one
-  // case the engine's fallback is for.
-  const imRateFor = useCallback(
-    (symbol: string) => {
-      const product = productsBySymbol.get(symbol)
-      return product ? shortImRate(product) : undefined
-    },
-    [productsBySymbol],
-  )
   const summary = useMemo(
     () =>
       summarizeAccount(

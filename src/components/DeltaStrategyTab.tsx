@@ -293,6 +293,41 @@ export function DeltaStrategyTab({
 
           <GroupRule />
 
+          {/* The margin guard. Every rule above answers to Δp; these two answer to
+              equity, and they outrank the lot — because the band correction sells a
+              fresh leg nothing ever pairs off, so margin ratchets up on its own while
+              losses pull equity down. Cut-at fires the cut, cut-to releases it, and
+              the gap between them is what stops the control flapping. */}
+          <Field
+            label="Cut at"
+            help="Once the margin your open positions block passes this share of your equity, the strategy stops selling and starts closing legs instead — deepest in-the-money first, preferring the side that pulls delta back into the band, and booking the loss. 100% means it acts the moment margin exceeds equity. Zero switches the guard off entirely."
+          >
+            <NumInput
+              value={config.marginCapPct}
+              step={5}
+              min={0}
+              unit="%"
+              width="w-16"
+              onChange={(v) => setConfig({ marginCapPct: v })}
+            />
+          </Field>
+
+          <Field
+            label="Cut to"
+            help="How far a cut goes: it closes just enough to bring margin down to this share of equity, and no more, so the realised loss is the smallest one that clears the breach. Between this and Cut at the book is held — no new entry and no band correction — but rolls carry on, since a roll closes and re-sells the same size and so cannot grow the book."
+          >
+            <NumInput
+              value={config.marginTargetPct}
+              step={5}
+              min={0}
+              unit="%"
+              width="w-16"
+              onChange={(v) => setConfig({ marginTargetPct: v })}
+            />
+          </Field>
+
+          <GroupRule />
+
           {/* The interval, plus a way to skip the wait. The button clears the spacing
               the engine checks, so its next tick acts — the engine runs once a minute,
               so this brings a cycle forward to within that, not to this instant. */}
@@ -426,6 +461,21 @@ export function DeltaStrategyTab({
             </>
           )}
         </Readout>
+
+        {/* Blocked margin against equity — the guard's own number, so a trader can
+            see a cut coming rather than only reading about it after the fact. Warn
+            in the hold zone, bad once it is cutting; an em dash when equity is zero,
+            because a ratio against nothing says nothing. */}
+        <Readout
+          label="Margin / equity"
+          tone={plan?.margin?.cut ? 'bad' : plan?.margin?.hold ? 'warn' : 'ok'}
+        >
+          {plan?.margin == null
+            ? '—'
+            : plan.margin.pct === null
+              ? 'over'
+              : `${plan.margin.pct.toFixed(0)}%`}
+        </Readout>
       </div>
 
       {/* What it is about to do, in its own strip so a long reason reads in full. */}
@@ -452,14 +502,15 @@ function Readout({
 }: {
   label: string
   children: React.ReactNode
-  tone?: 'ok' | 'warn'
+  /** 'warn' is the brand highlight, as the roll budget uses it; 'bad' is the loss
+   *  colour, kept for a reading that means the engine is closing at a loss now. */
+  tone?: 'ok' | 'warn' | 'bad'
 }) {
+  const colour = tone === 'bad' ? 'text-neg' : tone === 'warn' ? 'text-brand-text' : 'text-ink'
   return (
     <div className="flex flex-col gap-0.5">
       <span className="text-[9px] font-semibold tracking-[0.14em] text-ink-3 uppercase">{label}</span>
-      <span className={`num text-[13px] font-semibold ${tone === 'warn' ? 'text-brand-text' : 'text-ink'}`}>
-        {children}
-      </span>
+      <span className={`num text-[13px] font-semibold ${colour}`}>{children}</span>
     </div>
   )
 }

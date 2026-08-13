@@ -88,6 +88,21 @@ Equity     = Balance + unrealized P&L
 Available  = Equity - margin blocked
 ```
 
+Blocked margin follows Delta's shape, at the rate they publish for that very
+contract (`initial_margin`, **1%** for XAUT options):
+
+```
+short leg = (im_rate * spot + mark) * 0.001 * lots
+long leg  = avg_entry * 0.001 * lots          (risk capped at the premium paid)
+```
+
+Two things Delta does that this does not, and they pull opposite ways: they raise
+the rate with size via `initial_margin_scaling_factor` — which only bites above a
+`max_leverage_notional` of \$100,000, roughly 22,500 lots, so it is not modelled —
+and they margin options as a **portfolio**, stress-tested with offsetting between
+opposing legs, where this sums each leg alone. So a two-sided book is margined
+more conservatively here than there.
+
 ### Fees
 
 Taken from the product itself rather than hardcoded: a rate on underlying
@@ -214,6 +229,7 @@ an exit — never a long option.
 | No ITM legs left | Band-correct with fresh OTM sells in the `band_correction_delta` range |
 | Close (22:00 IST) | Flatten everything, stand flat overnight, reset counters |
 | Off day | A weekday outside `trade_days` reports the session **closed**, so the same flatten covers it and nothing is opened |
+| Margin over `margin_cap_pct` | Stop selling and **cut** instead: close lots, deepest ITM first, on the side whose exit pulls Δp toward the band, down to `margin_target_pct` — loss booked ([`0031`](supabase/migrations/0031_delta_margin_guard.sql)) |
 
 Every short it opens carries a **take-profit and no stop**, watched on the
 option's own mark:
@@ -250,6 +266,33 @@ band correction: q = (target_landing - Δp) / d_selected
 **Δp is measured in contract-deltas** — `Σ(signed lots × option delta)`, with no
 contract-value factor. That is the unit the document's own worked example is
 written in, and the band is calibrated to the same one.
+
+#### The margin guard
+
+Every rule above answers to Δp. None of them reads equity, and being sell-only
+that eventually bites: the band correction sells a **fresh** leg that nothing ever
+pairs off, so each breach with the ITM queue exhausted grows the book. Margin
+ratchets up while unrealized losses pull equity down, and the two meet. This is
+the one rule that answers to equity instead
+([`0031`](supabase/migrations/0031_delta_margin_guard.sql)):
+
+| Blocked margin | What runs |
+| --- | --- |
+| `> margin_cap_pct` of equity | **Cut only.** Close lots, deepest ITM first, preferring the side whose exit pulls Δp toward the band. Nothing else runs this cycle |
+| `> margin_target_pct` of equity | **Hold.** No entry, no band correction — but rolls carry on, since a roll closes `q` and re-sells `q` further out and so cannot grow the book |
+| otherwise | Unchanged |
+
+The two thresholds are separate so the control cannot flap: one would cut to just
+under it, sell, and cut again. Cut lots are rounded **up** — the opposite of every
+other size here, because a cut landing a hair above the target has resolved
+nothing — and capped at the leg, so the remainder falls to the next cycle and the
+next leg. That keeps the realized loss to the smallest one that clears the breach.
+
+It sits **ahead of the expiry check**: closing a leg reads that leg's own quote,
+not the expiry the strategy trades, and a settled expiry standing the strategy
+down while the book is past its equity is exactly what the guard is for. Only the
+session-close flatten outranks it, and that is a strictly larger cut.
+`margin_cap_pct = 0` disables it, the way the two bracket marks read zero.
 
 The engine is `apply_delta_strategy()` on `pg_cron`
 ([`0012`](supabase/migrations/0012_delta_strategy_engine.sql)), so this also

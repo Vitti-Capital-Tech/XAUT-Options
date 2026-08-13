@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { market } from '../lib/marketStore'
 import type { Expiry } from '../lib/delta'
-import type { PositionRow } from '../engine/paper'
+import { summarizeAccount, type PositionRow } from '../engine/paper'
 import {
   DEFAULT_DELTA_CONFIG,
   EMPTY_SESSION,
@@ -64,6 +64,18 @@ export interface DeltaStrategyApi {
 export interface DeltaEngineDeps {
   positions: PositionRow[]
   expiries: Expiry[]
+  /**
+   * The delta account's realized cash. Equity is this plus unrealized, which is
+   * what the margin guard measures blocked margin against — so without it the
+   * readout can price Δp but cannot say whether the book is over its cap.
+   */
+  cashBalance: number
+  /**
+   * Per-symbol initial-margin rate, from the venue's own product data. Omitted
+   * for a contract no longer listed, which is the one case paper.ts's fallback
+   * rate is there for.
+   */
+  imRateFor?: (symbol: string) => number | undefined
 }
 
 // ---------------------------------------------------------------------------
@@ -90,6 +102,8 @@ interface Row {
   cycle_seconds: number
   take_profit_mark: string | number | null
   stop_loss_mark: string | number
+  margin_cap_pct: string | number
+  margin_target_pct: string | number
   trade_days: number[] | null
   session_day: string | null
   rolls_used_call: number
@@ -99,7 +113,7 @@ interface Row {
 }
 
 const COLS =
-  'account_id, armed, session_open, session_close, band_low, band_high, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, qty, tie_break, expiry_pick, expiry_label, cycle_seconds, take_profit_mark, stop_loss_mark, trade_days, session_day, rolls_used_call, rolls_used_put, entered_day, flattened_day'
+  'account_id, armed, session_open, session_close, band_low, band_high, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, qty, tie_break, expiry_pick, expiry_label, cycle_seconds, take_profit_mark, stop_loss_mark, margin_cap_pct, margin_target_pct, trade_days, session_day, rolls_used_call, rolls_used_put, entered_day, flattened_day'
 
 // Postgres numerics come back as strings over PostgREST.
 const n = (v: string | number) => Number(v)
@@ -124,6 +138,8 @@ function rowToConfig(row: Row): DeltaConfig {
     // Null is the column's "no take-profit"; the config carries that as 0.
     takeProfitMark: row.take_profit_mark === null ? 0 : n(row.take_profit_mark),
     stopLossMark: n(row.stop_loss_mark),
+    marginCapPct: n(row.margin_cap_pct),
+    marginTargetPct: n(row.margin_target_pct),
     // A null column is the engine's "every day"; carry that as the full week
     // rather than an empty selection, which would read as "never".
     tradeDays:
@@ -150,6 +166,8 @@ function configToRow(cfg: DeltaConfig) {
     cycle_seconds: cfg.cycleSeconds,
     take_profit_mark: cfg.takeProfitMark > 0 ? cfg.takeProfitMark : null,
     stop_loss_mark: cfg.stopLossMark,
+    margin_cap_pct: cfg.marginCapPct,
+    margin_target_pct: cfg.marginTargetPct,
     trade_days: cfg.tradeDays,
   }
 }
@@ -168,6 +186,8 @@ function settingsError(message: string): string {
   if (message.includes('delta_band_chk'))
     return 'Target delta band needs the left number below the right one.'
   if (message.includes('delta_cycle_chk')) return 'Refresh must be between 5 and 3600 seconds.'
+  if (message.includes('delta_margin_pct_chk'))
+    return 'Margin cut-at must be at or above cut-to, and neither can be negative.'
   if (message.includes('delta_expiry_label_chk')) return 'That expiry is not a valid date.'
   if (message.includes('delta_target_landing_chk')) return 'That is not a landing point the engine accepts.'
   if (message.includes('delta_roll_counts_chk')) return 'That is not a roll count the engine accepts.'
@@ -408,6 +428,18 @@ export function useDeltaStrategy(
     // recomputing the readout.
     const recompute = () => {
       const { config: cfg, session: sess, deps: d } = ctx.current
+      const tickerFor = (symbol: string) => market.get(symbol)
+      // Only `marginBlocked` and `equity` are read from this, so the starting
+      // balance is passed as zero — `realized` belongs to the header, which
+      // computes its own summary off the account it has selected.
+      const summary = summarizeAccount(
+        d.cashBalance,
+        0,
+        d.positions,
+        tickerFor,
+        market.spot,
+        d.imRateFor,
+      )
       setPlan(
         planCycle({
           now: new Date(),
@@ -416,10 +448,13 @@ export function useDeltaStrategy(
           positions: d.positions,
           expiry: pickExpiry(d.expiries, cfg),
           spot: market.spot,
-          tickerFor: (symbol) => market.get(symbol),
+          tickerFor,
           // The engine's touched set lives in the database and is its business.
           // The readout only ever describes the next unstarted step.
           touched: EMPTY_TOUCHED,
+          marginBlocked: summary.marginBlocked,
+          equity: summary.equity,
+          imRateFor: d.imRateFor,
         }),
       )
     }
