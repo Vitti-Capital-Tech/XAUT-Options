@@ -230,12 +230,15 @@ export function useAutoStrategy(
       setArmedState(on)
       void persist({ armed: on }).then((err) => {
         // The switch already moved, so a refused write leaves the strategy reading
-        // as running until the next sync silently puts it back. Success is not
-        // toasted — the switch itself is the confirmation.
+        // as running until the next sync silently puts it back.
         if (err) {
           setArmedState(!on)
-          toast.error(`${on ? 'Could not start' : 'Could not pause'} the strategy — ${err}`)
+          toast.error(`Auto strategy — could not ${on ? 'start' : 'pause'}: ${err}`)
+          return
         }
+        // Named, because the toast stack is app-wide and both strategies arm
+        // independently — "Strategy running" alone would not say which one.
+        toast.ok(on ? 'Auto strategy running.' : 'Auto strategy paused.')
       })
     },
     [persist],
@@ -264,7 +267,7 @@ export function useAutoStrategy(
       take_profit_pct: config.takeProfitPct,
     })
     if (err) {
-      toast.error(`Settings not saved — ${err}`)
+      toast.error(`Auto strategy — settings not saved: ${err}`)
       return
     }
     setSavedConfig(config)
@@ -272,17 +275,17 @@ export function useAutoStrategy(
     // The settings did land, so this is not a failed Apply — but the brackets on
     // those legs are not what the panel now shows, and that has to be said.
     if (failed > 0) {
-      toast.error(`Settings saved, but TP/SL did not update on ${failed} position(s).`)
+      toast.error(`Auto strategy — settings saved, but TP/SL did not update on ${failed} position(s).`)
       return
     }
-    toast.ok('Settings applied.')
+    toast.ok('Auto strategy — settings applied.')
   }, [config, loading, persist])
 
   // Cancel: throw the draft away and snap back to what the database holds. Local
   // only, so there is nothing that can fail here.
   const cancel = useCallback(() => {
     setConfigState(savedConfig)
-    toast.ok('Changes discarded.')
+    toast.ok('Auto strategy — changes discarded.')
   }, [savedConfig])
 
   return {

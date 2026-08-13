@@ -387,12 +387,16 @@ export function useDeltaStrategy(
       setArmedState(on)
       void persist({ armed: on }).then((err) => {
         // A refused arm is the failure worth shouting about: the switch already
-        // moved, so without this the strategy reads as running until the next
-        // sync quietly puts it back. Success needs no toast — the switch is it.
+        // moved, so without this the strategy reads as running until the next sync
+        // quietly puts it back.
         if (err) {
           setArmedState(!on)
-          toast.error(`${on ? 'Could not start' : 'Could not pause'} the strategy — ${err}`)
+          toast.error(`Delta strategy — could not ${on ? 'start' : 'pause'}: ${err}`)
+          return
         }
+        // Named, because the toast stack is app-wide and both strategies arm
+        // independently — "Strategy running" alone would not say which one.
+        toast.ok(on ? 'Delta strategy running.' : 'Delta strategy paused.')
       })
     },
     [persist],
@@ -410,7 +414,7 @@ export function useDeltaStrategy(
     if (loading) return
     const err = await persist(configToRow(config))
     if (err) {
-      toast.error(`Settings not saved — ${err}`)
+      toast.error(`Delta strategy — settings not saved: ${err}`)
       return
     }
     setSavedConfig(config)
@@ -418,17 +422,17 @@ export function useDeltaStrategy(
     // The settings did land, so this is not a failed Apply — but the marks on
     // those legs are not what the panel now shows, and that has to be said.
     if (failed > 0) {
-      toast.error(`Settings saved, but TP/SL did not update on ${failed} position(s).`)
+      toast.error(`Delta strategy — settings saved, but TP/SL did not update on ${failed} position(s).`)
       return
     }
-    toast.ok('Settings applied.')
+    toast.ok('Delta strategy — settings applied.')
   }, [config, loading, persist])
 
   // Cancel: throw the draft away and snap back to what the database holds. Local
   // only, so there is nothing that can fail here.
   const cancel = useCallback(() => {
     setConfigState(savedConfig)
-    toast.ok('Changes discarded.')
+    toast.ok('Delta strategy — changes discarded.')
   }, [savedConfig])
 
   // Clearing last_cycle is all a manual refresh can do from here: the engine is
