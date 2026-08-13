@@ -196,7 +196,7 @@ export function StrategyTab({
           </button>
           <button
             type="button"
-            onClick={apply}
+            onClick={() => void apply()}
             disabled={!dirty}
             title="Save every changed field and apply the stop/take-profit to open positions"
             className="flex h-9 shrink-0 items-center rounded-md border border-pos-on-muted bg-pos-muted px-3.5 text-[12px] font-medium text-pos transition-colors hover:border-pos hover:bg-pos-on-muted disabled:pointer-events-none disabled:opacity-40"

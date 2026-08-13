@@ -9,6 +9,7 @@ import {
   type StrategyConfig,
 } from '../lib/strategy'
 import type { PositionRow } from '../engine/paper'
+import { toast } from '../lib/toastStore'
 
 const SYNC_MS = 15_000
 
@@ -27,8 +28,9 @@ export interface StrategyApi {
   setArmed: (on: boolean) => void
   hasAccount: boolean
   loading: boolean
-  /** Write every staged filter change and arm the open shorts — the Apply button. */
-  apply: () => void
+  /** Write every staged filter change and arm the open shorts — the Apply button.
+   *  Resolves once the write has landed; the draft is kept if it was refused. */
+  apply: () => Promise<void>
   /** Drop the staged edits and snap back to the saved config — the Cancel button. */
   cancel: () => void
   /** The draft has unsaved edits — enables Apply and Cancel. */
@@ -193,21 +195,25 @@ export function useAutoStrategy(
 
   // Upsert, not update: a plain update silently no-ops if the row is somehow
   // missing, which would lose an arm. Upsert always lands the write.
+  //
+  // Returns the rejection in the field's own terms, or null when the write landed.
+  // The console line this used to leave was the only trace a refused save left, so
+  // the panel could look saved while the engine still ran the old settings.
   const persist = useCallback(
-    (patch: Record<string, unknown>) => {
-      if (!accountId) return
+    async (patch: Record<string, unknown>): Promise<string | null> => {
+      if (!accountId) return 'No auto account selected.'
       lastEditRef.current = Date.now()
-      void supabase
+      const { error } = await supabase
         .from('strategy_settings')
         .upsert(
           { account_id: accountId, ...patch, updated_at: new Date().toISOString() },
           { onConflict: 'account_id' },
         )
-        .then(({ error }) => {
-          // Surface a rejected write rather than swallowing it — a silent failure
-          // here is exactly what makes an armed toggle spring back on refresh.
-          if (error) console.error('strategy_settings write failed:', error.message)
-        })
+      if (error) {
+        console.error('strategy_settings write failed:', error.message)
+        return settingsError(error.message)
+      }
+      return null
     },
     [accountId],
   )
@@ -222,7 +228,15 @@ export function useAutoStrategy(
   const setArmed = useCallback(
     (on: boolean) => {
       setArmedState(on)
-      persist({ armed: on })
+      void persist({ armed: on }).then((err) => {
+        // The switch already moved, so a refused write leaves the strategy reading
+        // as running until the next sync silently puts it back. Success is not
+        // toasted — the switch itself is the confirmation.
+        if (err) {
+          setArmedState(!on)
+          toast.error(`${on ? 'Could not start' : 'Could not pause'} the strategy — ${err}`)
+        }
+      })
     },
     [persist],
   )
@@ -230,10 +244,14 @@ export function useAutoStrategy(
   // Apply: write every staged field, and push the bracket onto the open shorts,
   // which the engine only ever arms at fill time. `savedConfig` catches up to the
   // draft, so the button goes dark until the next edit.
-  const apply = useCallback(() => {
+  //
+  // `savedConfig` only catches up once the write has landed. Moving it first — as
+  // this used to — darkened the buttons on a write that was then refused, leaving
+  // the panel looking saved with the draft unrecoverable. Staying dirty on failure
+  // keeps the edits on screen and Apply live to retry.
+  const apply = useCallback(async () => {
     if (loading) return
-    setSavedConfig(config)
-    persist({
+    const err = await persist({
       moneyness: config.moneyness,
       qty: config.qty,
       window_start: config.windowStart,
@@ -245,12 +263,26 @@ export function useAutoStrategy(
       stop_loss_pct: config.stopLossPct,
       take_profit_pct: config.takeProfitPct,
     })
-    void rearmOpenPositions(positionsRef.current, config, reloadRef.current)
+    if (err) {
+      toast.error(`Settings not saved — ${err}`)
+      return
+    }
+    setSavedConfig(config)
+    const { failed } = await rearmOpenPositions(positionsRef.current, config, reloadRef.current)
+    // The settings did land, so this is not a failed Apply — but the brackets on
+    // those legs are not what the panel now shows, and that has to be said.
+    if (failed > 0) {
+      toast.error(`Settings saved, but TP/SL did not update on ${failed} position(s).`)
+      return
+    }
+    toast.ok('Settings applied.')
   }, [config, loading, persist])
 
-  // Cancel: throw the draft away and snap back to what the database holds.
+  // Cancel: throw the draft away and snap back to what the database holds. Local
+  // only, so there is nothing that can fail here.
   const cancel = useCallback(() => {
     setConfigState(savedConfig)
+    toast.ok('Changes discarded.')
   }, [savedConfig])
 
   return {
@@ -282,12 +314,14 @@ async function rearmOpenPositions(
   positions: PositionRow[],
   config: StrategyConfig,
   reload: () => void | Promise<void>,
-): Promise<void> {
+): Promise<{ failed: number }> {
   const stop = stopMultiple(config.stopLossPct)
   const take = takeProfitMultiple(config.takeProfitPct)
   const open = positions.filter((p) => p.net_qty !== 0)
-  if (open.length === 0) return
-  await Promise.all(
+  if (open.length === 0) return { failed: 0 }
+  // Counted, not just logged: a leg left on the old brackets is a leg whose exit
+  // levels differ from what the panel says, and Apply has to be able to say so.
+  const results = await Promise.all(
     open.map((p) => {
       const avg = Number(p.avg_entry_price)
       return supabase
@@ -299,8 +333,28 @@ async function rearmOpenPositions(
         })
         .then(({ error }) => {
           if (error) console.error('auto re-arm failed:', error.message)
+          return Boolean(error)
         })
     }),
   )
   await reload()
+  return { failed: results.filter(Boolean).length }
+}
+
+/**
+ * A rejected settings write, said in the field's own terms.
+ *
+ * Postgres names the constraint, not the control: "violates check constraint
+ * strategy_take_profit_pct_chk" tells a trader nothing about which box to fix.
+ * The inputs are bounded so these should be unreachable from the UI, but a stale
+ * tab or a hand-written row can still trip one, and then this is all there is.
+ */
+function settingsError(message: string): string {
+  if (message.includes('strategy_take_profit_pct_chk'))
+    return 'Take profit must be between 0 and 100 percent.'
+  if (message.includes('strategy_stop_loss_pct_chk')) return 'Stop loss cannot be negative.'
+  if (message.includes('strategy_expiry_rule_chk'))
+    return 'That is not an expiry rule the engine accepts.'
+  if (message.includes('strategy_expiry_label_chk')) return 'That expiry is not a valid date.'
+  return message
 }

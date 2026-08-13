@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { market } from '../lib/marketStore'
 import type { Expiry } from '../lib/delta'
 import { summarizeAccount, type PositionRow } from '../engine/paper'
+import { toast } from '../lib/toastStore'
 import {
   DEFAULT_DELTA_CONFIG,
   EMPTY_SESSION,
@@ -52,8 +53,9 @@ export interface DeltaStrategyApi {
    * showing a number computed against an assumed contract size.
    */
   entryLots: number | null
-  /** Write every staged filter change and arm the open shorts — the Apply button. */
-  apply: () => void
+  /** Write every staged filter change and arm the open shorts — the Apply button.
+   *  Resolves once the write has landed; the draft is kept if it was refused. */
+  apply: () => Promise<void>
   /** Drop the staged edits and snap back to the saved config — the Cancel button. */
   cancel: () => void
   /** The draft has unsaved edits — enables Apply and Cancel. */
@@ -344,9 +346,13 @@ export function useDeltaStrategy(
 
   // Upsert rather than update: a plain update silently no-ops if the row is
   // missing, which is exactly how an arm gets lost.
+  //
+  // Returns the rejection in the field's own terms, or null when the write
+  // landed. Callers need the outcome, not just the side effect: confirming a save
+  // that was refused is worse than confirming nothing.
   const persist = useCallback(
-    async (patch: Record<string, unknown>) => {
-      if (!accountId) return
+    async (patch: Record<string, unknown>): Promise<string | null> => {
+      if (!accountId) return 'No delta account selected.'
       lastEditRef.current = Date.now()
       const { error: err } = await supabase
         .from('delta_strategy_settings')
@@ -356,8 +362,12 @@ export function useDeltaStrategy(
         )
       if (err) {
         console.error('delta_strategy_settings write failed:', err.message)
-        setError(settingsError(err.message))
+        const said = settingsError(err.message)
+        setError(said)
+        return said
       }
+      setError(null)
+      return null
     },
     [accountId],
   )
@@ -375,7 +385,15 @@ export function useDeltaStrategy(
   const setArmed = useCallback(
     (on: boolean) => {
       setArmedState(on)
-      void persist({ armed: on })
+      void persist({ armed: on }).then((err) => {
+        // A refused arm is the failure worth shouting about: the switch already
+        // moved, so without this the strategy reads as running until the next
+        // sync quietly puts it back. Success needs no toast — the switch is it.
+        if (err) {
+          setArmedState(!on)
+          toast.error(`${on ? 'Could not start' : 'Could not pause'} the strategy — ${err}`)
+        }
+      })
     },
     [persist],
   )
@@ -383,16 +401,34 @@ export function useDeltaStrategy(
   // Apply: write every staged field, and push the marks onto the open shorts,
   // which delta_sell only ever arms at fill time. `savedConfig` catches up to the
   // draft, so the button goes dark until the next edit.
-  const apply = useCallback(() => {
+  //
+  // `savedConfig` only catches up once the write has landed. Moving it first — as
+  // this used to — darkened the buttons on a write that was then refused, leaving
+  // the panel looking saved with the draft unrecoverable. Staying dirty on failure
+  // keeps the edits on screen and Apply live to retry.
+  const apply = useCallback(async () => {
     if (loading) return
+    const err = await persist(configToRow(config))
+    if (err) {
+      toast.error(`Settings not saved — ${err}`)
+      return
+    }
     setSavedConfig(config)
-    void persist(configToRow(config))
-    void rearmOpenPositions(positionsRef.current, config, reloadRef.current)
+    const { failed } = await rearmOpenPositions(positionsRef.current, config, reloadRef.current)
+    // The settings did land, so this is not a failed Apply — but the marks on
+    // those legs are not what the panel now shows, and that has to be said.
+    if (failed > 0) {
+      toast.error(`Settings saved, but TP/SL did not update on ${failed} position(s).`)
+      return
+    }
+    toast.ok('Settings applied.')
   }, [config, loading, persist])
 
-  // Cancel: throw the draft away and snap back to what the database holds.
+  // Cancel: throw the draft away and snap back to what the database holds. Local
+  // only, so there is nothing that can fail here.
   const cancel = useCallback(() => {
     setConfigState(savedConfig)
+    toast.ok('Changes discarded.')
   }, [savedConfig])
 
   // Clearing last_cycle is all a manual refresh can do from here: the engine is
@@ -510,10 +546,12 @@ async function rearmOpenPositions(
   positions: PositionRow[],
   config: DeltaConfig,
   reload: () => void | Promise<void>,
-): Promise<void> {
+): Promise<{ failed: number }> {
   const open = positions.filter((p) => p.net_qty < 0)
-  if (open.length === 0) return
-  await Promise.all(
+  if (open.length === 0) return { failed: 0 }
+  // Counted, not just logged: a leg left on the old marks is a leg whose exit
+  // levels differ from what the panel says, and Apply has to be able to say so.
+  const results = await Promise.all(
     open.map((p) =>
       supabase
         .rpc('set_position_tpsl', {
@@ -524,8 +562,10 @@ async function rearmOpenPositions(
         })
         .then(({ error }) => {
           if (error) console.error('delta re-arm failed:', error.message)
+          return Boolean(error)
         }),
     ),
   )
   await reload()
+  return { failed: results.filter(Boolean).length }
 }

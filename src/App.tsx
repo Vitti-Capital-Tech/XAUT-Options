@@ -7,6 +7,7 @@ import { BottomPanel } from './components/BottomPanel'
 import { StrategyTab } from './components/StrategyTab'
 import { DeltaStrategyTab } from './components/DeltaStrategyTab'
 import { AdminPanel } from './components/AdminPanel'
+import { Toasts } from './components/Toasts'
 import { useAuth } from './hooks/useAuth'
 import { useAccounts } from './hooks/useAccounts'
 import { useTrading } from './hooks/useTrading'
@@ -423,6 +424,10 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
           }}
         />
       )}
+
+      {/* Mounted once, outside the page switch, so a confirmation raised on one
+          page survives a move to another. */}
+      <Toasts />
     </div>
   )
 }
