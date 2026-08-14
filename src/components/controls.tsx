@@ -434,6 +434,52 @@ export function Chevron({ open }: { open: boolean }) {
   )
 }
 
+/**
+ * A boolean remembered across reloads, in the same storage namespace the selected
+ * page uses. Collapsing a bar you have to collapse again on every refresh is a
+ * setting that does not really exist.
+ */
+export function useSticky(key: string, initial: boolean): [boolean, (v: boolean) => void] {
+  const [on, setOn] = useState(() => {
+    const saved = localStorage.getItem(key)
+    return saved === null ? initial : saved === '1'
+  })
+  const set = (v: boolean) => {
+    setOn(v)
+    localStorage.setItem(key, v ? '1' : '0')
+  }
+  return [on, set]
+}
+
+/**
+ * Folds a strategy bar's settings away, leaving its actions and readout.
+ *
+ * Both bars are tall — the delta one wraps to several rows — and they sit above
+ * the option chain, so every row they take is a row of the book you cannot see.
+ * The chevron points down when the settings are showing and up when they are
+ * folded, matching the dropdowns on the same bar.
+ */
+export function CollapseToggle({
+  collapsed,
+  onToggle,
+}: {
+  collapsed: boolean
+  onToggle: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={!collapsed}
+      title={collapsed ? 'Show the settings' : 'Hide the settings'}
+      className="flex h-9 shrink-0 items-center gap-1.5 self-center rounded-md border border-raised-3 bg-surface px-2.5 text-[11px] font-medium text-ink-3 transition-colors hover:border-ink-3 hover:text-ink"
+    >
+      <Chevron open={!collapsed} />
+      {collapsed ? 'Settings' : 'Hide'}
+    </button>
+  )
+}
+
 export function ClockIcon() {
   return (
     <svg width="13" height="13" viewBox="0 0 16 16" fill="none" className="shrink-0 text-ink-3" aria-hidden>

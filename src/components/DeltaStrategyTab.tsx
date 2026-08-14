@@ -4,7 +4,17 @@ import { expiryIsLive, expiryOptions, type Expiry } from '../lib/delta'
 import type { DeltaStrategyApi } from '../hooks/useDeltaStrategy'
 import type { DeltaRemarkRow } from '../hooks/useDeltaRemarks'
 import { greek, price, timeOfDay } from '../lib/format'
-import { DayPicker, Field, GroupRule, NumInput, RunSwitch, Select, TimePicker } from './controls'
+import {
+  CollapseToggle,
+  DayPicker,
+  Field,
+  GroupRule,
+  NumInput,
+  RunSwitch,
+  Select,
+  TimePicker,
+  useSticky,
+} from './controls'
 
 /**
  * The Delta Management Strategy's controls — the same shape of bar the auto
@@ -39,6 +49,9 @@ export function DeltaStrategyTab({
   const { config, setConfig, armed, setArmed, session, hasAccount, plan, error, refresh, entryLots, apply, cancel, dirty } =
     strategy
   const [refreshing, setRefreshing] = useState(false)
+  // Open by default: a bar that starts folded hides the settings from someone who
+  // has never seen them. Each tab remembers its own.
+  const [collapsed, setCollapsed] = useSticky('delta-paper.delta.collapsed', false)
 
   const expiryChoices = expiryOptions(expiries, config.expiryLabel)
   const expiryLive = expiryIsLive(expiries, config.expiryLabel)
@@ -64,6 +77,12 @@ export function DeltaStrategyTab({
           on the left, the actions keep a rail of their own on the right. Wrapping
           them together is what stranded Cancel/Apply on a line of their own. */}
       <div className="flex items-center gap-x-5 px-5 py-3.5">
+        {/* First in the bar, so it holds the same spot whether the settings are
+            showing or not. Only the settings fold — the readout strips below stay,
+            which is the point: folded, this bar is a monitor rather than a form. */}
+        <CollapseToggle collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />
+
+        {!collapsed && (
         <div className="flex min-w-0 flex-1 flex-wrap items-start gap-x-6 gap-y-4">
           <Field
             label="Session · IST"
@@ -370,10 +389,16 @@ export function DeltaStrategyTab({
           </Field>
 
         </div>
+        )}
+
+        {/* Folded away, the settings zone stops carrying flex-1, so the rail would
+            slide left against the toggle. This keeps it out on the right. */}
+        {collapsed && <div className="min-w-0 flex-1" />}
 
         {/* The action rail: what you do to the settings, then whether the strategy is
             live. Held out of the wrap and behind a hairline so it reads as its own
-            zone rather than one more field — the same rail the auto strategy wears. */}
+            zone rather than one more field — the same rail the auto strategy wears.
+            Never folded — pausing a live strategy must not be behind a disclosure. */}
         <div className="flex shrink-0 items-center gap-3 self-center border-l border-line pl-5">
           <div className="flex items-center gap-2">
             <button

@@ -1,7 +1,17 @@
 import { MONEYNESS_ORDER, stopMultiple, takeProfitMultiple, type Moneyness } from '../lib/strategy'
 import { expiryIsLive, expiryOptions, type Expiry } from '../lib/delta'
 import type { StrategyApi } from '../hooks/useAutoStrategy'
-import { DayPicker, Field, GroupRule, NumInput, RunSwitch, Select, TimePicker } from './controls'
+import {
+  CollapseToggle,
+  DayPicker,
+  Field,
+  GroupRule,
+  NumInput,
+  RunSwitch,
+  Select,
+  TimePicker,
+  useSticky,
+} from './controls'
 
 /**
  * The auto-strategy's controls — a compact bar above its trades table. The signal
@@ -30,6 +40,9 @@ export function StrategyTab({
   expiries: Expiry[]
 }) {
   const { config, setConfig, armed, setArmed, hasAccount, apply, cancel, dirty } = strategy
+  // Open by default: a bar that starts folded hides the settings from someone who
+  // has never seen them. Each tab remembers its own.
+  const [collapsed, setCollapsed] = useSticky('delta-paper.auto.collapsed', false)
   const mult = stopMultiple(config.stopLossPct)
   const tpMult = takeProfitMultiple(config.takeProfitPct)
 
@@ -45,6 +58,12 @@ export function StrategyTab({
     // together is what stranded Cancel/Apply on a line of their own with the whole
     // bar's width of empty space beside them.
     <div className="flex items-center gap-x-5 border-b border-line bg-raised px-5 py-3.5">
+      {/* First in the bar, so it holds the same spot whether the settings are
+          showing or not — a toggle that moves when you use it is one you have to
+          hunt for twice. */}
+      <CollapseToggle collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />
+
+      {!collapsed && (
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-6 gap-y-4">
         <Field
           label="Session · IST"
@@ -179,10 +198,16 @@ export function StrategyTab({
             <span className="self-center text-[11px] text-warn">No trading days picked — nothing will trade</span>
           )}
       </div>
+      )}
+
+      {/* Folded away, the settings zone stops carrying flex-1, so the rail would
+          slide left against the toggle. This keeps it out on the right. */}
+      {collapsed && <div className="min-w-0 flex-1" />}
 
       {/* The action rail: what you do to the settings, then whether the strategy is
           live. Held out of the wrap and behind a hairline so it reads as its own
-          zone rather than one more field. */}
+          zone rather than one more field. Never folded — pausing a live strategy
+          must not be behind a disclosure. */}
       <div className="flex shrink-0 items-center gap-3 self-center border-l border-line pl-5">
         <div className="flex items-center gap-2">
           <button
