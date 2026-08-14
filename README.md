@@ -338,6 +338,17 @@ would otherwise be an unexplained gap in the ledger. They repeat every cycle, so
 they are written once and skipped while the newest remark already says exactly
 that; actions are never deduplicated. Thirty days per account, trimmed on write.
 
+The **take-profit and the stop write their own** too
+([`0034`](supabase/migrations/0034_delta_tpsl_remarks.sql)). Those are armed by
+the delta engine but fired by `apply_tpsl_triggers`, the bracket sweep shared
+with the other two books, so without this a leg would leave the book with nothing
+in the log to say why. They are their own actions rather than an `exit` — `exit`
+means the roll budget was spent, while a bracket answers to the option's own
+price and can fire with Δp dead centre in the band. Both carry no `Target`, which
+is the honest reading: a bracket has no delta it is aiming for. `Δp Checked` and
+`Δp After` are still recorded, since the *consequence* is a delta move — usually
+the reason the next cycle rolls or corrects.
+
 The strategy bar shows the newest one on its `Last` line, under `Next` — `Next`
 is this tab's own recomputation of the plan, `Last` is the server-side engine's
 record of a decision already made, so the two can legitimately disagree.

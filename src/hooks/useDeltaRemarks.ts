@@ -27,6 +27,15 @@ export type DeltaRemarkAction =
   | 'hold'
   /** Could not act — a missing greek, an unlisted expiry, nothing quoted. */
   | 'wait'
+  /**
+   * The bracket on a leg fired, not the engine: `take_profit_mark` or
+   * `stop_loss_mark` crossed. Written by the shared sweep
+   * ([`0034`](../../supabase/migrations/0034_delta_tpsl_remarks.sql)), which is
+   * why neither carries a `dp_target` — a bracket answers to the option's own
+   * price and has no delta it is aiming for.
+   */
+  | 'take_profit'
+  | 'stop_loss'
 
 export interface DeltaRemarkRow {
   id: string

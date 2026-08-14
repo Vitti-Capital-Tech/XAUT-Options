@@ -113,7 +113,7 @@ erDiagram
     DELTA_REMARKS {
         uuid id PK
         uuid account_id FK
-        text action "entry|roll|exit|band|cut|flatten|hold|wait"
+        text action "entry|roll|exit|band|cut|flatten|hold|wait|take_profit|stop_loss"
         numeric spot "what it was priced at"
         numeric dp_before "delta when the book was checked"
         numeric dp_target "where the correction aimed"

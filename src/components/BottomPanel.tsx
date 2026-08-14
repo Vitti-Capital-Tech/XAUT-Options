@@ -1157,10 +1157,10 @@ function HistoryTable({ fills }: { fills: FillRow[] }) {
 /**
  * How each kind of decision is labelled and coloured.
  *
- * The three that book a loss deliberately — an exit-only close, a margin cut —
- * carry the loss colour, so a scan of the column finds them without reading a
- * word. The two that did nothing are muted: they are context for a gap in the
- * ledger, not events in it.
+ * The ones that book a loss deliberately — an exit-only close, a margin cut, a
+ * stop — carry the loss colour, so a scan of the column finds them without
+ * reading a word. The two that did nothing are muted: they are context for a gap
+ * in the ledger, not events in it.
  */
 const REMARK_KIND: Record<DeltaRemarkAction, { label: string; cls: string }> = {
   entry: { label: 'Entry', cls: 'text-pos' },
@@ -1171,6 +1171,10 @@ const REMARK_KIND: Record<DeltaRemarkAction, { label: string; cls: string }> = {
   flatten: { label: 'Flatten', cls: 'text-ink' },
   hold: { label: 'Held', cls: 'text-warn' },
   wait: { label: 'Waiting', cls: 'text-ink-3' },
+  // The bracket rather than the engine. Green for the one that keeps the
+  // premium, the loss colour for the one that gives it back.
+  take_profit: { label: 'Take profit', cls: 'text-pos' },
+  stop_loss: { label: 'Stop loss', cls: 'text-neg' },
 }
 
 /**
