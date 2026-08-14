@@ -318,24 +318,7 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
           <div className="flex h-screen flex-col">
             {topBar}
 
-            <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-line bg-surface px-2 py-1.5">
-              <span className="mr-1 shrink-0 text-[10px] tracking-wider text-ink-4 uppercase">
-                Expiry
-              </span>
-              {expiries.map((e) => (
-                <button
-                  key={e.label}
-                  onClick={() => setActiveExpiry(e.label)}
-                  className={`shrink-0 rounded px-2.5 py-1 text-[12px] font-medium whitespace-nowrap transition-colors ${
-                    e.label === activeExpiry
-                      ? 'border-[0.8px] border-brand-text text-brand-text'
-                      : 'text-ink-3 hover:bg-sub hover:text-ink'
-                  }`}
-                >
-                  {formatExpiry(e.label)}
-                </button>
-              ))}
-            </div>
+            <ExpiryTabs expiries={expiries} active={activeExpiry} onSelect={setActiveExpiry} />
 
             {/* Fills what the header and the expiries leave of the screen, and keeps
                 it — the panel below can no longer take height off it. */}
@@ -361,43 +344,89 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
           </div>
         </>
       ) : page === 'strategy' ? (
-        <div className="flex min-h-screen flex-col">
-          {topBar}
-          <StrategyTab strategy={strategy} expiries={expiries} />
+        <>
+          {/* Same shape as the chain page: header, controls, expiries and chain
+              take the screen, and the book grows below the fold rather than
+              squeezing the chain.
+
+              min-h-screen rather than h-screen, unlike the chain page, because the
+              control bar above is tall and wraps. On a short viewport h-screen
+              would resolve the chain's flex-1 to nothing and it would vanish; this
+              way the section grows past the screen instead and the page scrolls. */}
+          <div className="flex min-h-screen flex-col">
+            {topBar}
+            <StrategyTab strategy={strategy} expiries={expiries} />
+            <ExpiryTabs expiries={expiries} active={activeExpiry} onSelect={setActiveExpiry} />
+            {/* A floor as well as flex-1, for the same reason. */}
+            <div className="flex min-h-[320px] flex-1 flex-col">
+              {expiry && (
+                <OptionChain
+                  expiry={expiry}
+                  // The auto book, so a held strike is marked on the page that
+                  // trades it — not the chain page's manual positions.
+                  positions={autoTrading.positions}
+                  onPick={openTicket}
+                />
+              )}
+            </div>
+          </div>
+
           {/* The strategy's own book — its positions and trade history, on the
               auto account, entirely separate from the chain's. */}
-          <BottomPanel
-            positions={autoTrading.positions}
-            fills={autoTrading.fills}
-            productsBySymbol={productsBySymbol}
-            emptyPositions="No open positions yet. Set it Running and it sells on each closed 1h candle."
-            onClosePosition={(pos, product) => autoTrading.closePosition(pos, product)}
-            onSetTpSl={autoTrading.setTpSl}
-            onPickSymbol={(product) => openTicket(product, 'buy', null)}
-          />
-        </div>
+          <div className="flex flex-col">
+            <BottomPanel
+              positions={autoTrading.positions}
+              fills={autoTrading.fills}
+              productsBySymbol={productsBySymbol}
+              emptyPositions="No open positions yet. Set it Running and it sells on each closed 1h candle."
+              onClosePosition={(pos, product) => autoTrading.closePosition(pos, product)}
+              onSetTpSl={autoTrading.setTpSl}
+              onPickSymbol={(product) => openTicket(product, 'buy', null)}
+            />
+          </div>
+        </>
       ) : (
-        <div className="flex min-h-screen flex-col">
-          {topBar}
-          <DeltaStrategyTab
-            strategy={deltaStrategy}
-            expiries={expiries}
-            lastRemark={deltaRemarks[0] ?? null}
-          />
+        <>
+          {/* Same shape and the same min-h-screen reasoning as the auto page — and
+              more so here, since this control bar carries the most fields of the
+              three and wraps to several rows on a narrow window. */}
+          <div className="flex min-h-screen flex-col">
+            {topBar}
+            <DeltaStrategyTab
+              strategy={deltaStrategy}
+              expiries={expiries}
+              lastRemark={deltaRemarks[0] ?? null}
+            />
+            <ExpiryTabs expiries={expiries} active={activeExpiry} onSelect={setActiveExpiry} />
+            <div className="flex min-h-[320px] flex-1 flex-col">
+              {expiry && (
+                <OptionChain
+                  expiry={expiry}
+                  // The delta book, so a held strike is marked on the page that
+                  // trades it.
+                  positions={deltaTrading.positions}
+                  onPick={openTicket}
+                />
+              )}
+            </div>
+          </div>
+
           {/* The delta strategy's own book, on the delta account — separate
               again from both the chain's and the auto strategy's. Plus the
               Remarks log, which only this engine keeps. */}
-          <BottomPanel
-            positions={deltaTrading.positions}
-            fills={deltaTrading.fills}
-            remarks={deltaRemarks}
-            productsBySymbol={productsBySymbol}
-            emptyPositions="No open positions. Set it Running and it sells its first pair at the session open."
-            onClosePosition={(pos, product) => deltaTrading.closePosition(pos, product)}
-            onSetTpSl={deltaTrading.setTpSl}
-            onPickSymbol={(product) => openTicket(product, 'buy', null)}
-          />
-        </div>
+          <div className="flex flex-col">
+            <BottomPanel
+              positions={deltaTrading.positions}
+              fills={deltaTrading.fills}
+              remarks={deltaRemarks}
+              productsBySymbol={productsBySymbol}
+              emptyPositions="No open positions. Set it Running and it sells its first pair at the session open."
+              onClosePosition={(pos, product) => deltaTrading.closePosition(pos, product)}
+              onSetTpSl={deltaTrading.setTpSl}
+              onPickSymbol={(product) => openTicket(product, 'buy', null)}
+            />
+          </div>
+        </>
       )}
 
       {ticket && (
@@ -443,6 +472,45 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
 }
 
 // ---------------------------------------------------------------------------
+
+/**
+ * The expiry strip above the chain. Extracted because all three pages carry the
+ * chain now, and one selection is shared across them — browse to a date on the
+ * strategy page and the chain page is already showing it when you switch.
+ *
+ * Deliberately not tied to a strategy's own traded expiry: the strip is for
+ * reading the market, and a picker that silently moved under you when the
+ * strategy rolled its date would be worse than one that stays where you put it.
+ * The strategy's own date is on its control bar, a few pixels up.
+ */
+function ExpiryTabs({
+  expiries,
+  active,
+  onSelect,
+}: {
+  expiries: Expiry[]
+  active: string | null
+  onSelect: (label: string) => void
+}) {
+  return (
+    <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-line bg-surface px-2 py-1.5">
+      <span className="mr-1 shrink-0 text-[10px] tracking-wider text-ink-4 uppercase">Expiry</span>
+      {expiries.map((e) => (
+        <button
+          key={e.label}
+          onClick={() => onSelect(e.label)}
+          className={`shrink-0 rounded px-2.5 py-1 text-[12px] font-medium whitespace-nowrap transition-colors ${
+            e.label === active
+              ? 'border-[0.8px] border-brand-text text-brand-text'
+              : 'text-ink-3 hover:bg-sub hover:text-ink'
+          }`}
+        >
+          {formatExpiry(e.label)}
+        </button>
+      ))}
+    </div>
+  )
+}
 
 function Splash({ children }: { children: React.ReactNode }) {
   // min-h-screen, not h-full: #root is min-height now, so h-full has no definite
