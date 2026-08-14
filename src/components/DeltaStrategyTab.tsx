@@ -448,7 +448,15 @@ export function DeltaStrategyTab({
 
           The next action is a sentence, not a statistic, so it gets its own strip
           and the full width — right-aligned in the stat row it truncated exactly
-          when it had most to say. */}
+          when it had most to say.
+
+          Folded away with the settings. This bar sits on top of the chain, so
+          "collapsed" has to mean the bar is out of the way — leaving three strips
+          behind gave back only the shortest of the rows it was taking. What stays
+          is the rail and, below, any error: one is how you stop the strategy, the
+          other is the thing you must not have to go looking for. */}
+      {!collapsed && (
+      <>
       <div className="flex flex-wrap items-center gap-x-7 gap-y-4 border-t border-line px-5 py-3">
         {/* The hero: Δp over its own meter. */}
         <div className="flex items-end gap-4">
@@ -534,6 +542,8 @@ export function DeltaStrategyTab({
             {lastRemark.note}
           </span>
         </div>
+      )}
+      </>
       )}
 
       {error && (
