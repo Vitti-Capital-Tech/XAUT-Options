@@ -44,6 +44,9 @@ export function StrategyTab({
   // has never seen them. Each tab remembers its own.
   const [collapsed, setCollapsed] = useSticky('delta-paper.auto.collapsed', false)
   const mult = stopMultiple(config.stopLossPct)
+  // The trailing level reads as the same multiple, against the last minute's
+  // close rather than the entry — so `stopMultiple` gives the figure for both.
+  const trailMult = stopMultiple(config.trailStopPct)
   const tpMult = takeProfitMultiple(config.takeProfitPct)
 
   const expiryChoices = expiryOptions(expiries, config.expiryLabel)
@@ -148,12 +151,12 @@ export function StrategyTab({
 
         <GroupRule />
 
-        {/* The stop, as a share of the premium collected. The multiple it works out
-            to sits beside the box, since that is the form it is easiest to check —
-            and it keeps the old hardcoded 2× recognisable. */}
+        {/* The fixed half of the stop, as a share of the premium collected. The
+            multiple it works out to sits beside the box, since that is the form it
+            is easiest to check — and it keeps the old hardcoded 2× recognisable. */}
         <Field
-          label="Stop loss"
-          help="How much of the premium you are willing to give back before it closes the position, watched on the option's own price. 100% closes a $4 sale at $8 — the whole premium given back. 50% closes it at $6. At 0 there is no stop at all, and only the end of the trading hours or the expiry will close it."
+          label="Entry stop"
+          help="How much of the premium you are willing to give back before it closes the position, measured from what you sold at and watched on the option's own price. 100% closes a $4 sale at $8 — the whole premium given back. 50% closes it at $6. At 0 there is no fixed stop, leaving only the trailing stop, the end of the trading hours, or the expiry to close it."
         >
           <div className="flex items-center gap-2">
             <NumInput
@@ -166,6 +169,30 @@ export function StrategyTab({
             />
             <span className="text-[11px] whitespace-nowrap text-ink-3">
               {mult === null ? 'no stop' : `${mult.toFixed(2)}× entry`}
+            </span>
+          </div>
+        </Field>
+
+        {/* The moving half: the same share of the premium, but measured against
+            what the option is trading at now rather than what it was sold at, and
+            re-read off each closed 1-minute candle. The tighter of the two is the
+            one that is live, which is what makes this lock a gain in as the
+            premium falls. */}
+        <Field
+          label="Trailing stop"
+          help="A stop that follows the option's own price down. Each minute it takes that minute's closing premium and sets the stop that percent above it — at 100%, a premium trading at $2 stops at $4. Whichever is tighter, this or the entry stop, is the one that is armed, so this is what locks in a gain as the sale becomes profitable. It follows the premium back up too, so the level can loosen again — never past the entry stop. At 0 there is no trailing stop."
+        >
+          <div className="flex items-center gap-2">
+            <NumInput
+              value={config.trailStopPct}
+              min={0}
+              step={25}
+              unit="%"
+              width="w-16"
+              onChange={(trailStopPct) => setConfig({ trailStopPct })}
+            />
+            <span className="text-[11px] whitespace-nowrap text-ink-3">
+              {trailMult === null ? 'no trail' : `${trailMult.toFixed(2)}× last close`}
             </span>
           </div>
         </Field>

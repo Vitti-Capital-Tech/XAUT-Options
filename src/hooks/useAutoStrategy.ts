@@ -49,11 +49,12 @@ interface Row {
   expiry_rule: string
   expiry_label: string | null
   stop_loss_pct: string | number
+  trail_stop_pct: string | number
   take_profit_pct: string | number
 }
 
 const COLS =
-  'account_id, armed, moneyness, qty, window_start, window_end, trade_days, min_premium, expiry_rule, expiry_label, stop_loss_pct, take_profit_pct'
+  'account_id, armed, moneyness, qty, window_start, window_end, trade_days, min_premium, expiry_rule, expiry_label, stop_loss_pct, trail_stop_pct, take_profit_pct'
 
 export function useAutoStrategy(
   accountId: string | null,
@@ -100,6 +101,9 @@ export function useAutoStrategy(
       expiryRule: row.expiry_rule as ExpiryRule,
       expiryLabel: row.expiry_label,
       stopLossPct: Number(row.stop_loss_pct),
+      // Null-safe: the column arrived in 0037 with a default of 0, but a row read
+      // by an older tab mid-deploy would not carry it at all.
+      trailStopPct: Number(row.trail_stop_pct ?? 0),
       takeProfitPct: Number(row.take_profit_pct),
     }
     // Reset the draft to what the database holds — the two are equal right after a
@@ -142,6 +146,7 @@ export function useAutoStrategy(
           expiry_rule: DEFAULT_CONFIG.expiryRule,
           expiry_label: DEFAULT_CONFIG.expiryLabel,
           stop_loss_pct: DEFAULT_CONFIG.stopLossPct,
+          trail_stop_pct: DEFAULT_CONFIG.trailStopPct,
           take_profit_pct: DEFAULT_CONFIG.takeProfitPct,
         }
         await supabase.from('strategy_settings').upsert(def, { onConflict: 'account_id' })
@@ -264,6 +269,7 @@ export function useAutoStrategy(
       expiry_rule: config.expiryRule,
       expiry_label: config.expiryLabel,
       stop_loss_pct: config.stopLossPct,
+      trail_stop_pct: config.trailStopPct,
       take_profit_pct: config.takeProfitPct,
     })
     if (err) {
@@ -318,6 +324,11 @@ async function rearmOpenPositions(
   config: StrategyConfig,
   reload: () => void | Promise<void>,
 ): Promise<{ failed: number }> {
+  // The entry stop only. The trailing half is the server's to set — it is struck
+  // off the last closed 1-minute candle, which this side has no access to, and
+  // `apply_trail_stops` tightens these back down within about a minute of the
+  // write. Guessing at the level from the live mark would put a third rule on the
+  // same number and would disagree with the engine between passes.
   const stop = stopMultiple(config.stopLossPct)
   const take = takeProfitMultiple(config.takeProfitPct)
   const open = positions.filter((p) => p.net_qty !== 0)
@@ -355,7 +366,8 @@ async function rearmOpenPositions(
 function settingsError(message: string): string {
   if (message.includes('strategy_take_profit_pct_chk'))
     return 'Take profit must be between 0 and 100 percent.'
-  if (message.includes('strategy_stop_loss_pct_chk')) return 'Stop loss cannot be negative.'
+  if (message.includes('strategy_stop_loss_pct_chk')) return 'Entry stop cannot be negative.'
+  if (message.includes('strategy_trail_stop_pct_chk')) return 'Trailing stop cannot be negative.'
   if (message.includes('strategy_expiry_rule_chk'))
     return 'That is not an expiry rule the engine accepts.'
   if (message.includes('strategy_expiry_label_chk')) return 'That expiry is not a valid date.'

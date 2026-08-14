@@ -75,7 +75,8 @@ erDiagram
         numeric min_premium "floor on the bid; 0 off"
         text expiry_rule "today | nearest"
         text expiry_label "ddmmyy, or null"
-        numeric stop_loss_pct "% of premium; 0 = no stop"
+        numeric stop_loss_pct "% of premium off entry; 0 = none"
+        numeric trail_stop_pct "% of premium off the 1m close; 0 = none"
         numeric take_profit_pct "% of premium kept; 0 = none"
         bigint last_acted "unix sec of last bar"
     }
@@ -172,6 +173,7 @@ erDiagram
 | `orders_open_idx` | `(account_id) where status = 'open'` | Partial — the fill engine only scans open orders |
 | `fills_account_idx` | `(account_id, created_at desc)` | Trade history |
 | `positions_account_idx` | `(account_id)` | Positions table and P&L totals |
+| `trail_candle_requests_created_idx` | `(created_at)` | Trimming the pg_net request-id → symbol map the trailing stop matches its candle replies by |
 
 ---
 

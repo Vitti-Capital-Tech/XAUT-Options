@@ -29,6 +29,21 @@ export function stopMultiple(stopLossPct: number): number | null {
 }
 
 /**
+ * The trailing stop's level for a given premium — the same multiple, applied to
+ * the last closed minute's close instead of to the entry:
+ *
+ *     100% → 2.00x that close — a premium trading at $2 stops at $4
+ *      50% → 1.50x that close — the same premium stops at $3
+ *
+ * Null at zero, meaning no trailing half. The engine takes the lesser of this and
+ * the entry stop, so this is only ever the level that *tightens* the bracket.
+ */
+export function trailStopLevel(trailStopPct: number, premium: number): number | null {
+  if (!(trailStopPct > 0) || !(premium > 0)) return null
+  return premium * (1 + trailStopPct / 100)
+}
+
+/**
  * The same, for the take-profit — a percent of the premium *kept* rather than
  * given back, so the multiple sits below 1x:
  *
@@ -111,6 +126,23 @@ export interface StrategyConfig {
    */
   stopLossPct: number
   /**
+   * The trailing half of the stop, as the same percent of the premium — but
+   * measured against the option's **last closed 1-minute candle** rather than
+   * against the entry, and re-read every minute
+   * ([`0037`](../../supabase/migrations/0037_auto_trailing_stop.sql)):
+   *
+   *     trail = close × (1 + trailStopPct / 100)
+   *
+   * The armed stop is the lesser of this and the entry stop, so as a short goes
+   * your way the level follows the premium down and locks the gain in. It follows
+   * the premium back *up* too — `least` is taken of the two as they stand this
+   * minute, not against where the stop has already been — so the level can loosen
+   * again, though never past the entry stop.
+   *
+   * Zero switches trailing off, leaving the fixed entry stop alone.
+   */
+  trailStopPct: number
+  /**
    * Take-profit as a percent of the premium collected that you keep, watched on
    * the option's own mark — see `takeProfitMultiple`. 70 buys a $4 short back at
    * $1.20. Zero arms no take-profit; it must stay under 100, since a level of zero
@@ -135,6 +167,8 @@ export const DEFAULT_CONFIG: StrategyConfig = {
   expiryLabel: null,
   // 100% is the 2x-entry stop the strategy was hardcoded to before it was a setting.
   stopLossPct: 100,
+  // Off, so an existing account behaves exactly as it did until the number is moved.
+  trailStopPct: 0,
   // No take-profit by default: the strategy had none, and the window flatten already
   // closes the day.
   takeProfitPct: 0,

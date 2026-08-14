@@ -134,18 +134,45 @@ index and sell an option — a red bar sells a call, a green bar sells a put —
 the chosen moneyness off the nearest expiry, inside a time-of-day window (IST),
 with a stop read off `stop_loss_pct` on the mark.
 
-The stop is **a percent of the premium collected**
-([`0020`](supabase/migrations/0020_auto_strategy_stop_pct.sql)) — the number a
-premium seller actually thinks in:
+The stop has two halves, and the **tighter one is armed**
+([`0020`](supabase/migrations/0020_auto_strategy_stop_pct.sql),
+[`0037`](supabase/migrations/0037_auto_trailing_stop.sql)). Both are a percent of
+the premium — the number a premium seller actually thinks in — and both are
+watched on the option's own mark. They differ only in what they measure from:
 
 ```
-stop_loss = avg_entry_price × (1 + stop_loss_pct / 100)
+entry stop = avg_entry_price      × (1 + stop_loss_pct  / 100)     fixed
+trail stop = last 1m candle close × (1 + trail_stop_pct / 100)     re-read every minute
+
+stop_loss  = least(entry stop, trail stop)
 ```
 
-At the default **100** a $4 short stops at $8, giving back exactly the premium —
+At `stop_loss_pct = 100` a $4 short stops at $8, giving back exactly the premium —
 the 2× the strategy was hardcoded to before this was a setting. `50` stops it at
-$6; `0` arms no stop at all, leaving only the window flatten and expiry
-settlement to close the position.
+$6; `0` arms no fixed stop.
+
+The trailing half measures the same share against what the option is *trading at
+now*, so as a short goes your way the stop follows the premium down and locks the
+gain in. On that same $4 short with both set to 100:
+
+| Premium now | Entry stop | Trail stop | Armed |
+| --- | --- | --- | --- |
+| 4.00 | 8.00 | 8.00 | 8.00 |
+| 2.00 | 8.00 | 4.00 | **4.00** |
+| 1.00 | 8.00 | 2.00 | **2.00** |
+| 3.00 | 8.00 | 6.00 | **6.00** |
+
+> Read that last row before switching it on. `least` is taken of the two levels
+> **as they stand this minute**, so the trail follows the premium back up as well
+> as down and the stop can loosen again — never past the entry stop, which is what
+> bounds the worst case. Keep an entry stop set as the outer limit even when the
+> trail is doing the work.
+
+The minute close is Delta's own 1-minute candle for that option symbol, not the
+mark: `apply_trail_stops` reads the most recently *closed* bar every 30 seconds
+and moves the level only when it actually changes. `trail_stop_pct = 0` switches
+the trailing half off, which is the default, so nothing changes for an existing
+account until the number is moved.
 
 `take_profit_pct` is the mirror — a percent of the premium **kept**
 ([`0021`](supabase/migrations/0021_qty_and_take_profit.sql)):
