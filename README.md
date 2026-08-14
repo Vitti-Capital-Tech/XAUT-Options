@@ -312,6 +312,36 @@ the strike tie-break, expiry selection and the cycle frequency.
 > at Δp −1.5, which implies `N` nearer 3. Set it before expecting the rest of the
 > strategy to fire.
 
+#### Remarks — why it did that
+
+Trade History says *what* was traded. The **Remarks** tab beside it says what the
+engine was looking at when it decided to
+([`0033`](supabase/migrations/0033_delta_remarks.sql)):
+
+| Column | What it is |
+| --- | --- |
+| Spot | The price the decision was made at |
+| Δp Checked | Net portfolio delta when the book was read, with the band it was read against underneath |
+| Target | Where the correction was aiming — `target_landing` applied to the breached edge |
+| Δp After | Net delta once the action had gone through, measured in the same transaction and off the same chain snapshot |
+| Leg / Lots | What was traded |
+| Remark | The reason, in a sentence |
+
+`Δp After` is the half that cannot be reconstructed afterwards, which is the
+point of storing it: the pair with `Δp Checked` is a clean before-and-after of
+one action rather than two readings taken at different prices.
+
+Branches that **decline** to act are recorded too — an entry or a correction held
+back by margin, a Δp that cannot be trusted because a greek has not arrived, an
+unlisted expiry, no strike quoted, a breach worth less than one contract. Those
+would otherwise be an unexplained gap in the ledger. They repeat every cycle, so
+they are written once and skipped while the newest remark already says exactly
+that; actions are never deduplicated. Thirty days per account, trimmed on write.
+
+The strategy bar shows the newest one on its `Last` line, under `Next` — `Next`
+is this tab's own recomputation of the plan, `Last` is the server-side engine's
+record of a decision already made, so the two can legitimately disagree.
+
 ### Multiple accounts
 
 The switcher (top right) holds any number of independent paper accounts, each

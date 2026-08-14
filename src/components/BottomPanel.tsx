@@ -4,9 +4,10 @@ import { UNDERLYING } from '../lib/delta'
 import { market, useMarketTick } from '../lib/marketStore'
 import { shortImRate, valuePosition, type PositionRow, type TriggerSource } from '../engine/paper'
 import type { FillRow } from '../hooks/useTrading'
-import { dateTimeParts, dayKey, dayLabel, ivShort, pct, pnlClass, price } from '../lib/format'
+import type { DeltaRemarkAction, DeltaRemarkRow } from '../hooks/useDeltaRemarks'
+import { dateTimeParts, dayKey, dayLabel, greek, ivShort, pct, pnlClass, price } from '../lib/format'
 
-type Tab = 'positions' | 'history'
+type Tab = 'positions' | 'history' | 'remarks'
 
 interface Props {
   positions: PositionRow[]
@@ -15,6 +16,12 @@ interface Props {
   /** What the Positions tab says when empty — the chain and the strategy reach
    *  it by different routes, so each names its own. */
   emptyPositions?: string
+  /**
+   * The delta engine's own reasoning, if this book has any: spot, Δp before and
+   * after, and why it acted. Only the delta page passes it, and the tab exists
+   * only when it does — the chain and the auto strategy have no such log.
+   */
+  remarks?: DeltaRemarkRow[]
   onClosePosition: (pos: PositionRow, product: Product) => Promise<void>
   onSetTpSl: (
     positionId: string,
@@ -34,6 +41,7 @@ export function BottomPanel({
   fills,
   productsBySymbol,
   emptyPositions,
+  remarks,
   onClosePosition,
   onSetTpSl,
   onPickSymbol,
@@ -43,6 +51,8 @@ export function BottomPanel({
   const tabs: { key: Tab; label: string; count: number }[] = [
     { key: 'positions', label: 'Positions', count: positions.length },
     { key: 'history', label: 'Trade History', count: fills.length },
+    // Only where there is an engine keeping one.
+    ...(remarks ? [{ key: 'remarks' as Tab, label: 'Remarks', count: remarks.length }] : []),
   ]
 
   return (
@@ -84,6 +94,7 @@ export function BottomPanel({
           />
         )}
         {tab === 'history' && <HistoryTable fills={fills} />}
+        {tab === 'remarks' && remarks && <RemarksTable remarks={remarks} />}
       </div>
     </div>
   )
@@ -1136,6 +1147,128 @@ function HistoryTable({ fills }: { fills: FillRow[] }) {
         })}
       </tbody>
     </table>
+      )}
+    </Paged>
+  )
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * How each kind of decision is labelled and coloured.
+ *
+ * The three that book a loss deliberately — an exit-only close, a margin cut —
+ * carry the loss colour, so a scan of the column finds them without reading a
+ * word. The two that did nothing are muted: they are context for a gap in the
+ * ledger, not events in it.
+ */
+const REMARK_KIND: Record<DeltaRemarkAction, { label: string; cls: string }> = {
+  entry: { label: 'Entry', cls: 'text-pos' },
+  roll: { label: 'Roll', cls: 'text-brand-text' },
+  band: { label: 'Band sell', cls: 'text-brand-text' },
+  exit: { label: 'Exit', cls: 'text-neg' },
+  cut: { label: 'Cut', cls: 'text-neg' },
+  flatten: { label: 'Flatten', cls: 'text-ink' },
+  hold: { label: 'Held', cls: 'text-warn' },
+  wait: { label: 'Waiting', cls: 'text-ink-3' },
+}
+
+/**
+ * Why the delta engine did what it did.
+ *
+ * Trade History says what was traded; this says what the engine was looking at
+ * when it decided to. The three delta columns are the point of the table — where
+ * Δp stood when the book was checked, where the correction was aiming, and where
+ * Δp actually landed once the action had gone through — with the spot they were
+ * all priced at beside them.
+ *
+ * The remark itself is the only column allowed to wrap, so a long sentence makes
+ * a taller row rather than a table nobody can read without scrolling sideways.
+ */
+function RemarksTable({ remarks }: { remarks: DeltaRemarkRow[] }) {
+  if (remarks.length === 0) {
+    return (
+      <Empty>
+        Nothing yet. It writes a line each time it acts — and each time it decides not to.
+      </Empty>
+    )
+  }
+
+  return (
+    <Paged rows={remarks}>
+      {(visible) => (
+        <table className="w-full min-w-[1100px] text-[13px]">
+          <colgroup>
+            <col className="w-[9%]" />
+            <col className="w-[8%]" />
+            <col className="w-[8%]" />
+            <col className="w-[10%]" />
+            <col className="w-[8%]" />
+            <col className="w-[9%]" />
+            <col className="w-[15%]" />
+            <col className="w-[5%]" />
+            <col className="w-[28%]" />
+          </colgroup>
+          <thead className="sticky top-0 z-10">
+            <tr>
+              <Th align="left" wall="start">Time</Th>
+              <Th align="center">Action</Th>
+              <Th align="center">Spot</Th>
+              <Th align="center">Δp Checked</Th>
+              <Th align="center">Target</Th>
+              <Th align="center">Δp After</Th>
+              <Th align="center">Leg</Th>
+              <Th align="center">Lots</Th>
+              <Th align="left" wall="end">Remark</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {visible.map((r) => {
+              const at = dateTimeParts(r.created_at)
+              const kind = REMARK_KIND[r.action] ?? { label: r.action, cls: 'text-ink-3' }
+              // The band as it stood then, not as it is set now — a remark read a
+              // week later has to say what the breach was measured against.
+              const band =
+                r.band_low === null || r.band_high === null
+                  ? null
+                  : `${price(r.band_low, 2)} – ${price(r.band_high, 2)}`
+              return (
+                <tr key={r.id} className="border-b border-line align-top hover:bg-raised">
+                  {/* Date over time, the way the ledger stacks it — these rows are
+                      not grouped by day, so each carries its own date. */}
+                  <Td align="left" wall="start" className="text-ink-2">
+                    <div className="leading-tight">
+                      <div className="text-ink">{at.date}</div>
+                      <div className="text-[11px] text-ink-3">{at.time}</div>
+                    </div>
+                  </Td>
+                  <Td align="center" className={kind.cls}>{kind.label}</Td>
+                  <Td align="center" className="text-ink">{price(r.spot, 2)}</Td>
+                  {/* Δp when the book was checked, with the band it was checked
+                      against underneath it. */}
+                  <Td align="center" className="text-ink">
+                    <div className="leading-tight">
+                      <div>{greek(r.dp_before, 2)}</div>
+                      {band && <div className="text-[11px] text-ink-4">{band}</div>}
+                    </div>
+                  </Td>
+                  <Td align="center" className="text-ink-2">{greek(r.dp_target, 2)}</Td>
+                  {/* What the action actually made — measured after it went
+                      through, on the same prices as the reading before it. */}
+                  <Td align="center" className="text-ink">{greek(r.dp_after, 2)}</Td>
+                  <Td align="center" className="text-ink-2">{r.symbol ?? '—'}</Td>
+                  <Td align="center" className="text-ink-2">{r.qty ?? '—'}</Td>
+                  {/* The wrap lives on a child, not on the cell: `Td` sets
+                      `whitespace-nowrap` and two utilities of the same property
+                      would race on stylesheet order rather than class order. */}
+                  <Td align="left" wall="end" className="text-ink-2">
+                    <div className="whitespace-normal">{r.note}</div>
+                  </Td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
       )}
     </Paged>
   )

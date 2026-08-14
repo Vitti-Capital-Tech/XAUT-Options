@@ -50,6 +50,7 @@ erDiagram
     ORDERS ||--o{ FILLS : produces
     ACCOUNTS ||--o| STRATEGY_SETTINGS : "if kind=auto"
     ACCOUNTS ||--o| DELTA_STRATEGY_SETTINGS : "if kind=delta"
+    ACCOUNTS ||--o{ DELTA_REMARKS : "why the delta engine acted"
 
     AUTH_USERS {
         uuid id PK
@@ -106,6 +107,22 @@ erDiagram
         boolean pass_open
         numeric take_profit_mark "a price on the option's mark"
         numeric stop_loss_mark "a price on the mark; 0 = none"
+        numeric margin_cap_pct "cut at this % of equity; 0 = off"
+        numeric margin_target_pct "cut down to this %"
+    }
+    DELTA_REMARKS {
+        uuid id PK
+        uuid account_id FK
+        text action "entry|roll|exit|band|cut|flatten|hold|wait"
+        numeric spot "what it was priced at"
+        numeric dp_before "delta when the book was checked"
+        numeric dp_target "where the correction aimed"
+        numeric dp_after "delta the action actually made"
+        numeric band_low "the band as it stood then"
+        numeric band_high
+        text symbol "the leg acted on, if one"
+        integer qty "lots"
+        text note "why, in English"
     }
     ORDERS {
         uuid id PK
@@ -167,6 +184,7 @@ erDiagram
 | `orders_open_idx` | `(account_id) where status = 'open'` | Partial — the fill engine only scans open orders |
 | `fills_account_idx` | `(account_id, created_at desc)` | Trade history |
 | `positions_account_idx` | `(account_id)` | Positions table and P&L totals |
+| `delta_remarks_account_idx` | `(account_id, created_at desc)` | The Remarks tab, and the newest-row check that keeps a repeated "held" line from being written every cycle |
 
 ---
 
