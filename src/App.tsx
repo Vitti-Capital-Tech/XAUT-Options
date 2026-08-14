@@ -13,7 +13,6 @@ import { useAccounts } from './hooks/useAccounts'
 import { useTrading } from './hooks/useTrading'
 import { useAutoStrategy } from './hooks/useAutoStrategy'
 import { useDeltaStrategy } from './hooks/useDeltaStrategy'
-import { useDeltaRemarks } from './hooks/useDeltaRemarks'
 import { useKeywordTrigger } from './hooks/useKeywordTrigger'
 import { market, useMarketTick } from './lib/marketStore'
 import {
@@ -189,9 +188,6 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
     deltaTrading.reload,
   )
   const deltaExpiry = pickExpiry(expiries, deltaStrategy.config)
-  // The engine's own account of why it acted (0033). Written server-side as it
-  // decides, so this is a read: the tab shows the newest line, the panel the log.
-  const deltaRemarks = useDeltaRemarks(deltaAccounts.selectedId)
 
   // ---- Live stream ---------------------------------------------------------
   const [stream] = useState(() => new MarketStream())
@@ -392,11 +388,7 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
               three and wraps to several rows on a narrow window. */}
           <div className="flex min-h-screen flex-col">
             {topBar}
-            <DeltaStrategyTab
-              strategy={deltaStrategy}
-              expiries={expiries}
-              lastRemark={deltaRemarks[0] ?? null}
-            />
+            <DeltaStrategyTab strategy={deltaStrategy} expiries={expiries} />
             <ExpiryTabs expiries={expiries} active={activeExpiry} onSelect={setActiveExpiry} />
             <div className="flex min-h-[320px] flex-1 flex-col">
               {expiry && (
@@ -412,13 +404,12 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
           </div>
 
           {/* The delta strategy's own book, on the delta account — separate
-              again from both the chain's and the auto strategy's. Plus the
-              Remarks log, which only this engine keeps. */}
+              again from both the chain's and the auto strategy's. Why each leg
+              was opened and each exit taken rides on the rows themselves. */}
           <div className="flex flex-col">
             <BottomPanel
               positions={deltaTrading.positions}
               fills={deltaTrading.fills}
-              remarks={deltaRemarks}
               productsBySymbol={productsBySymbol}
               emptyPositions="No open positions. Set it Running and it sells its first pair at the session open."
               onClosePosition={(pos, product) => deltaTrading.closePosition(pos, product)}

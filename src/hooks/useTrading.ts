@@ -33,15 +33,23 @@ export interface FillRow {
   is_settlement: boolean
   /** Why a triggered close fired — 'take_profit' | 'stop_loss'. Null otherwise. */
   close_reason: string | null
+  /**
+   * Why the delta engine closed this leg, in a line — the rule that ran, the spot
+   * it was priced at, and net delta either side of it
+   * ([`0035`](../../supabase/migrations/0035_reason_on_the_row.sql)). Null on
+   * opening fills, whose reason lives on the position they opened, and on
+   * anything the delta engine did not do.
+   */
+  reason: string | null
   created_at: string
 }
 
 const POSITION_COLS =
-  'id, account_id, symbol, product_id, contract_type, strike_price, expiry_label, contract_value, net_qty, avg_entry_price, realized_pnl, take_profit, stop_loss, tpsl_trigger'
+  'id, account_id, symbol, product_id, contract_type, strike_price, expiry_label, contract_value, net_qty, avg_entry_price, realized_pnl, take_profit, stop_loss, tpsl_trigger, entry_reason'
 const ORDER_COLS =
   'id, account_id, symbol, product_id, contract_type, strike_price, expiry_label, contract_value, side, order_type, qty, limit_price, status, avg_fill_price, filled_qty, reduce_only, created_at'
 const FILL_COLS =
-  'id, symbol, contract_type, strike_price, side, order_type, qty, price, contract_value, premium, notional, fee, realized_pnl, spot_at_fill, is_settlement, close_reason, created_at'
+  'id, symbol, contract_type, strike_price, side, order_type, qty, price, contract_value, premium, notional, fee, realized_pnl, spot_at_fill, is_settlement, close_reason, reason, created_at'
 
 export interface PlaceOrderArgs {
   product: Product

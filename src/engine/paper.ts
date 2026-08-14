@@ -58,6 +58,12 @@ export interface PositionRow {
   take_profit: string | null
   stop_loss: string | null
   tpsl_trigger: TriggerSource
+  /**
+   * Why the delta engine opened this leg — the rule, the spot and net delta
+   * either side of it ([`0035`](../../supabase/migrations/0035_reason_on_the_row.sql)).
+   * Null on a leg nobody's engine opened, and on anything predating the column.
+   */
+  entry_reason?: string | null
 }
 
 export interface OrderRow {

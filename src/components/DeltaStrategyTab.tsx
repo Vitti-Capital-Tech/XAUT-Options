@@ -2,8 +2,7 @@ import { useState } from 'react'
 import { useMarketTick } from '../lib/marketStore'
 import { expiryIsLive, expiryOptions, type Expiry } from '../lib/delta'
 import type { DeltaStrategyApi } from '../hooks/useDeltaStrategy'
-import type { DeltaRemarkRow } from '../hooks/useDeltaRemarks'
-import { greek, price, timeOfDay } from '../lib/format'
+import { greek, price } from '../lib/format'
 import {
   CollapseToggle,
   DayPicker,
@@ -38,13 +37,9 @@ import {
 export function DeltaStrategyTab({
   strategy,
   expiries,
-  lastRemark,
 }: {
   strategy: DeltaStrategyApi
   expiries: Expiry[]
-  /** The newest line from the engine's own log — what it last did, and why. The
-   *  whole log is the Remarks tab in the panel below. */
-  lastRemark?: DeltaRemarkRow | null
 }) {
   const { config, setConfig, armed, setArmed, session, hasAccount, plan, error, refresh, entryLots, apply, cancel, dirty } =
     strategy
@@ -516,33 +511,18 @@ export function DeltaStrategyTab({
         </Readout>
       </div>
 
-      {/* What it is about to do, in its own strip so a long reason reads in full. */}
+      {/* What it is about to do, in its own strip so a long reason reads in full.
+          Recomputed here every two seconds from the same rules the engine runs, so
+          it also answers the question a log would — why nothing is happening: an
+          entry held back by margin, a greek that has not arrived, a breach under
+          one contract. Why it did something is on the row it produced, as Entry
+          Reason in Positions and Exit Reason in Trade History. */}
       <div className="flex min-w-0 items-baseline gap-2.5 border-t border-line px-5 py-2">
         <span className="shrink-0 text-[9px] font-semibold tracking-[0.14em] text-ink-3 uppercase">
           Next
         </span>
         <span className="truncate text-[12.5px] text-ink-2">{plan?.reason ?? 'Starting up…'}</span>
       </div>
-
-      {/* And what it last did, in the engine's own words — the newest remark it
-          wrote, with the spot and the delta it was reading at the time. `Next` is
-          this tab's guess at the plan, recomputed here every two seconds; this is
-          the server-side engine's own record of a decision already made, which is
-          why the two can disagree and why both are worth showing. The full log,
-          with the delta before and after each action, is the Remarks tab below. */}
-      {lastRemark && (
-        <div className="flex min-w-0 items-baseline gap-2.5 border-t border-line px-5 py-2">
-          <span className="shrink-0 text-[9px] font-semibold tracking-[0.14em] text-ink-3 uppercase">
-            Last
-          </span>
-          <span className="num shrink-0 text-[11px] text-ink-3">
-            {timeOfDay(lastRemark.created_at)}
-          </span>
-          <span className="truncate text-[12.5px] text-ink-2" title={lastRemark.note}>
-            {lastRemark.note}
-          </span>
-        </div>
-      )}
       </>
       )}
 

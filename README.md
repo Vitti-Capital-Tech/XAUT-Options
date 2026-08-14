@@ -312,46 +312,52 @@ the strike tie-break, expiry selection and the cycle frequency.
 > at Δp −1.5, which implies `N` nearer 3. Set it before expecting the rest of the
 > strategy to fire.
 
-#### Remarks — why it did that
+#### Why it did that
 
-Trade History says *what* was traded. The **Remarks** tab beside it says what the
-engine was looking at when it decided to
-([`0033`](supabase/migrations/0033_delta_remarks.sql)):
+Every leg the engine touches carries its own reason, on the row it belongs to
+([`0035`](supabase/migrations/0035_reason_on_the_row.sql)):
 
-| Column | What it is |
-| --- | --- |
-| Spot | The price the decision was made at |
-| Δp Checked | Net portfolio delta when the book was read, with the band it was read against underneath |
-| Target | Where the correction was aiming — `target_landing` applied to the breached edge |
-| Δp After | Net delta once the action had gone through, measured in the same transaction and off the same chain snapshot |
-| Leg / Lots | What was traded |
-| Remark | The reason, in a sentence |
+| Where | Column | Answers |
+| --- | --- | --- |
+| Positions | **Entry Reason** | Why this leg is on the book |
+| Trade History | **Exit Reason** | Why this leg was closed |
 
-`Δp After` is the half that cannot be reconstructed afterwards, which is the
-point of storing it: the pair with `Δp Checked` is a clean before-and-after of
-one action rather than two readings taken at different prices.
+Both read the same shape of line — the rule that ran, where it was aiming, the
+spot it was priced at, and net portfolio delta either side of the action:
 
-Branches that **decline** to act are recorded too — an entry or a correction held
-back by margin, a Δp that cannot be trusted because a greek has not arrived, an
-unlisted expiry, no strike quoted, a breach worth less than one contract. Those
-would otherwise be an unexplained gap in the ledger. They repeat every cycle, so
-they are written once and skipped while the newest remark already says exactly
-that; actions are never deduplicated. Thirty days per account, trimmed on write.
+```
+Rolled further out — band breach (target -0.60) · spot $4243.10 · Δp -1.35 → -0.62
+Margin cut — loss booked · spot $4251.80 · Δp -1.90 → -1.20
+Take-profit hit · spot $4243.10 · Δp -0.62 → -0.30
+```
 
-The **take-profit and the stop write their own** too
-([`0034`](supabase/migrations/0034_delta_tpsl_remarks.sql)). Those are armed by
-the delta engine but fired by `apply_tpsl_triggers`, the bracket sweep shared
-with the other two books, so without this a leg would leave the book with nothing
-in the log to say why. They are their own actions rather than an `exit` — `exit`
-means the roll budget was spent, while a bracket answers to the option's own
-price and can fire with Δp dead centre in the band. Both carry no `Target`, which
-is the honest reading: a bracket has no delta it is aiming for. `Δp Checked` and
-`Δp After` are still recorded, since the *consequence* is a delta move — usually
-the reason the next cycle rolls or corrects.
+The delta *after* the action is the half that cannot be reconstructed later,
+which is the point of recording it: it is measured in the same transaction and
+off the same chain snapshot as the reading before, so the pair is a clean
+before-and-after of one action rather than two readings taken at different
+prices. A cut, a flatten and a bracket carry no target — they answer to margin or
+to the option's own price, and have no delta they are aiming for.
 
-The strategy bar shows the newest one on its `Last` line, under `Next` — `Next`
-is this tab's own recomputation of the plan, `Last` is the server-side engine's
-record of a decision already made, so the two can legitimately disagree.
+An **opening** fill leaves Exit Reason blank on purpose. Its reason is not lost —
+it is on the position it opened, which is where "why do I hold this" gets asked.
+Under a column headed Exit Reason it would be an answer to a different question.
+
+The take-profit and the stop write their reason the same way
+([`0034`](supabase/migrations/0034_delta_tpsl_remarks.sql)). They are armed by the
+delta engine but fired by `apply_tpsl_triggers`, the bracket sweep shared with the
+other two books, so without that a leg would leave the book with nothing to say
+why.
+
+> **Cycles that trade nothing write nothing.** An entry held back by margin, a Δp
+> that cannot be trusted because a greek has not arrived, a breach worth less than
+> one contract — there is no row to hang those on, and they are already on screen:
+> the strategy bar's `Next` line recomputes the same rules live, for a paused
+> strategy as well as a running one. Each also writes a `raise log`, which is the
+> record when the engine itself is the suspect. A `delta_remarks` table briefly
+> kept a history of them and was dropped
+> ([`0036`](supabase/migrations/0036_drop_delta_remarks.sql)) — a table, a policy,
+> a realtime feed and a retention sweep to duplicate two text columns and one line
+> of the readout.
 
 ### Multiple accounts
 
