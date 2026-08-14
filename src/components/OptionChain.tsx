@@ -314,7 +314,13 @@ function Book({
             />
           )}
           {cols.map((k) => (
-            <Head key={k} spec={COLS[k]} />
+            // The header mirrors with its column, or the label would sit over the
+            // far edge of the figures it names.
+            <Head
+              key={k}
+              spec={COLS[k]}
+              align={k === 'pos' && side === 'put' ? 'left' : 'right'}
+            />
           ))}
         </div>
 
@@ -366,6 +372,7 @@ function Book({
                 <ChainCell
                   key={k}
                   col={k}
+                  side={side}
                   product={product}
                   ticker={product ? market.get(product.symbol) : undefined}
                   position={position}
@@ -461,12 +468,14 @@ function Head({
   className = '',
 }: {
   spec: ColSpec
-  align?: 'right' | 'center'
+  align?: 'right' | 'center' | 'left'
   className?: string
 }) {
   return (
     <div
-      className={`px-2 py-1.5 ${align === 'center' ? 'text-center' : 'text-right'} ${className}`}
+      className={`px-2 py-1.5 ${
+        align === 'center' ? 'text-center' : align === 'left' ? 'text-left' : 'text-right'
+      } ${className}`}
     >
       <div className="text-[12px] whitespace-nowrap text-ink-2">{spec.label}</div>
       {spec.sub && <div className="text-[10px] whitespace-nowrap text-ink-2">{spec.sub}</div>}
@@ -492,14 +501,21 @@ function inUnderlying(contracts: string | number | null | undefined, cv: number)
 
 interface CellProps {
   col: ColKey
+  side: BookSide
   product: Product | undefined
   ticker: Ticker | undefined
   position: PositionRow | undefined
   onPick: (product: Product, side: Side, presetPrice: number | null) => void
 }
 
-function ChainCell({ col, product, ticker, position, onPick }: CellProps) {
-  if (!product) return <Plain>-</Plain>
+function ChainCell({ col, side, product, ticker, position, onPick }: CellProps) {
+  // POS is the one column that sits against the strike on both sides, so it is
+  // the one whose alignment has to mirror too. Right-aligned throughout, the call
+  // side's figure hugs the strike while the put side's is pushed a column's width
+  // away from it — the two read as different distances out, which is exactly what
+  // they are not.
+  const posAlign = side === 'put' ? 'left' : 'right'
+  if (!product) return <Plain align={col === 'pos' ? posAlign : 'right'}>-</Plain>
 
   const q = ticker?.quotes
   const g = ticker?.greeks
@@ -547,7 +563,7 @@ function ChainCell({ col, product, ticker, position, onPick }: CellProps) {
 
     case 'pos':
       // Our own paper position, signed, in the underlying.
-      return <Plain>{position ? inUnderlying(position.net_qty, cv) : '-'}</Plain>
+      return <Plain align={posAlign}>{position ? inUnderlying(position.net_qty, cv) : '-'}</Plain>
 
     case 'chg24': {
       const n = ticker?.ltp_change_24h ? Number(ticker.ltp_change_24h) : null
@@ -571,9 +587,26 @@ function ChainCell({ col, product, ticker, position, onPick }: CellProps) {
   }
 }
 
-function Plain({ children, className }: { children: React.ReactNode; className?: string }) {
+function Plain({
+  children,
+  className,
+  align = 'right',
+}: {
+  children: React.ReactNode
+  className?: string
+  /** An explicit prop rather than a `text-left` passed through `className`: both
+   *  are the same specificity, so which one won would come down to their order in
+   *  the built stylesheet rather than anything written here. */
+  align?: 'right' | 'left'
+}) {
   return (
-    <div className={`num px-2 text-right text-[12px] ${className ?? 'text-ink'}`}>{children}</div>
+    <div
+      className={`num px-2 text-[12px] ${align === 'left' ? 'text-left' : 'text-right'} ${
+        className ?? 'text-ink'
+      }`}
+    >
+      {children}
+    </div>
   )
 }
 
