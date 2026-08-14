@@ -59,14 +59,25 @@ const COLS: Record<ColKey, ColSpec> = {
   low: { label: 'Low', w: 80 },
 }
 
+// POS sits innermost on both sides — last for calls, first for puts — which is
+// the column against the strike, and so the one on screen before anything is
+// scrolled: both panes open anchored to the strike (calls at scrollWidth, puts at
+// 0). Delta ships it out among the greeks, where it is only ever found by
+// scrolling; what you hold is the one figure here that is yours rather than the
+// venue's, so it reads first.
+//
+// The two lists stay mirror images, which is what keeps the ladder readable
+// across the strike. Moving POS in costs the quote block 80px of its distance
+// from the strike — bid and ask are the click targets, so they stay as close
+// behind it as they can.
 const CALL_COLS: ColKey[] = [
-  'low', 'high', 'open', 'last', 'chg24', 'theta', 'vega', 'gamma', 'pos',
-  'oiChg', 'volume', 'delta', 'bidQty', 'bid', 'mark', 'ask', 'askQty', 'oi',
+  'low', 'high', 'open', 'last', 'chg24', 'theta', 'vega', 'gamma',
+  'oiChg', 'volume', 'delta', 'bidQty', 'bid', 'mark', 'ask', 'askQty', 'oi', 'pos',
 ]
 
 const PUT_COLS: ColKey[] = [
-  'oi', 'bidQty', 'bid', 'mark', 'ask', 'askQty', 'delta', 'volume', 'oiChg',
-  'pos', 'gamma', 'vega', 'theta', 'chg24', 'last', 'open', 'high', 'low',
+  'pos', 'oi', 'bidQty', 'bid', 'mark', 'ask', 'askQty', 'delta', 'volume', 'oiChg',
+  'gamma', 'vega', 'theta', 'chg24', 'last', 'open', 'high', 'low',
 ]
 
 const STRIKE_W = 102
