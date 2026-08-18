@@ -6,6 +6,7 @@ import { OrderTicket, type TicketRequest } from './components/OrderTicket'
 import { BottomPanel } from './components/BottomPanel'
 import { StrategyTab } from './components/StrategyTab'
 import { DeltaStrategyTab } from './components/DeltaStrategyTab'
+import { FuturesTab } from './components/FuturesTab'
 import { AdminPanel } from './components/AdminPanel'
 import { Toasts } from './components/Toasts'
 import { useAuth } from './hooks/useAuth'
@@ -17,7 +18,10 @@ import { useKeywordTrigger } from './hooks/useKeywordTrigger'
 import { market, useMarketTick } from './lib/marketStore'
 import {
   MarketStream,
+  PERP_SYMBOL,
   fetchExpiries,
+  fetchPerp,
+  fetchPerpTicker,
   fetchTickers,
   formatExpiry,
   type Expiry,
@@ -43,15 +47,18 @@ export default function App() {
 // ---------------------------------------------------------------------------
 
 function Terminal({ userId, email }: { userId: string; email: string | undefined }) {
-  // Three independent books, one per page: the chain trades manual accounts, the
-  // auto strategy trades auto accounts, the delta strategy trades delta ones.
-  // Same tables throughout, partitioned by account kind.
+  // Four independent books, one per page: the chain trades manual accounts, the
+  // auto strategy trades auto accounts, the delta strategy trades delta ones and
+  // the futures page trades the perpetual on its own. Same tables throughout,
+  // partitioned by account kind — nothing is shared between them.
   const manualAccounts = useAccounts(userId, 'manual')
   const autoAccounts = useAccounts(userId, 'auto')
   const deltaAccounts = useAccounts(userId, 'delta')
+  const futuresAccounts = useAccounts(userId, 'futures')
   const manualTrading = useTrading(manualAccounts.selectedId, manualAccounts.reload)
   const autoTrading = useTrading(autoAccounts.selectedId, autoAccounts.reload)
   const deltaTrading = useTrading(deltaAccounts.selectedId, deltaAccounts.reload)
+  const futuresTrading = useTrading(futuresAccounts.selectedId, futuresAccounts.reload)
 
   const [expiries, setExpiries] = useState<Expiry[]>([])
   const [activeExpiry, setActiveExpiry] = useState<string | null>(null)
@@ -66,7 +73,9 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
   // so a stale or hand-edited value cannot render nothing.
   const [page, setPage] = useState<Page>(() => {
     const saved = localStorage.getItem(PAGE_KEY)
-    return saved === 'chain' || saved === 'strategy' || saved === 'delta' ? saved : 'chain'
+    return saved === 'chain' || saved === 'strategy' || saved === 'delta' || saved === 'futures'
+      ? saved
+      : 'chain'
   })
 
   useEffect(() => {
@@ -75,8 +84,21 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
 
   // The book the header, ticket and admin panel act on — whichever page is up.
   const accounts =
-    page === 'chain' ? manualAccounts : page === 'strategy' ? autoAccounts : deltaAccounts
-  const trading = page === 'chain' ? manualTrading : page === 'strategy' ? autoTrading : deltaTrading
+    page === 'chain'
+      ? manualAccounts
+      : page === 'strategy'
+        ? autoAccounts
+        : page === 'delta'
+          ? deltaAccounts
+          : futuresAccounts
+  const trading =
+    page === 'chain'
+      ? manualTrading
+      : page === 'strategy'
+        ? autoTrading
+        : page === 'delta'
+          ? deltaTrading
+          : futuresTrading
 
   const tick = useMarketTick()
 
@@ -129,15 +151,55 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
     }
   }, [])
 
-  // Every product across every expiry, for position/order lookups.
+  // ---- The perpetual -------------------------------------------------------
+  // Fetched on its own, not filtered out of the chain's product list: it is one
+  // contract behind one page, and tying it to the chain's much larger bootstrap
+  // would take the futures page down every time that call had a bad minute.
+  // Refetched hourly only to pick up a margin or leverage change — the contract
+  // itself does not roll, which is the whole point of a perpetual.
+  const [perp, setPerp] = useState<Product | null>(null)
+  const [perpError, setPerpError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let active = true
+
+    const load = async () => {
+      try {
+        const [product, ticker] = await Promise.all([fetchPerp(), fetchPerpTicker()])
+        if (!active) return
+        market.upsert(ticker)
+        setPerp(product)
+        setPerpError(null)
+      } catch (err) {
+        // Same rule the chain follows: a failed refresh must not blank a page
+        // that is already up.
+        if (active && !perp) {
+          setPerpError(err instanceof Error ? err.message : 'Could not load the perpetual contract')
+        }
+      }
+    }
+
+    void load()
+    const id = setInterval(load, 3_600_000)
+    return () => {
+      active = false
+      clearInterval(id)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Every product across every expiry, plus the perpetual, for position/order
+  // lookups. The perpetual belongs in here as much as any strike does: it is
+  // what the positions table closes against and what the fill engine prices.
   const productsBySymbol = useMemo(() => {
     const m = new Map<string, Product>()
     for (const exp of expiries) {
       for (const p of exp.calls.values()) m.set(p.symbol, p)
       for (const p of exp.puts.values()) m.set(p.symbol, p)
     }
+    if (perp) m.set(perp.symbol, perp)
     return m
-  }, [expiries])
+  }, [expiries, perp])
 
   // The fill engine needs product metadata (contract value, fee rates) by symbol
   // — for both books, since either can hold a position needing a fill.
@@ -146,7 +208,8 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
     manualTrading.registerProducts(products)
     autoTrading.registerProducts(products)
     deltaTrading.registerProducts(products)
-  }, [productsBySymbol, manualTrading, autoTrading, deltaTrading])
+    futuresTrading.registerProducts(products)
+  }, [productsBySymbol, manualTrading, autoTrading, deltaTrading, futuresTrading])
 
   const expiry = expiries.find((e) => e.label === activeExpiry) ?? null
 
@@ -223,6 +286,13 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
     for (const o of autoTrading.openOrders) symbols.add(o.symbol)
     for (const p of deltaTrading.positions) symbols.add(p.symbol)
     for (const o of deltaTrading.openOrders) symbols.add(o.symbol)
+    for (const p of futuresTrading.positions) symbols.add(p.symbol)
+    for (const o of futuresTrading.openOrders) symbols.add(o.symbol)
+    // Always, held or not: it is a single symbol, and the futures page has to
+    // paint a price the moment it is opened rather than a dash until the first
+    // trade. It is also the one contract whose mark keeps costing money while
+    // nobody is looking, since funding does not wait for the tab.
+    symbols.add(PERP_SYMBOL)
     stream.setSymbols([...symbols])
   }, [
     stream,
@@ -233,6 +303,8 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
     autoTrading.openOrders,
     deltaTrading.positions,
     deltaTrading.openOrders,
+    futuresTrading.positions,
+    futuresTrading.openOrders,
     deltaExpiry,
   ])
 
@@ -381,7 +453,7 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
             />
           </div>
         </>
-      ) : (
+      ) : page === 'delta' ? (
         <>
           {/* Same shape and the same min-h-screen reasoning as the auto page — and
               more so here, since this control bar carries the most fields of the
@@ -415,6 +487,50 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
               onClosePosition={(pos, product) => deltaTrading.closePosition(pos, product)}
               onSetTpSl={deltaTrading.setTpSl}
               onPickSymbol={(product) => openTicket(product, 'buy', null)}
+            />
+          </div>
+        </>
+      ) : (
+        <>
+          {/* The perpetual. No expiry strip and no chain — there is one contract,
+              so the page is the ticket and the book beneath it. Nothing here
+              needs the screen's height, which is why this section is sized by its
+              content rather than pinned to the viewport like the other three. */}
+          <div className="flex flex-col">
+            {topBar}
+            <FuturesTab
+              product={perp}
+              error={perpError}
+              position={futuresTrading.positions.find((p) => p.symbol === PERP_SYMBOL)}
+              cashBalance={Number(futuresAccounts.selected?.cash_balance ?? 0)}
+              available={summary.available}
+              onSubmit={async ({ product, side, qty, leverage }) => {
+                await futuresTrading.placeOrder({
+                  product,
+                  side,
+                  orderType: 'market',
+                  qty,
+                  limitPrice: null,
+                  leverage,
+                })
+              }}
+            />
+          </div>
+
+          {/* The futures book, on the futures account — separate from all three
+              option books. The table swaps its greek columns for the leverage and
+              the liquidation price, which are what a perpetual is read by. */}
+          <div className="flex flex-col">
+            <BottomPanel
+              positions={futuresTrading.positions}
+              fills={futuresTrading.fills}
+              productsBySymbol={productsBySymbol}
+              variant="futures"
+              cashBalance={Number(futuresAccounts.selected?.cash_balance ?? 0)}
+              emptyPositions="No open position. Size an order above and go long or short."
+              onClosePosition={(pos, product) => futuresTrading.closePosition(pos, product)}
+              onSetTpSl={futuresTrading.setTpSl}
+              onPickSymbol={() => {}}
             />
           </div>
         </>

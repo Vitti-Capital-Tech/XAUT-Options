@@ -6,7 +6,7 @@ import { supabase } from '../lib/supabase'
  * strategy, delta accounts to the delta management strategy. One kind per page,
  * so the three books never share a balance or a position.
  */
-export type AccountKind = 'manual' | 'auto' | 'delta'
+export type AccountKind = 'manual' | 'auto' | 'delta' | 'futures'
 
 export interface Account {
   id: string

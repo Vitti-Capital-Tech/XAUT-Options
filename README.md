@@ -1,19 +1,20 @@
 # XAUT Options — Paper Trading Terminal
 
-A Delta-Exchange-style options terminal for **XAUT** (Tether Gold). Live option
-chain, click-to-trade, positions, open orders and trade history — plus two
-automated strategies that run on a schedule — with every order simulated.
-**No order ever reaches the exchange.**
+A Delta-Exchange-style derivatives terminal for **XAUT** (Tether Gold). Live
+option chain, click-to-trade, positions, open orders and trade history — plus
+two automated strategies that run on a schedule and the XAUT perpetual future —
+with every order simulated. **No order ever reaches the exchange.**
 
-Three pages, each trading its own book:
+Four pages, each trading its own book:
 
 | Page | Account kind | What it does |
 | --- | --- | --- |
 | **Option Chain** | `manual` | Click-to-trade the live chain by hand |
 | **Auto Strategy** | `auto` | Sells one option per closed 1h candle — a call on a red bar, a put on a green |
 | **Delta Strategy** | `delta` | The delta-band strategy from `Gold_Options_Delta_Strategy.docx` |
+| **Futures** | `futures` | The XAUTUSD perpetual, long or short by hand, with leverage, funding and liquidation |
 
-The three never share a balance or a position: an account carries a `kind`, and
+The four never share a balance or a position: an account carries a `kind`, and
 every order, fill and position is already scoped to an account.
 
 Market data is live from Delta Exchange India's *public* API. There is no API
@@ -386,6 +387,65 @@ why.
 > a realtime feed and a retention sweep to duplicate two text columns and one line
 > of the readout.
 
+### Futures
+
+The one non-option XAUT contract Delta lists, traded by hand:
+
+```
+XAUTUSD   perpetual future   0.001 XAUT per lot   tick 0.01
+          IM 1%   MM 0.5%   up to 100x   funding every 8h
+```
+
+One instrument, so there is no chain and no expiry strip — the page is a price
+strip and a ticket, with the book beneath it. What makes it different from the
+option pages is not the layout but the mechanics, and all three are simulated
+([`0038`](supabase/migrations/0038_futures.sql)):
+
+**Leverage.** Margin is `notional / leverage`, floored at the contract's own 1%,
+and **both sides post it**. That is the opposite of the option book, where a long
+has already paid its maximum loss with the premium and the venue asks nothing
+further. The leverage is chosen per order and stored on the position, because it
+is what margins that position from then on.
+
+**Funding.** A perpetual never settles; every eight hours (00:00, 08:00 and 16:00
+UTC — 05:30, 13:30 and 21:30 IST) the two sides pay each other instead:
+
+```
+payment = mark × contract_value × |net_qty| × funding_rate / 100
+```
+
+A positive rate means longs pay shorts. The header shows the live rate, who pays
+and the countdown; the ticket shows what the position on the book will pay at the
+next one. Cash moves server-side on a cron, against a ledger keyed on
+`(account, symbol, funding_time)` so a re-run cannot double-charge. Only
+positions open *before* the boundary are billed.
+
+**Liquidation.** At 100x a 1% move is the whole margin. The book is
+cross-margined, so the test is account-wide rather than a per-position stop:
+
+```
+equity = cash + unrealized      maintenance = 0.5% × mark × cv × |qty|
+liquidate when equity < maintenance
+```
+
+and the whole book closes at the mark, booked as `close_reason = 'liquidation'`.
+The estimated liquidation price is on the ticket before the order goes, priced
+for the position the order would actually leave behind — not for a flat book —
+and in the positions table after it. It reads `—` when there is genuinely no such
+price, which is what enough cash against a small position gives you.
+
+The positions table swaps its four greek columns and the Entry Reason for
+**Leverage** and **Liq. Price**: a perpetual has no greeks, and nothing on this
+page opens a position except the person looking at it. `UPNL %` is return on
+margin here rather than on entry value — at 100x, reading a 1% move as "1%" would
+understate it by the size of the account.
+
+Take-profit and stop-loss work as they do everywhere else. The bracket engine had
+decided direction with `(contract_type = 'call_options') = long`, which reads a
+perpetual as a put — a long XAUTUSD would have taken profit on the index
+*falling*. [`0038`](supabase/migrations/0038_futures.sql) splits the case so that
+a non-option is simply bullish when long.
+
 ### Multiple accounts
 
 The switcher (top right) holds any number of independent paper accounts, each
@@ -428,7 +488,23 @@ protecting.
   portfolio rather than isolated margin are floored at
   `max(5% x premium, OM% x notional)`, which can bind higher. Long options are
   exact — risk is capped at the premium paid.
-- **No liquidation.** Nothing force-closes a losing position.
+- **No liquidation on the option books.** Nothing force-closes a losing option
+  position. The futures book *is* liquidated
+  ([`0038`](supabase/migrations/0038_futures.sql)), because a perpetual at 100x
+  is unreadable without it — but only to the extent below.
+- **Futures liquidation is all-or-nothing and takes no penalty.** Delta unwinds
+  a book in steps and deducts a `liquidation_penalty_factor` from what is left of
+  the margin; this closes the whole book at the mark and deducts nothing. It is
+  conservative in one direction and generous in the other: an account is never
+  left alive that the venue would have taken, but one that is taken keeps a
+  little more than it would have. The 0.5% maintenance rate is also a constant in
+  the migration rather than re-read from the product each pass.
+- **Funding is charged on an eight-hour boundary, not accrued continuously.** A
+  position opened a minute after 08:00 UTC pays nothing until 16:00, which is how
+  the venue works; but the pass that bills it runs on a five-second cron, so the
+  mark it is priced at can be seconds past the boundary rather than exactly on
+  it. `annualized_funding` on the product is ignored — the live `funding_rate`
+  off the ticker is what is charged.
 - **Expiry settles server-side** via `pg_cron`; see
   [`supabase/migrations/0002_settlement.sql`](supabase/migrations/0002_settlement.sql).
 - **Fills are all-or-nothing** and ignore quoted size, so a market order for
@@ -462,9 +538,10 @@ src/
   hooks/useDeltaStrategy.ts Delta strategy settings + readout (engine is server-side)
   components/controls.tsx  Shared strategy-bar widgets: select, time picker, switch
   components/              Login, TopBar, OptionChain, OrderTicket, BottomPanel,
-                           StrategyTab, DeltaStrategyTab, AdminPanel
+                           StrategyTab, DeltaStrategyTab, FuturesTab, AdminPanel
 supabase/migrations/       Schema, RLS, execute_fill, settlement, TP/SL,
-                           and both strategy engines
+                           both strategy engines, and the perpetual's funding
+                           and liquidation crons
 docs/                      HLD, LLD, setup
 ```
 
@@ -493,6 +570,11 @@ Confirmed working:
 - **Delta strategy daily entry, live.** Armed against the real chain it built the
   113-symbol snapshot from the feed and sold its symmetric pair — two orders, two
   open legs, `entered_day` set.
+- **The futures page renders and prices correctly**, against the live `XAUTUSD`
+  feed: notional, both margins, ROE, the funding payment, the leverage ladder and
+  the liquidation estimate all agree with the figures computed by hand, the side
+  toggle switches the touch it prices against (ask for a long, bid for a short),
+  and an order that only reduces exposure asks for no new margin.
 
 Not yet exercised:
 
@@ -508,8 +590,20 @@ Not yet exercised:
   positions upsert. Postgres only plans statements inside a PL/pgSQL function on
   first execution, so these are validated by the first real trade rather than by
   deployment. If anything in the schema misbehaves, look here first.
-- Liquidation and partial fills against quoted size — neither is implemented
-  (see *Known approximations*).
+- Partial fills against quoted size — not implemented (see *Known
+  approximations*).
+- **Everything in [`0038`](supabase/migrations/0038_futures.sql) that runs in the
+  database.** The migration has not been executed against a live Postgres: no
+  local instance exists in this project, and it is applied by hand in the
+  Supabase SQL editor like every migration before it. That covers the funding
+  cron, the liquidation cron, the leverage column travelling from order to
+  position through `execute_fill`, and the bracket-direction fix. Run it and
+  place one small futures trade before trusting any of it.
+- **A futures order placed end to end.** The page was verified against the live
+  feed but with the order handler stubbed, since signing in to the paper account
+  needs the account holder's own credentials. The first real fill is what proves
+  the nullable `strike_price`, the `'PERP'` expiry label and the leverage column
+  all land as intended.
 
 ## License
 

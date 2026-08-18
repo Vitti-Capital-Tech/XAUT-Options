@@ -10,7 +10,7 @@
  * XAUT options — the small per-lot value is why quoted sizes run to five figures.
  */
 
-import type { Product, Ticker } from '../lib/delta'
+import { isPerp, type Product, type Ticker } from '../lib/delta'
 
 /**
  * Fallback initial-margin rate for a short option, used only when the contract
@@ -36,6 +36,96 @@ export function shortImRate(product: Product): number {
   return Number.isFinite(pct) && pct > 0 ? pct / 100 : FALLBACK_SHORT_IM_RATE
 }
 
+/**
+ * Fallback maintenance rate, used on the same terms as the initial-margin one.
+ * Half the initial margin is what Delta publishes for XAUTUSD (1% and 0.5%), and
+ * half is the shape across their book, so it is the least surprising guess.
+ */
+export const FALLBACK_MM_RATE = 0.005
+
+/**
+ * The venue's maintenance-margin rate, as a fraction. Below this share of the
+ * position's notional the venue takes the position; above it, it lives.
+ */
+export function maintenanceRate(product: Product): number {
+  const pct = Number(product.maintenance_margin)
+  return Number.isFinite(pct) && pct > 0 ? pct / 100 : FALLBACK_MM_RATE
+}
+
+/**
+ * Highest leverage the contract may be opened at. Delta publishes it directly,
+ * and it is also exactly the reciprocal of the initial-margin rate — 1% margin
+ * is 100x — so the published figure is only ever a cross-check on the maths.
+ * The rate wins if they ever disagree, since it is the number margin is actually
+ * computed from.
+ */
+export function maxLeverage(product: Product): number {
+  const rate = shortImRate(product)
+  const published = Number(product.default_leverage)
+  const implied = 1 / rate
+  return Number.isFinite(published) && published > 0 ? Math.min(published, implied) : implied
+}
+
+/**
+ * Margin for one lot-block of a perpetual: notional over leverage, floored at
+ * the venue's initial-margin rate. Both directions pay it — that is the whole
+ * difference from an option, where a long's risk is capped at the premium it
+ * already paid and the venue asks for nothing further.
+ */
+export function perpMargin(price: number, cv: number, lots: number, imRate: number, leverage: number | null): number {
+  const notional = price * cv * lots
+  const capped = leverage && leverage > 0 ? Math.min(leverage, 1 / imRate) : 1 / imRate
+  return notional / capped
+}
+
+/**
+ * The mark at which this position alone takes the account under maintenance
+ * margin, or null when it never does.
+ *
+ * Solved against account equity rather than against the position's own margin,
+ * because the book is cross-margined — every spare dollar of cash is defending
+ * the position, which is why the answer moves when the balance does and not only
+ * when the position does.
+ *
+ *     long    P = (q·cv·entry − cash) / (q·cv·(1 − mm))
+ *     short   P = (q·cv·entry + cash) / (q·cv·(1 + mm))
+ *
+ * Read it as: equity is `cash ± (P − entry)·q·cv`, maintenance is `mm·P·cv·q`,
+ * and the liquidation price is where the two meet. A long whose cash already
+ * exceeds its entry notional has no such price — the numerator goes negative and
+ * nothing this side of zero can take it — so null comes back.
+ */
+export function liquidationPrice(
+  netQty: number,
+  avgEntry: number,
+  cv: number,
+  cashBalance: number,
+  mmRate: number,
+): number | null {
+  const lots = Math.abs(netQty)
+  if (lots === 0 || !(avgEntry > 0)) return null
+  const size = lots * cv // position size in the underlying
+  const p =
+    netQty > 0
+      ? (size * avgEntry - cashBalance) / (size * (1 - mmRate))
+      : (size * avgEntry + cashBalance) / (size * (1 + mmRate))
+  return p > 0 && Number.isFinite(p) ? p : null
+}
+
+/**
+ * One funding period's payment, signed in the account's favour: negative is paid
+ * away, positive received. `ratePct` is the venue's own quote — a percentage for
+ * the eight-hour period — and a positive one means longs pay shorts.
+ *
+ * Mirrors `apply_futures_maintenance` in
+ * [`0038`](../../supabase/migrations/0038_futures.sql), which is what actually
+ * moves the cash. This is here so the page can show the next payment before it
+ * lands rather than only the ledger of ones that have.
+ */
+export function fundingPayment(mark: number, cv: number, netQty: number, ratePct: number): number {
+  return -Math.sign(netQty) * (ratePct / 100) * mark * cv * Math.abs(netQty)
+}
+
 export type Side = 'buy' | 'sell'
 export type OrderType = 'market' | 'limit'
 /** Which price a bracket's levels watch: the underlying index or the option mark. */
@@ -47,12 +137,16 @@ export interface PositionRow {
   symbol: string
   product_id: number
   contract_type: string
-  strike_price: string
+  /** Null on a perpetual, which has no strike — see [`0038`](../../supabase/migrations/0038_futures.sql). */
+  strike_price: string | null
+  /** 'PERP' on a perpetual, which never expires. */
   expiry_label: string
   contract_value: string
   net_qty: number
   avg_entry_price: string
   realized_pnl: string
+  /** The leverage a perpetual was opened at. Null on every option. */
+  leverage?: string | null
   /** Exit levels, armed server-side. Null when unset. Watched against the
    *  index or the mark, per `tpsl_trigger`. */
   take_profit: string | null
@@ -72,7 +166,7 @@ export interface OrderRow {
   symbol: string
   product_id: number
   contract_type: string
-  strike_price: string
+  strike_price: string | null
   expiry_label: string
   contract_value: string
   side: Side
@@ -134,8 +228,14 @@ export function exitPrice(t: Ticker | undefined, netQty: number): number | null 
 export function computeFee(product: Product, price: number, qty: number, spot: number): number {
   const cv = Number(product.contract_value)
   const notionalRate = Number(product.taker_commission_rate) || 0
-  const premiumCapRate = product.product_specs?.premium_commission_rate ?? 0.1
 
+  // A perpetual has no premium, so there is no premium cap to take the lesser
+  // of — the fee is the flat rate on the notional it traded at. Its own price is
+  // the notional, which is why this reads `price` where the option arm reads
+  // `spot`; on a perpetual the two are the same number to within the basis.
+  if (isPerp(product.contract_type)) return notionalRate * price * cv * qty
+
+  const premiumCapRate = product.product_specs?.premium_commission_rate ?? 0.1
   const onNotional = notionalRate * spot * cv * qty
   const cap = premiumCapRate * price * cv * qty
   return Math.min(onNotional, cap)
@@ -156,7 +256,13 @@ export interface PositionValue {
   /** Current exit value of the position. */
   currentValue: number | null
   unrealized: number | null
-  /** Unrealized as a share of entry value; null when entry value is zero. */
+  /**
+   * On an option, unrealized as a share of entry value. On a perpetual, as a
+   * share of the margin it blocks — return on equity, which is what the venue
+   * shows and the only one of the two that means anything at leverage: a 1% move
+   * against 100x is the whole position, and reading it as "1%" would be a lie
+   * the size of the account.
+   */
   unrealizedPct: number | null
   marginBlocked: number
 }
@@ -184,10 +290,17 @@ export function valuePosition(
   const unrealized =
     mark === null ? null : netQty > 0 ? (mark - avgEntry) * lots * cv : (avgEntry - mark) * lots * cv
 
-  const marginBlocked =
-    netQty > 0
+  // A perpetual margins off its own notional, both ways round, at whatever
+  // leverage it was opened at. An option keeps the two-sided rule it has always
+  // had: a long has already paid its maximum loss, a short has not.
+  const perp = isPerp(pos.contract_type)
+  const marginBlocked = perp
+    ? perpMargin(mark ?? avgEntry, cv, lots, imRate, Number(pos.leverage) || null)
+    : netQty > 0
       ? entryValue // long option risk is capped at the premium paid
       : (imRate * spot + (mark ?? avgEntry)) * cv * lots
+
+  const pctBase = perp ? marginBlocked : entryValue
 
   return {
     netQty,
@@ -196,7 +309,7 @@ export function valuePosition(
     entryValue,
     currentValue,
     unrealized,
-    unrealizedPct: entryValue > 0 && unrealized !== null ? (unrealized / entryValue) * 100 : null,
+    unrealizedPct: pctBase > 0 && unrealized !== null ? (unrealized / pctBase) * 100 : null,
     marginBlocked,
   }
 }
@@ -256,6 +369,8 @@ export interface OrderIntent {
   orderType: OrderType
   qty: number
   limitPrice: number | null
+  /** Perpetuals only: the leverage to open at. Ignored on an option. */
+  leverage?: number | null
 }
 
 export interface OrderPreview {
@@ -279,9 +394,10 @@ export function previewOrder(
   existing: PositionRow | undefined,
   available: number,
 ): OrderPreview {
-  const { product, side, orderType, qty, limitPrice } = intent
+  const { product, side, orderType, qty, limitPrice, leverage = null } = intent
   const cv = Number(product.contract_value)
   const tick = Number(product.tick_size)
+  const perp = isPerp(product.contract_type)
 
   const empty: OrderPreview = {
     fillPrice: null,
@@ -327,8 +443,11 @@ export function previewOrder(
 
   let marginRequired = 0
   if (openingQty > 0) {
-    marginRequired =
-      side === 'buy'
+    marginRequired = perp
+      ? // Direction does not enter into it on a perpetual: both sides post the
+        // same notional-over-leverage, since both can lose without limit.
+        perpMargin(valuationPrice, cv, openingQty, shortImRate(product), leverage)
+      : side === 'buy'
         ? valuationPrice * cv * openingQty
         : (shortImRate(product) * spot + valuationPrice) * cv * openingQty
     marginRequired += fee

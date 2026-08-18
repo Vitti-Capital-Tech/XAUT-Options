@@ -13,8 +13,17 @@ export const WS_URL = 'wss://socket.india.delta.exchange'
 export const UNDERLYING = 'XAUT'
 /** Spot index symbol for the underlying, used for the header price and notional. */
 export const SPOT_INDEX = '.DEXAUTUSD'
+/**
+ * The one non-option XAUT contract Delta lists — a perpetual future. Named as a
+ * constant rather than discovered, because there is exactly one and a page is
+ * built around it: `/v2/products?states=live` returns 46 calls, 46 puts and this.
+ */
+export const PERP_SYMBOL = 'XAUTUSD'
 
-export type ContractType = 'call_options' | 'put_options'
+export type ContractType = 'call_options' | 'put_options' | 'perpetual_futures'
+
+/** A perpetual is the only contract type here without a strike or an expiry. */
+export const isPerp = (contractType: string) => contractType === 'perpetual_futures'
 
 export interface Quotes {
   best_bid: string | null
@@ -63,6 +72,11 @@ export interface Ticker {
   /** Percentage change in last traded price over 24h. */
   ltp_change_24h: string | null
   mark_change_24h: string | null
+  /**
+   * Perpetuals only: the funding rate for the current eight-hour period, as a
+   * percentage. Positive means longs pay shorts. Absent on every option.
+   */
+  funding_rate?: string | null
 }
 
 /** The slice of /products we need to price and size an order. */
@@ -85,8 +99,32 @@ export interface Product {
   initial_margin: string
   /** Delta raises the rate with order size. We do not model that — see paper.ts. */
   initial_margin_scaling_factor: string
-  product_specs: { premium_commission_rate?: number } | null
+  /**
+   * Maintenance margin, same percent unit as `initial_margin`. XAUTUSD reads
+   * '0.5' against an initial of '1' — half the margin gone is a liquidation.
+   * Options carry it too, but nothing liquidates an option book here.
+   */
+  maintenance_margin?: string
+  /** Highest leverage the venue will open this contract at. '100' for XAUTUSD. */
+  default_leverage?: string
+  product_specs: {
+    premium_commission_rate?: number
+    /** Funding period in seconds on a perpetual — 28800, i.e. eight hours. */
+    expiry_interval?: number
+  } | null
+  /** The venue's own leverage ladder for the contract, as their ticket offers it. */
+  ui_config?: { leverage_slider_values?: number[] } | null
   state: string
+}
+
+/** Funding period on a perpetual, in seconds. Eight hours unless Delta says otherwise. */
+export const fundingIntervalSeconds = (product: Product): number =>
+  product.product_specs?.expiry_interval ?? 28800
+
+/** When the current funding period ends — 00:00, 08:00 and 16:00 UTC on XAUTUSD. */
+export function nextFundingTime(product: Product, now: Date = new Date()): Date {
+  const period = fundingIntervalSeconds(product) * 1000
+  return new Date(Math.floor(now.getTime() / period) * period + period)
 }
 
 /** A single expiry with its calls and puts, keyed by strike. */
@@ -212,6 +250,21 @@ export async function fetchExpiries(underlying = UNDERLYING): Promise<Expiry[]> 
 export async function fetchTickers(underlying = UNDERLYING): Promise<Ticker[]> {
   const all = await getJson<Ticker[]>('/v2/tickers?contract_types=call_options,put_options')
   return all.filter((t) => parseSymbol(t.symbol)?.underlying === underlying)
+}
+
+/**
+ * The perpetual's contract, fetched by symbol rather than by filtering the
+ * product list. One instrument, one request — and it keeps the futures page
+ * independent of the chain's bootstrap, which is a much larger call that can
+ * fail on its own schedule.
+ */
+export async function fetchPerp(symbol = PERP_SYMBOL): Promise<Product> {
+  return getJson<Product>(`/v2/products/${symbol}`)
+}
+
+/** The perpetual's opening snapshot, so the page has a price before the socket. */
+export async function fetchPerpTicker(symbol = PERP_SYMBOL): Promise<Ticker> {
+  return getJson<Ticker>(`/v2/tickers/${symbol}`)
 }
 
 // ---------------------------------------------------------------------------

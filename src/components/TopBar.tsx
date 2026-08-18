@@ -6,7 +6,7 @@ import { pnlClass, signedUsd, usd } from '../lib/format'
 import { supabase } from '../lib/supabase'
 import { Logo } from './Logo'
 
-export type Page = 'chain' | 'strategy' | 'delta'
+export type Page = 'chain' | 'strategy' | 'delta' | 'futures'
 
 interface Props {
   accounts: Account[]
@@ -110,7 +110,7 @@ export function TopBar({
         </span>
       </div>
 
-      {/* The pages. Two for now — the chain and the bot — read as the section
+      {/* The pages — three option books and the perpetual — read as the section
           nav, in the same weight the expiry pills use below. */}
       <nav className="flex shrink-0 items-center gap-1 sm:ml-3">
         <NavLink label="Option Chain" active={page === 'chain'} onClick={() => onNavigate('chain')} />
@@ -123,6 +123,11 @@ export function TopBar({
           label="Delta Strategy"
           active={page === 'delta'}
           onClick={() => onNavigate('delta')}
+        />
+        <NavLink
+          label="Futures"
+          active={page === 'futures'}
+          onClick={() => onNavigate('futures')}
         />
       </nav>
 

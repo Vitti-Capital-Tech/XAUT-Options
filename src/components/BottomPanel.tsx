@@ -2,16 +2,38 @@ import { Fragment, useMemo, useState } from 'react'
 import type { Product, Ticker } from '../lib/delta'
 import { UNDERLYING } from '../lib/delta'
 import { market, useMarketTick } from '../lib/marketStore'
-import { shortImRate, valuePosition, type PositionRow, type TriggerSource } from '../engine/paper'
+import {
+  liquidationPrice,
+  maintenanceRate,
+  shortImRate,
+  valuePosition,
+  type PositionRow,
+  type TriggerSource,
+} from '../engine/paper'
 import type { FillRow } from '../hooks/useTrading'
 import { dateTimeParts, dayKey, dayLabel, ivShort, pct, pnlClass, price } from '../lib/format'
 
 type Tab = 'positions' | 'history'
 
+/**
+ * Which book the table is showing. An options book wants greeks and the rule
+ * that opened each leg; a perpetual one has neither and wants the two figures
+ * that decide its life instead — the leverage it is running and the mark that
+ * ends it. Same table, same behaviours, four columns swapped for two.
+ */
+export type BookVariant = 'options' | 'futures'
+
 interface Props {
   positions: PositionRow[]
   fills: FillRow[]
   productsBySymbol: Map<string, Product>
+  variant?: BookVariant
+  /**
+   * The account's cash, needed only by the futures variant: the book is
+   * cross-margined, so a position's liquidation price moves with the balance
+   * defending it and cannot be read off the position alone.
+   */
+  cashBalance?: number
   /** What the Positions tab says when empty — the chain and the strategy reach
    *  it by different routes, so each names its own. */
   emptyPositions?: string
@@ -33,6 +55,8 @@ export function BottomPanel({
   positions,
   fills,
   productsBySymbol,
+  variant = 'options',
+  cashBalance = 0,
   emptyPositions,
   onClosePosition,
   onSetTpSl,
@@ -77,6 +101,8 @@ export function BottomPanel({
           <PositionsTable
             positions={positions}
             productsBySymbol={productsBySymbol}
+            variant={variant}
+            cashBalance={cashBalance}
             emptyPositions={emptyPositions}
             onClosePosition={onClosePosition}
             onSetTpSl={onSetTpSl}
@@ -335,6 +361,8 @@ function Instrument({
 function PositionsTable({
   positions,
   productsBySymbol,
+  variant,
+  cashBalance,
   emptyPositions,
   onClosePosition,
   onSetTpSl,
@@ -342,6 +370,8 @@ function PositionsTable({
 }: {
   positions: PositionRow[]
   productsBySymbol: Map<string, Product>
+  variant: BookVariant
+  cashBalance: number
   emptyPositions?: string
   onClosePosition: (pos: PositionRow, product: Product) => Promise<void>
   onSetTpSl: (
@@ -357,6 +387,7 @@ function PositionsTable({
   // The position whose TP/SL is being edited, in a dialog over the table.
   const [editing, setEditing] = useState<PositionRow | null>(null)
   const spot = market.spot
+  const futures = variant === 'futures'
 
   if (positions.length === 0) {
     return <Empty>{emptyPositions ?? 'No open positions. Click a bid or ask on the chain to trade.'}</Empty>
@@ -404,7 +435,7 @@ function PositionsTable({
       )}
     <Paged rows={positions}>
       {(visible) => (
-    <table className="w-full min-w-[1400px] text-[13px]">
+    <table className={`w-full text-[13px] ${futures ? 'min-w-[1150px]' : 'min-w-[1400px]'}`}>
       <thead className="sticky top-0 z-10">
         {/* Above the labels, not below the rows. Once the table pages, a footer
             total sits under one page and reads as that page's — these are the
@@ -429,12 +460,21 @@ function PositionsTable({
           <Td className={`font-semibold ${pnlClass(totals.unrealized)}`}>
             <Money value={totals.unrealized} signed suffix="inherit" />
           </Td>
-          <Td className="font-semibold text-ink">{totals.delta.toFixed(4)}</Td>
-          <Td className="font-semibold text-ink">{totals.gamma.toFixed(6)}</Td>
-          <Td className="font-semibold text-ink">{totals.vega.toFixed(4)}</Td>
-          <Td className="pr-5 font-semibold text-ink">{totals.theta.toFixed(4)}</Td>
-          {/* Entry Reason — a sentence per row, nothing to total. */}
-          <Td />
+          {futures ? (
+            /* Leverage and the liquidation price. Neither sums: two positions at
+               10x are not a position at 20x, and one liquidation price is not the
+               sum of two. */
+            <Td colSpan={2} className="pr-5" />
+          ) : (
+            <>
+              <Td className="font-semibold text-ink">{totals.delta.toFixed(4)}</Td>
+              <Td className="font-semibold text-ink">{totals.gamma.toFixed(6)}</Td>
+              <Td className="font-semibold text-ink">{totals.vega.toFixed(4)}</Td>
+              <Td className="pr-5 font-semibold text-ink">{totals.theta.toFixed(4)}</Td>
+              {/* Entry Reason — a sentence per row, nothing to total. */}
+              <Td />
+            </>
+          )}
           <Td wall="end" />
         </tr>
         <tr>
@@ -447,14 +487,23 @@ function PositionsTable({
           <Th>Mark Price</Th>
           <Th>Margin</Th>
           <Th>UPNL</Th>
-          <Th>Delta</Th>
-          <Th>Gamma</Th>
-          <Th>Vega</Th>
-          <Th className="pr-5">Theta</Th>
-          {/* Why this leg is on the book, from the engine that opened it. Left-
-              aligned, like the symbol it belongs to: a sentence centred over a
-              column starts in a different place on every row. */}
-          <Th align="left">Entry Reason</Th>
+          {futures ? (
+            <>
+              <Th>Leverage</Th>
+              <Th className="pr-5">Liq. Price</Th>
+            </>
+          ) : (
+            <>
+              <Th>Delta</Th>
+              <Th>Gamma</Th>
+              <Th>Vega</Th>
+              <Th className="pr-5">Theta</Th>
+              {/* Why this leg is on the book, from the engine that opened it. Left-
+                  aligned, like the symbol it belongs to: a sentence centred over a
+                  column starts in a different place on every row. */}
+              <Th align="left">Entry Reason</Th>
+            </>
+          )}
           <Th align="center" wall="end">Action</Th>
         </tr>
       </thead>
@@ -467,6 +516,17 @@ function PositionsTable({
           const g = positionGreeks(pos, ticker)
           const cv = Number(pos.contract_value)
           const lots = Math.abs(pos.net_qty)
+          // Computed per row rather than once: the maintenance rate is the
+          // contract's own, and a book could in principle hold more than one.
+          const liq = futures
+            ? liquidationPrice(
+                pos.net_qty,
+                Number(pos.avg_entry_price),
+                cv,
+                cashBalance,
+                product ? maintenanceRate(product) : 0.005,
+              )
+            : null
 
           return (
             <tr key={pos.id} className="border-b border-line hover:bg-raised">
@@ -504,9 +564,14 @@ function PositionsTable({
                 {v.mark !== null ? (
                   <>
                     <div className="text-ink">{price(v.mark)}</div>
-                    <div className="text-[10px] text-ink-3">
-                      {ivShort(ticker?.quotes?.mark_iv)}
-                    </div>
+                    {/* Delta publishes a mark_iv on the perpetual too, but an
+                        implied vol on a linear contract is not a reading of
+                        anything — only the option rows carry it. */}
+                    {!futures && (
+                      <div className="text-[10px] text-ink-3">
+                        {ivShort(ticker?.quotes?.mark_iv)}
+                      </div>
+                    )}
                   </>
                 ) : (
                   <span className="text-ink-3" title="No mark published">
@@ -519,7 +584,7 @@ function PositionsTable({
                   figure is real here and reduces what is available. */}
               <Td className="text-ink">
                 <Money value={v.marginBlocked} />
-                {isLong && <div className="text-[10px] text-ink-3">premium</div>}
+                {isLong && !futures && <div className="text-[10px] text-ink-3">premium</div>}
               </Td>
               <Td className={pnlClass(v.unrealized)}>
                 <div className="font-semibold">
@@ -527,24 +592,48 @@ function PositionsTable({
                 </div>
                 <div className="text-[10px]">{pct(v.unrealizedPct)}</div>
               </Td>
-              <Td className="text-ink-2">{greekCell(g.delta, 4)}</Td>
-              <Td className="text-ink-2">{greekCell(g.gamma, 6)}</Td>
-              <Td className="text-ink-2">{greekCell(g.vega, 4)}</Td>
-              <Td className="pr-5 text-ink-2">{greekCell(g.theta, 4)}</Td>
-              {/* The rule that opened this leg, the spot it was priced at and net
-                  delta either side of it. Empty on a leg traded by hand, and on
-                  anything opened before the column existed.
+              {futures ? (
+                <>
+                  {/* What the position was opened at, not what it is running at
+                      now — margin was posted once and does not re-rate. */}
+                  <Td className="text-ink-2">
+                    {Number(pos.leverage) > 0 ? `${Number(pos.leverage)}x` : '—'}
+                  </Td>
+                  {/* The mark that takes the whole account under maintenance
+                      margin. Red, because no other figure in the row ends the
+                      position by itself. */}
+                  <Td className="pr-5">
+                    {liq === null ? (
+                      <span className="text-ink-4" title="No mark can liquidate this position">
+                        —
+                      </span>
+                    ) : (
+                      <span className="text-neg">{price(liq)}</span>
+                    )}
+                  </Td>
+                </>
+              ) : (
+                <>
+                  <Td className="text-ink-2">{greekCell(g.delta, 4)}</Td>
+                  <Td className="text-ink-2">{greekCell(g.gamma, 6)}</Td>
+                  <Td className="text-ink-2">{greekCell(g.vega, 4)}</Td>
+                  <Td className="pr-5 text-ink-2">{greekCell(g.theta, 4)}</Td>
+                  {/* The rule that opened this leg, the spot it was priced at and net
+                      delta either side of it. Empty on a leg traded by hand, and on
+                      anything opened before the column existed.
 
-                  Capped and wrapped inside the cell: the table has no colgroup, so
-                  an uncapped sentence would take its width off every figure
-                  column beside it. */}
-              <Td align="left" className="text-ink-2" title={pos.entry_reason ?? undefined}>
-                {pos.entry_reason ? (
-                  <div className="max-w-[280px] whitespace-normal">{pos.entry_reason}</div>
-                ) : (
-                  <span className="text-ink-4">—</span>
-                )}
-              </Td>
+                      Capped and wrapped inside the cell: the table has no colgroup, so
+                      an uncapped sentence would take its width off every figure
+                      column beside it. */}
+                  <Td align="left" className="text-ink-2" title={pos.entry_reason ?? undefined}>
+                    {pos.entry_reason ? (
+                      <div className="max-w-[280px] whitespace-normal">{pos.entry_reason}</div>
+                    ) : (
+                      <span className="text-ink-4">—</span>
+                    )}
+                  </Td>
+                </>
+              )}
               <Td align="center" wall="end">
                 <KillButton
                   disabled={!product || closing === pos.id}

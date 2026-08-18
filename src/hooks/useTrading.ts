@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { market, useMarketTick } from '../lib/marketStore'
 import type { Product } from '../lib/delta'
-import { parseSymbol } from '../lib/delta'
+import { isPerp, parseSymbol } from '../lib/delta'
 import {
   computeFee,
   crossesNow,
@@ -18,7 +18,8 @@ export interface FillRow {
   id: string
   symbol: string
   contract_type: string
-  strike_price: string
+  /** Null on a perpetual — no strike to record. */
+  strike_price: string | null
   side: Side
   order_type: string
   qty: number
@@ -45,9 +46,9 @@ export interface FillRow {
 }
 
 const POSITION_COLS =
-  'id, account_id, symbol, product_id, contract_type, strike_price, expiry_label, contract_value, net_qty, avg_entry_price, realized_pnl, take_profit, stop_loss, tpsl_trigger, entry_reason'
+  'id, account_id, symbol, product_id, contract_type, strike_price, expiry_label, contract_value, net_qty, avg_entry_price, realized_pnl, take_profit, stop_loss, tpsl_trigger, entry_reason, leverage'
 const ORDER_COLS =
-  'id, account_id, symbol, product_id, contract_type, strike_price, expiry_label, contract_value, side, order_type, qty, limit_price, status, avg_fill_price, filled_qty, reduce_only, created_at'
+  'id, account_id, symbol, product_id, contract_type, strike_price, expiry_label, contract_value, side, order_type, qty, limit_price, status, avg_fill_price, filled_qty, reduce_only, created_at, leverage'
 const FILL_COLS =
   'id, symbol, contract_type, strike_price, side, order_type, qty, price, contract_value, premium, notional, fee, realized_pnl, spot_at_fill, is_settlement, close_reason, reason, created_at'
 
@@ -58,6 +59,9 @@ export interface PlaceOrderArgs {
   qty: number
   limitPrice: number | null
   reduceOnly?: boolean
+  /** Perpetuals only. Stored on the order and carried onto the position by
+   *  `execute_fill`, which is what margins it from then on. */
+  leverage?: number | null
 }
 
 /**
@@ -179,7 +183,15 @@ export function useTrading(accountId: string | null, onAccountChanged: () => voi
   )
 
   const placeOrder = useCallback(
-    async ({ product, side, orderType, qty, limitPrice, reduceOnly = false }: PlaceOrderArgs) => {
+    async ({
+      product,
+      side,
+      orderType,
+      qty,
+      limitPrice,
+      reduceOnly = false,
+      leverage = null,
+    }: PlaceOrderArgs) => {
       if (!accountId) throw new Error('No account selected')
       const { data: userData } = await supabase.auth.getUser()
       const userId = userData.user?.id
@@ -208,14 +220,17 @@ export function useTrading(accountId: string | null, onAccountChanged: () => voi
           symbol: product.symbol,
           product_id: product.id,
           contract_type: product.contract_type,
-          strike_price: Number(product.strike_price),
-          expiry_label: parsed?.expiry ?? '',
+          // A perpetual has neither, and says so with a null and a label rather
+          // than with a zero that would sort and format as a real strike.
+          strike_price: isPerp(product.contract_type) ? null : Number(product.strike_price),
+          expiry_label: isPerp(product.contract_type) ? 'PERP' : (parsed?.expiry ?? ''),
           contract_value: Number(product.contract_value),
           side,
           order_type: orderType,
           qty,
           limit_price: orderType === 'limit' ? limitPrice : null,
           reduce_only: reduceOnly,
+          leverage: isPerp(product.contract_type) ? leverage : null,
         })
         .select(ORDER_COLS)
         .single()

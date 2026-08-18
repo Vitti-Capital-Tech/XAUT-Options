@@ -37,6 +37,27 @@ C-XAUT-4040-300726
 `parseSymbol` returns `null` on anything that does not match, and callers treat
 `null` as "not our instrument" rather than throwing.
 
+### The perpetual
+
+`XAUTUSD` is the venue's only non-option XAUT contract and is deliberately *not*
+in the grammar above: it has no strike, no expiry and four characters where the
+options have four hyphen-separated fields, so `parseSymbol` returns `null` for it
+and every option-shaped filter excludes it for free.
+
+| Quantity | Formula | Example (mark 4380.82) |
+| --- | --- | --- |
+| Contract value | Product field | `0.001` XAUT per lot |
+| Notional (USD) | `mark × contract_value × lots` | `4380.82 × 0.001 × 1000 = $4,380.82` |
+| Margin | `notional / leverage`, floor `im% × notional` | at 10x: `$438.08` |
+| Funding | `mark × cv × lots × rate / 100`, every `expiry_interval` | at `+0.0050%`: `$0.22` per 8h |
+| Maintenance | `mm% × mark × cv × lots` | `0.5% → $21.90` |
+
+The notional is priced off the contract's *own* mark rather than off the spot
+index, unlike an option: on a linear contract the two differ only by the basis,
+and it is the mark the venue margins and liquidates against.
+
+`isPerp(contract_type)` is the single test the rest of the codebase branches on.
+
 ---
 
 ## 2. Data model
@@ -50,6 +71,7 @@ erDiagram
     ORDERS ||--o{ FILLS : produces
     ACCOUNTS ||--o| STRATEGY_SETTINGS : "if kind=auto"
     ACCOUNTS ||--o| DELTA_STRATEGY_SETTINGS : "if kind=delta"
+    ACCOUNTS ||--o{ FUNDING_PAYMENTS : "if kind=futures"
 
     AUTH_USERS {
         uuid id PK
@@ -62,7 +84,7 @@ erDiagram
         numeric starting_balance
         numeric cash_balance "start + realized - fees"
         boolean is_archived
-        text kind "manual | auto | delta"
+        text kind "manual | auto | delta | futures"
     }
     STRATEGY_SETTINGS {
         uuid account_id PK
@@ -122,6 +144,7 @@ erDiagram
         numeric avg_fill_price
         integer filled_qty
         boolean reduce_only
+        numeric leverage "perpetual only; null on an option"
     }
     FILLS {
         uuid id PK
@@ -134,7 +157,7 @@ erDiagram
         numeric fee
         numeric realized_pnl "non-zero only when closing"
         numeric spot_at_fill
-        text close_reason "take_profit | stop_loss | window_close"
+        text close_reason "take_profit | stop_loss | window_close | liquidation"
         text reason "why the delta engine closed this leg"
     }
     POSITIONS {
@@ -145,6 +168,17 @@ erDiagram
         numeric avg_entry_price
         numeric realized_pnl
         text entry_reason "why the delta engine opened this leg"
+        numeric leverage "perpetual only; what margins it"
+    }
+    FUNDING_PAYMENTS {
+        uuid id PK
+        uuid account_id FK
+        text symbol
+        timestamptz funding_time "the 8h boundary billed"
+        numeric funding_rate "percent for the period"
+        numeric mark_price
+        integer net_qty
+        numeric amount "signed for the account"
     }
 ```
 
@@ -159,6 +193,7 @@ erDiagram
 | 5 | `fills` are immutable | Never updated or deleted outside `reset_account` |
 | 6 | Every row belongs to `auth.uid()` | RLS `USING` + `WITH CHECK` |
 | 7 | Only an `open` order can fill | `execute_fill` status guard |
+| 8 | A funding boundary is billed at most once per position | `unique (account_id, symbol, funding_time)` |
 
 > **Invariant 2 has a consequence:** closing a position deletes the row and with it
 > its `realized_pnl` counter. That is intentional — realized P&L lives durably on
@@ -173,6 +208,7 @@ erDiagram
 | `orders_open_idx` | `(account_id) where status = 'open'` | Partial — the fill engine only scans open orders |
 | `fills_account_idx` | `(account_id, created_at desc)` | Trade history |
 | `positions_account_idx` | `(account_id)` | Positions table and P&L totals |
+| `funding_account_idx` | `(account_id, funding_time desc)` | The perpetual's funding ledger |
 | `trail_candle_requests_created_idx` | `(created_at)` | Trimming the pg_net request-id → symbol map the trailing stop matches its candle replies by |
 
 ---
@@ -255,6 +291,12 @@ cheap far-out strikes.
 | --- | --- | --- |
 | Long option | `avg_entry × cv × lots` — the premium paid | Yes; loss is capped at premium |
 | Short option | `(im% × spot + mark) × cv × lots` | Rate is the venue's; scaling is not |
+| Perpetual, either side | `mark × cv × lots / leverage`, floored at `im% × notional` | Rate is the venue's; scaling is not |
+
+Direction does not enter into the perpetual row, and that is the whole difference
+from the option rows above it: a long option has already paid its maximum loss in
+premium and the venue asks for nothing more, whereas a long future can lose
+without limit exactly as a short one can. `perpMargin` is where that lives.
 
 `im%` is the contract's own `initial_margin`, read off the product by
 `shortImRate` in [`src/engine/paper.ts`](../src/engine/paper.ts) — 1% for an XAUT
@@ -483,6 +525,11 @@ symbols instead of 150, without breaking P&L on other expiries.
 | `summarizeAccount` | `(cash, positions, tickerFor, spot) → AccountSummary` | Balance/equity/available |
 | `previewOrder` | `(intent, ticker, spot, existing, available) → OrderPreview` | `error` blocks; `warning` informs |
 | `crossesNow` | `(side, limitPrice, ticker) → number \| null` | Fill price at the touch, or `null` |
+| `perpMargin` | `(price, cv, lots, imRate, leverage) → number` | Notional over leverage, floored at the rate |
+| `maintenanceRate` | `(product) → number` | `maintenance_margin` as a fraction |
+| `maxLeverage` | `(product) → number` | The lesser of the published figure and `1 / imRate` |
+| `liquidationPrice` | `(netQty, avgEntry, cv, cash, mmRate) → number \| null` | `null` where no mark can liquidate |
+| `fundingPayment` | `(mark, cv, netQty, ratePct) → number` | Signed for the account; negative is paid away |
 
 `null` consistently means "unknown", never zero. This is what makes an empty book
 render `—` rather than a plausible-looking wrong number.
