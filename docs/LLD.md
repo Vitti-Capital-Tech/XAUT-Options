@@ -108,10 +108,11 @@ erDiagram
         text session_open "HH:MM IST"
         text session_close
         smallint_array trade_days "ISO weekdays, IST"
-        numeric band_low "L"
+        numeric band_low "L; the fallback once gamma_multiplier is set"
         numeric band_high "U"
         text target_landing "edge | mid"
         numeric band_buffer "B"
+        numeric gamma_multiplier "band = +/- |Gp| x this; 0 = off"
         numeric itm_trigger "points"
         integer max_rolls "per side per session"
         numeric entry_premium
@@ -558,10 +559,12 @@ copy is PL/pgSQL in
 | Function | Signature | Notes |
 | --- | --- | --- |
 | `sessionPhase` | `(now, cfg) → { phase, day, tradingDay }` | `before \| open \| closed`, IST; handles a window that wraps midnight, and reports a day outside `tradeDays` as closed |
-| `bookDeltas` | `(positions, tickerFor, spot) → { legs, missing }` | `missing` legs are reported, never guessed at |
+| `bookDeltas` | `(positions, tickerFor, spot) → { legs, missing }` | `missing` legs are reported, never guessed at; a leg needs both delta and gamma to count |
 | `portfolioDelta` | `(legs) → number` | `Σ(signed lots × option delta)` |
-| `bandBreach` | `(dp, cfg) → 'low' \| 'high' \| null` | |
-| `landingTarget` | `(cfg, breach) → number` | Edge drawn back by `B`, or the midpoint |
+| `portfolioGamma` | `(legs) → number` | `Σ(signed lots × option gamma)`; negative on a short book |
+| `effectiveBand` | `(cfg, gp) → Band` | `±\|Γp\| × gammaMultiplier`, or the typed pair when off or underivable |
+| `bandBreach` | `(dp, band) → 'low' \| 'high' \| null` | Reads the band in force, not the config |
+| `landingTarget` | `(cfg, band, breach) → number` | Edge drawn back by `B`, or the midpoint |
 | `itmQueue` | `(legs, cfg) → LegDelta[]` | Shorts at or beyond the trigger, most-ITM first |
 | `rollQty` | `(target, dp, dItm, dRepl) → number` | §5.2, rounded down |
 | `bandQty` | `(target, dp, dSelected) → number` | §5.4, rounded down |
@@ -573,6 +576,24 @@ copy is PL/pgSQL in
 unit the specification's worked example is written in (2 contracts across a 0.25
 delta gap moves Δp by 0.5), and `[L, U]` is calibrated to the same one. Reading
 it as XAUT-denominated delta would put every band figure out by 1000×.
+
+**The band.** `[L, U]` is only the band when `gammaMultiplier` is zero. Above
+zero the band is `±|Γp| × gammaMultiplier`, recomputed each cycle, and `L`/`U`
+become the fallback for the two cases a derived band cannot cover — a flat book
+and a book whose gamma has rounded away, both of which would give a width of zero
+that every non-zero Δp breaches.
+
+Γp is scaled by `contract_value` before the multiplier is applied, because the
+multiplier is set against a band figure and the two have to be in one unit. The
+magnitude is taken: this strategy only sells, so Γp is negative, and a signed
+band would come out with `low` above `high`.
+
+Everything downstream reads the `Band`, not the config — the breach test, the
+landing target, and the margin cut's side preference. The SQL side derives it
+once per account per pass in
+[`0039`](../supabase/migrations/0039_delta_gamma_band.sql) via `delta_band`,
+which is the same rule as `effectiveBand` and has to be kept in step with it by
+hand, like every other rule here.
 
 > Which is why `qty` ([`0021`](../supabase/migrations/0021_qty_and_take_profit.sql))
 > is the one setting that cannot be changed in isolation. It sizes the entry in

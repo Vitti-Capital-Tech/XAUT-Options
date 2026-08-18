@@ -58,6 +58,12 @@ export function DeltaStrategyTab({
   useMarketTick()
 
   const dp = plan?.dp ?? null
+  const gp = plan?.gp ?? null
+  // The band the engine is actually judging Δp against — derived from Γp when a
+  // multiplier is set, the typed-in pair otherwise. The meter and the breach
+  // colour both read this rather than the config, or they would draw one band
+  // while the strategy defended another.
+  const band = plan?.band ?? { low: config.bandLow, high: config.bandHigh, derived: false }
   const callsLeft = Math.max(0, config.maxRolls - session.rollsUsedCall)
   const putsLeft = Math.max(0, config.maxRolls - session.rollsUsedPut)
 
@@ -181,7 +187,7 @@ export function DeltaStrategyTab({
 
           <Field
             label="Target delta band"
-            help="The delta of everything you hold, added up. Inside this range it does nothing at all; outside it, it fixes the position. This is the whole position, not one option — so it can be any size, and negatives are fine. −2 to 1 is a valid range."
+            help="The delta of everything you hold, added up. Inside this range it does nothing at all; outside it, it fixes the position. This is the whole position, not one option — so it can be any size, and negatives are fine. −2 to 1 is a valid range. With a gamma multiplier set, these two are only the fallback — the live band is derived instead."
           >
             <div className="flex items-center gap-2">
               <NumInput
@@ -198,6 +204,39 @@ export function DeltaStrategyTab({
                 onChange={(v) => setConfig({ bandHigh: keepAbove(v, config.bandLow) })}
               />
             </div>
+            {/* Said here, beside the numbers being overridden, rather than only in
+                the readout: a pair of inputs that no longer decide anything has to
+                say so where it is edited. */}
+            {config.gammaMultiplier > 0 && (
+              <span className="text-[10px] whitespace-nowrap text-brand-text">
+                {plan?.band.derived ? 'gamma is setting this' : 'fallback — no Γp yet'}
+              </span>
+            )}
+          </Field>
+
+          <Field
+            label="Gamma multiplier"
+            help="Ties the range's width to the position's own gamma instead of holding it fixed: the range becomes ± total gamma × this number, recomputed every cycle. At a total gamma of 0.5, a multiplier of 2 gives −1 to 1, and the range widens on its own as gamma grows. 0 switches it off and the two numbers above are used as typed."
+          >
+            <NumInput
+              value={config.gammaMultiplier}
+              step={0.5}
+              min={0}
+              width="w-16"
+              onChange={(v) => setConfig({ gammaMultiplier: v })}
+            />
+            {/* The arithmetic, live, so the multiplier can be set against what it
+                is actually about to produce rather than by trial and error. */}
+            <span className="text-[10px] whitespace-nowrap text-ink-3">
+              {config.gammaMultiplier <= 0
+                ? 'off — band as typed'
+                : gp === null
+                  ? 'waiting on Γp'
+                  : `|${greek(gp, 3)}| × ${config.gammaMultiplier} = ±${greek(
+                      Math.abs(gp) * config.gammaMultiplier,
+                      2,
+                    )}`}
+            </span>
           </Field>
 
           <Field
@@ -467,10 +506,20 @@ export function DeltaStrategyTab({
               {dp === null ? '—' : greek(dp, 2)}
             </span>
           </div>
-          <BandMeter low={config.bandLow} high={config.bandHigh} dp={dp} />
+          <BandMeter low={band.low} high={band.high} dp={dp} derived={band.derived} />
         </div>
 
         <GroupRule />
+
+        {/* Γp, beside the band it now sets. Shown whenever the multiplier is on,
+            including while Γp is still missing — the band being derived is the
+            fact worth surfacing, and an em dash says the derivation has not run
+            yet rather than hiding that it is meant to. */}
+        {config.gammaMultiplier > 0 && (
+          <Readout label={`Net Γp × ${config.gammaMultiplier}`} tone={band.derived ? 'ok' : 'warn'}>
+            {gp === null ? '—' : greek(gp, 3)}
+          </Readout>
+        )}
 
         {/* State: what the session is doing and what it has spent. */}
         <PhaseChip label={plan ? phaseLabel(plan.phase, plan.tradingDay) : '—'} open={plan?.phase === 'open'} />
@@ -560,7 +609,18 @@ function Readout({
  * clamped to the ends, so a breach reads as pinned to an edge rather than
  * disappearing off it.
  */
-function BandMeter({ low, high, dp }: { low: number; high: number; dp: number | null }) {
+function BandMeter({
+  low,
+  high,
+  dp,
+  derived,
+}: {
+  low: number
+  high: number
+  dp: number | null
+  /** Gamma set these ends, so they move on their own — marked, not just drawn. */
+  derived: boolean
+}) {
   const span = high - low
   const frac = dp === null || !(span > 0) ? null : Math.min(1, Math.max(0, (dp - low) / span))
   const breached = dp !== null && (dp < low || dp > high)
@@ -568,9 +628,17 @@ function BandMeter({ low, high, dp }: { low: number; high: number; dp: number | 
   // No eyebrow of its own: it sits under the Net Δp figure, which names it, and the
   // two end labels say what the track spans. A third label would only repeat one of
   // the other two.
+  //
+  // A derived band's ends are printed in the brand ink: they are a live reading
+  // rather than a setting, and a number that moves by itself should not look the
+  // same as one that was typed.
+  const endInk = derived ? 'text-brand-text' : 'text-ink-3'
   return (
-    <div className="flex w-56 items-center gap-2 pb-0.5">
-      <span className="num shrink-0 text-[10px] text-ink-3">{price(low, 2)}</span>
+    <div
+      className="flex w-56 items-center gap-2 pb-0.5"
+      title={derived ? 'Band width is Γp × the gamma multiplier' : undefined}
+    >
+      <span className={`num shrink-0 text-[10px] ${endInk}`}>{price(low, 2)}</span>
       <div className="relative h-1.5 flex-1 rounded-full border border-raised-3 bg-surface">
         {/* The mid-point, so the marker's drift off centre reads at a glance. */}
         <span className="absolute top-1/2 left-1/2 h-2 w-px -translate-x-1/2 -translate-y-1/2 bg-raised-3" />
@@ -583,7 +651,7 @@ function BandMeter({ low, high, dp }: { low: number; high: number; dp: number | 
           />
         )}
       </div>
-      <span className="num shrink-0 text-[10px] text-ink-3">{price(high, 2)}</span>
+      <span className={`num shrink-0 text-[10px] ${endInk}`}>{price(high, 2)}</span>
     </div>
   )
 }

@@ -77,8 +77,29 @@ export interface DeltaConfig {
    * is flattened and nothing new is opened.
    */
   tradeDays: number[]
+  /**
+   * The band, as typed in. In force whenever `gammaMultiplier` is zero, and the
+   * fallback whenever a gamma-derived band cannot be computed — see
+   * `effectiveBand`.
+   */
   bandLow: number
   bandHigh: number
+  /**
+   * Ties the band's width to the book's own gamma instead of holding it fixed:
+   * the band becomes `±|Γp| × gammaMultiplier`, recomputed every cycle, so it
+   * moves as gamma does. At `Γp = 0.5` a multiplier of 2 gives `[-1, +1]`.
+   *
+   * Zero switches it off and `bandLow`/`bandHigh` stand, which is the default and
+   * what every existing account keeps until the number is moved.
+   *
+   * Note what this does to a book that is losing: gamma is largest where the
+   * strikes are nearest the money, so a book being run over gets a *wider*
+   * tolerance at exactly the moment Δp is moving fastest. That is the intended
+   * reading — the band is meant to scale with how fast the book breaches — but it
+   * is the opposite of a risk limit, and the margin guard, not this, is what
+   * bounds the book.
+   */
+  gammaMultiplier: number
   targetLanding: TargetLanding
   bandBuffer: number
   /** Points of |spot − strike| that flag a short leg as needing management. */
@@ -167,6 +188,8 @@ export const DEFAULT_DELTA_CONFIG: DeltaConfig = {
   tradeDays: [1, 2, 3, 4, 5, 6, 7],
   bandLow: -1,
   bandHigh: 1,
+  // Off: the band is the pair above until the trader ties it to gamma.
+  gammaMultiplier: 0,
   targetLanding: 'edge',
   bandBuffer: 0.4,
   itmTrigger: 5,
@@ -323,6 +346,22 @@ export function tickerDelta(t: Ticker | undefined): number | null {
   return Number.isFinite(n) ? n : null
 }
 
+/**
+ * The option's gamma, or null where the venue has not published one.
+ *
+ * Read on the same terms as delta and treated the same way: a leg missing it is
+ * a leg the book cannot be measured through. Gamma is always quoted positive —
+ * an option gains delta as the underlying rises whichever kind it is — so the
+ * sign of a leg's contribution comes entirely from `net_qty`, which makes a short
+ * book's total gamma negative.
+ */
+export function tickerGamma(t: Ticker | undefined): number | null {
+  const raw = t?.greeks?.gamma
+  if (raw === null || raw === undefined || raw === '') return null
+  const n = Number(raw)
+  return Number.isFinite(n) ? n : null
+}
+
 export interface LegDelta {
   position: PositionRow
   kind: OptionKind
@@ -331,6 +370,10 @@ export interface LegDelta {
   optionDelta: number
   /** signed lots × option delta — this leg's contribution to Δp. */
   contribution: number
+  /** The option's own gamma, always positive as the venue quotes it. */
+  optionGamma: number
+  /** signed lots × option gamma — this leg's contribution to Γp. Negative on a short. */
+  gammaContribution: number
   /** How far in the money the *short* leg is, in points. Negative when OTM. */
   itmDistance: number
 }
@@ -346,9 +389,14 @@ export function itmDistanceOf(kind: OptionKind, strike: number, spot: number): n
 }
 
 /**
- * Every leg's delta contribution. Legs whose ticker has no published greek are
- * dropped and reported separately — guessing a delta would quietly corrupt Δp,
- * and the engine refuses to act on a partial book rather than mis-size a roll.
+ * Every leg's delta and gamma contribution. Legs whose ticker has no published
+ * greek are dropped and reported separately — guessing one would quietly corrupt
+ * Δp, and the engine refuses to act on a partial book rather than mis-size a roll.
+ *
+ * Gamma is required on the same terms as delta, not opportunistically: with a
+ * gamma multiplier set it decides the band itself, so a leg silently missing from
+ * Γp would widen or narrow the band by that leg's whole share and the breach test
+ * would be answering a different question than the trader asked.
  */
 export function bookDeltas(
   positions: PositionRow[],
@@ -360,8 +408,10 @@ export function bookDeltas(
 
   for (const pos of positions) {
     if (pos.net_qty === 0) continue
-    const optionDelta = tickerDelta(tickerFor(pos.symbol))
-    if (optionDelta === null) {
+    const ticker = tickerFor(pos.symbol)
+    const optionDelta = tickerDelta(ticker)
+    const optionGamma = tickerGamma(ticker)
+    if (optionDelta === null || optionGamma === null) {
       missing.push(pos)
       continue
     }
@@ -373,6 +423,8 @@ export function bookDeltas(
       strike,
       optionDelta,
       contribution: pos.net_qty * optionDelta,
+      optionGamma,
+      gammaContribution: pos.net_qty * optionGamma,
       itmDistance: itmDistanceOf(kind, strike, spot),
     })
   }
@@ -384,11 +436,68 @@ export function portfolioDelta(legs: LegDelta[]): number {
   return legs.reduce((sum, l) => sum + l.contribution, 0)
 }
 
+/**
+ * The book's net gamma, in the same lot units `portfolioDelta` returns — scale it
+ * by the contract value to read it in the trader's own unit, exactly as Δp is.
+ *
+ * Negative on a short book, which is the normal case here: this strategy only
+ * ever sells. The band derived from it uses the magnitude.
+ */
+export function portfolioGamma(legs: LegDelta[]): number {
+  return legs.reduce((sum, l) => sum + l.gammaContribution, 0)
+}
+
 export type Breach = 'low' | 'high' | null
 
-export function bandBreach(dp: number, cfg: Pick<DeltaConfig, 'bandLow' | 'bandHigh'>): Breach {
-  if (dp < cfg.bandLow) return 'low'
-  if (dp > cfg.bandHigh) return 'high'
+/** The band actually in force this cycle, and whether gamma is what set it. */
+export interface Band {
+  low: number
+  high: number
+  /** True when `gammaMultiplier` derived it, false when it is the typed-in pair. */
+  derived: boolean
+}
+
+/**
+ * The band the breach test is run against.
+ *
+ * With `gammaMultiplier` at zero the stored `bandLow`/`bandHigh` are the band,
+ * which is how every account behaves until the number is moved. Set it and the
+ * band becomes symmetric around zero, half-width `|Γp| × multiplier`:
+ *
+ *     Γp = 0.5, multiplier = 2   ->   [-1, +1]
+ *     Γp = 0.8, multiplier = 2   ->   [-1.6, +1.6]
+ *
+ * So the band widens exactly as the book's gamma grows. The reasoning is that
+ * gamma is the rate Δp itself moves at: a book with twice the gamma runs through
+ * the same delta in half the move, and holding it to the same fixed band means
+ * correcting twice as often for the same underlying behaviour. Tying the two puts
+ * the tolerance in units of "how fast is this book going to breach" rather than
+ * in absolute delta.
+ *
+ * `Γp` is taken as a magnitude. A short book's gamma is negative and a signed
+ * band would come out inverted, with `low` above `high` — the sign says which way
+ * the book is convex, which is not what the width is asking.
+ *
+ * Zero falls back to the stored band, which covers the two cases where a derived
+ * band would be nonsense: a flat book, and a book whose legs are far enough out
+ * that gamma has rounded away. Either would give a band of `[0, 0]` that every
+ * non-zero Δp breaches, and the engine would correct on a book it cannot measure.
+ */
+export function effectiveBand(
+  cfg: Pick<DeltaConfig, 'bandLow' | 'bandHigh' | 'gammaMultiplier'>,
+  /** Γp in the same unit the band is set in, or null when the book cannot be valued. */
+  gp: number | null,
+): Band {
+  const stored = { low: cfg.bandLow, high: cfg.bandHigh, derived: false }
+  if (!(cfg.gammaMultiplier > 0) || gp === null) return stored
+  const width = Math.abs(gp) * cfg.gammaMultiplier
+  if (!(width > 0)) return stored
+  return { low: -width, high: width, derived: true }
+}
+
+export function bandBreach(dp: number, band: Band): Breach {
+  if (dp < band.low) return 'low'
+  if (dp > band.high) return 'high'
   return null
 }
 
@@ -396,11 +505,20 @@ export function bandBreach(dp: number, cfg: Pick<DeltaConfig, 'bandLow' | 'bandH
  * The Δp every correction aims for. `edge` is the breached boundary itself,
  * `buffer` pulls that inward by B, `mid` is the middle of the band. Clamped so a
  * buffer wider than the band cannot land the target on the far side.
+ *
+ * Reads the band it is given rather than the config, so a gamma-derived band
+ * lands its corrections on its own edges — a target computed off the typed-in
+ * pair while the breach was judged against a derived one could sit outside the
+ * band that is actually in force.
  */
-export function landingTarget(cfg: DeltaConfig, breach: Exclude<Breach, null>): number {
-  const mid = (cfg.bandLow + cfg.bandHigh) / 2
+export function landingTarget(
+  cfg: Pick<DeltaConfig, 'targetLanding' | 'bandBuffer'>,
+  band: Band,
+  breach: Exclude<Breach, null>,
+): number {
+  const mid = (band.low + band.high) / 2
   if (cfg.targetLanding === 'mid') return mid
-  const edge = breach === 'low' ? cfg.bandLow : cfg.bandHigh
+  const edge = breach === 'low' ? band.low : band.high
   const pulled = breach === 'low' ? edge + cfg.bandBuffer : edge - cfg.bandBuffer
   return breach === 'low' ? Math.min(pulled, mid) : Math.max(pulled, mid)
 }
@@ -739,6 +857,10 @@ export interface CyclePlan {
   reason: string
   /** Present whenever the book could be valued, so the UI can show it live. */
   dp: number | null
+  /** Γp in the band's own unit, on the same terms as `dp`. */
+  gp: number | null
+  /** The band this pass judged `dp` against — derived from Γp, or the stored pair. */
+  band: Band
   breach: Breach
   phase: SessionPhase
   day: string
@@ -771,12 +893,16 @@ export function planCycle(input: CycleInput): CyclePlan {
   const cv = bookContractValue(legs, expiry)
   const dpLots = missing.length === 0 ? portfolioDelta(legs) : null
   const dp = dpLots === null ? null : dpLots * cv
+  // Γp in the band's unit, scaled the same way Δp is — the multiplier is applied
+  // to a figure in the unit the band is read in, or the two would not compare.
+  const gp = missing.length === 0 ? portfolioGamma(legs) * cv : null
+  const band = effectiveBand(cfg, gp)
   const queue = itmQueue(legs, cfg)
   const margin =
     input.marginBlocked === undefined || input.equity === undefined
       ? null
       : marginState(cfg, input.marginBlocked, input.equity)
-  const base = { dp, breach: null as Breach, phase, day, tradingDay, queue, margin }
+  const base = { dp, gp, band, breach: null as Breach, phase, day, tradingDay, queue, margin }
 
   // ---- Session close: flatten, whatever the band says ----------------------
   if (phase !== 'open') {
@@ -814,7 +940,7 @@ export function planCycle(input: CycleInput): CyclePlan {
     // `legs` but is every bit as much of a margin problem, and cutting it needs
     // no delta. Δp only decides which side to prefer, so a null one just leaves
     // ITM distance to decide alone.
-    const leg = pickCutLeg(cutCandidates(live, spot), dp === null ? null : bandBreach(dp, cfg))
+    const leg = pickCutLeg(cutCandidates(live, spot), dp === null ? null : bandBreach(dp, band))
     if (!leg) {
       return {
         ...base,
@@ -887,7 +1013,7 @@ export function planCycle(input: CycleInput): CyclePlan {
     return { ...base, action: null, reason: `Waiting on greeks for ${missing.length} leg(s)` }
   }
 
-  const breach = bandBreach(dp, cfg)
+  const breach = bandBreach(dp, band)
   if (!breach) {
     return { ...base, breach, action: null, reason: `Δp ${fmt(dp)} — inside the band` }
   }
@@ -896,7 +1022,7 @@ export function planCycle(input: CycleInput): CyclePlan {
   // back the same way — `target` is a band figure, in qty units, so `target / cv`
   // brings it into the lot space `dpLots` lives in.
   const dpl = dpLots as number
-  const target = landingTarget(cfg, breach)
+  const target = landingTarget(cfg, band, breach)
   const targetLots = target / cv
   const rollSide = correctiveRollSide(breach)
   const used = rollSide === 'call' ? session.rollsUsedCall : session.rollsUsedPut

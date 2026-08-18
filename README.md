@@ -295,6 +295,55 @@ band correction: q = (target_landing - Δp) / d_selected
 contract-value factor. That is the unit the document's own worked example is
 written in, and the band is calibrated to the same one.
 
+#### The gamma multiplier
+
+The band does not have to be a number you type. Set **`gamma_multiplier`** above
+zero and it is derived from the book's own gamma instead, recomputed every cycle
+([`0039`](supabase/migrations/0039_delta_gamma_band.sql)):
+
+```
+band = ± |Γp| × gamma_multiplier
+```
+
+At a net gamma of **0.5** and a multiplier of **2** the band is **−1 to +1**. Let
+gamma grow to 0.8 and the band is at ±1.6 on the next pass, with nothing edited.
+
+The reasoning: gamma is the rate Δp itself moves at. A book with twice the gamma
+runs through the same delta in half the underlying move, so holding it to a fixed
+band means correcting twice as often for behaviour that has not changed. Tying
+the two puts the tolerance in units of *how fast will this book breach* rather
+than in absolute delta.
+
+> **Read this before switching it on.** It cuts the other way too. Gamma is
+> largest where the strikes are nearest the money, so a book being run over gets
+> a **wider** tolerance at exactly the moment Δp is moving fastest. That is what
+> the rule says and it is deliberate — the band scales with breach speed — but it
+> is the opposite of a risk limit. The margin guard below, not this, is what
+> bounds the book.
+
+Three details worth knowing:
+
+- **`|Γp|`, not `Γp`.** This strategy only sells, so its gamma is negative; a
+  signed band would come out inverted, with `low` above `high`. The sign says
+  which way the book is convex, not how wide the tolerance should be.
+- **The band is symmetric.** An asymmetric `band_low`/`band_high` — a valid thing
+  to type — is not preserved when the multiplier takes over. If you want the band
+  off-centre, leave the multiplier at zero.
+- **`0` is off**, which is the default, so no existing account changes behaviour
+  until the number is moved. `band_low`/`band_high` stay live as the fallback for
+  the two cases where a derived band would be nonsense: a flat book, and a book
+  whose gamma has rounded to nothing. Either gives a width of zero, which every
+  non-zero Δp breaches, and the engine would "correct" a book it cannot measure.
+
+Gamma is now required on the same terms as delta: a leg whose gamma the venue has
+not published stands the whole book down for that cycle, exactly as a missing
+delta already did. With the multiplier set, a leg silently absent from Γp would
+move the band by that leg's entire share.
+
+The readout shows `Net Γp × multiplier` beside Δp, and the band meter prints its
+ends in the brand ink when gamma is what set them — a number that moves by itself
+should not look like one that was typed.
+
 #### The margin guard
 
 Every rule above answers to Δp. None of them reads equity, and being sell-only
@@ -563,6 +612,12 @@ Confirmed working:
   bid, and the equity/available lines.
 - Schema deployed: all four tables present, RLS rejects anonymous writes
   (`42501`), and both functions exist and execute.
+- **The gamma-derived band** in `lib/deltaStrategy.ts` — 21 assertions: the
+  worked case (Γp 0.5 × 2 → ±1), the magnitude rule on a short book's negative
+  gamma, both fallbacks (zero gamma and unknown gamma), the breach and landing
+  target read against a derived band rather than the typed one, and `planCycle`
+  end to end on a two-leg book — including a missing gamma standing the book
+  down. Fixtures are synthetic.
 - **Delta strategy logic** in `lib/deltaStrategy.ts` — 65 assertions covering the
   document's 5.2 worked example end to end, the band and landing rules, the
   corrective sides, the ITM queue, and the session clock read through the zone
@@ -583,6 +638,10 @@ Not yet exercised:
   a live book — partly because `N = 1` cannot breach the band (see above). These
   are the paths that place and unwind real size; treat the first live breach as
   the actual test.
+- **The gamma band in the database.** [`0039`](supabase/migrations/0039_delta_gamma_band.sql)
+  has not been run against a live Postgres, for the same reason `0038` has not:
+  migrations are applied by hand in the Supabase SQL editor. The TypeScript copy
+  of the rule is tested; the SQL copy that actually trades is not.
 - **The two copies of the delta logic can drift.** `lib/deltaStrategy.ts` draws
   the readout and `0012` does the trading. They implement the same rules twice,
   in two languages, with only the TypeScript side under test.

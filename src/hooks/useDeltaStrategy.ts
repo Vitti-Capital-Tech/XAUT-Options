@@ -92,6 +92,7 @@ interface Row {
   band_low: string | number
   band_high: string | number
   target_landing: string
+  gamma_multiplier: string | number
   band_buffer: string | number
   itm_trigger: string | number
   max_rolls: number
@@ -115,7 +116,7 @@ interface Row {
 }
 
 const COLS =
-  'account_id, armed, session_open, session_close, band_low, band_high, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, qty, tie_break, expiry_pick, expiry_label, cycle_seconds, take_profit_mark, stop_loss_mark, margin_cap_pct, margin_target_pct, trade_days, session_day, rolls_used_call, rolls_used_put, entered_day, flattened_day'
+  'account_id, armed, session_open, session_close, band_low, band_high, gamma_multiplier, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, qty, tie_break, expiry_pick, expiry_label, cycle_seconds, take_profit_mark, stop_loss_mark, margin_cap_pct, margin_target_pct, trade_days, session_day, rolls_used_call, rolls_used_put, entered_day, flattened_day'
 
 // Postgres numerics come back as strings over PostgREST.
 const n = (v: string | number) => Number(v)
@@ -126,6 +127,7 @@ function rowToConfig(row: Row): DeltaConfig {
     sessionClose: row.session_close,
     bandLow: n(row.band_low),
     bandHigh: n(row.band_high),
+    gammaMultiplier: n(row.gamma_multiplier),
     targetLanding: row.target_landing as TargetLanding,
     bandBuffer: n(row.band_buffer),
     itmTrigger: n(row.itm_trigger),
@@ -155,6 +157,7 @@ function configToRow(cfg: DeltaConfig) {
     session_close: cfg.sessionClose,
     band_low: cfg.bandLow,
     band_high: cfg.bandHigh,
+    gamma_multiplier: cfg.gammaMultiplier,
     target_landing: cfg.targetLanding,
     band_buffer: cfg.bandBuffer,
     itm_trigger: cfg.itmTrigger,
