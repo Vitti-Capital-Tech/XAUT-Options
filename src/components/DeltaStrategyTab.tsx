@@ -189,14 +189,16 @@ export function DeltaStrategyTab({
             label="Target delta band"
             help="The delta of everything you hold, added up. Inside this range it does nothing at all; outside it, it fixes the position. This is the whole position, not one option — so it can be any size, and negatives are fine. −2 to 1 is a valid range. With a gamma multiplier set, these two are only the fallback — the live band is derived instead."
           >
-            {/* Two inputs while the numbers are yours; the range itself once gamma
-                computes it. The field shows the band actually in force either way,
-                which is also what keeps the fallback editable in exactly the case
-                where the fallback is what is being used. */}
+            {/* The same two boxes either way, so the field does not change shape
+                under you when the multiplier is set — only what fills them does.
+                Typed while the numbers are yours; the derived pair, read-only and
+                in brand ink, once gamma is computing them. */}
             {band.derived ? (
-              <span className="num rounded border border-raised-3 bg-surface px-2.5 py-1 text-[13px] whitespace-nowrap text-brand-text">
-                {greek(band.low, 2)} – {greek(band.high, 2)}
-              </span>
+              <div className="flex items-center gap-2">
+                <DerivedBox value={band.low} />
+                <span className="text-ink-4">–</span>
+                <DerivedBox value={band.high} />
+              </div>
             ) : (
               <div className="flex items-center gap-2">
                 <NumInput
@@ -220,9 +222,6 @@ export function DeltaStrategyTab({
             label="Gamma multiplier"
             help="Ties the range's width to the position's own gamma instead of holding it fixed: the range becomes ± total gamma × this number, recomputed every cycle. At a total gamma of 0.5, a multiplier of 2 gives −1 to 1, and the range widens on its own as gamma grows. 0 switches it off and the two numbers above are used as typed."
           >
-            {/* No arithmetic printed beside it: the band field above already shows
-                the range this produces, and the same sum written twice in one row
-                is noise. */}
             <NumInput
               value={config.gammaMultiplier}
               step={0.5}
@@ -230,6 +229,13 @@ export function DeltaStrategyTab({
               width="w-16"
               onChange={(v) => setConfig({ gammaMultiplier: v })}
             />
+            {/* The way out, said where the way in is. The band boxes go read-only
+                the moment this is above zero, and nothing else on the bar explains
+                how to get them back. No arithmetic here — the band field beside it
+                already prints the range this produces. */}
+            <span className="text-[10px] whitespace-nowrap text-ink-3">
+              {config.gammaMultiplier > 0 ? 'set 0 to type the band in yourself' : 'band as typed'}
+            </span>
           </Field>
 
           <Field
@@ -593,6 +599,26 @@ function Readout({
     <div className="flex flex-col gap-0.5">
       <span className="text-[9px] font-semibold tracking-[0.14em] text-ink-3 uppercase">{label}</span>
       <span className={`num text-[13px] font-semibold ${colour}`}>{children}</span>
+    </div>
+  )
+}
+
+/**
+ * One end of a band gamma computed, in the shell `NumInput` wears.
+ *
+ * Deliberately the same box rather than a plain figure: the control keeps its
+ * shape whether the numbers are typed or derived, so setting a multiplier does
+ * not rearrange the bar under the trader. Brand ink and no caret are what say it
+ * is a reading rather than a field — the same two marks the band meter's ends
+ * use when gamma is what set them.
+ */
+function DerivedBox({ value }: { value: number }) {
+  return (
+    <div
+      className="flex h-9 w-16 items-center rounded-md border border-raised-3 bg-surface px-2.5"
+      title="Derived from Γp × the gamma multiplier"
+    >
+      <span className="num text-[13px] text-brand-text">{greek(value, 2)}</span>
     </div>
   )
 }

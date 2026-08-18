@@ -342,12 +342,12 @@ not published stands the whole book down for that cycle, exactly as a missing
 delta already did. With the multiplier set, a leg silently absent from Γp would
 move the band by that leg's entire share.
 
-While the band is derived, the **Target delta band** control shows the live range
-rather than two inputs — the numbers are no longer yours to set, and a field you
-can type into that changes nothing would be a lie. It reverts to the pair of
-inputs whenever the fallback is what is actually in force. The readout shows
-`Net Γp × multiplier` beside Δp, and the band meter prints its ends in the brand
-ink when gamma is what set them.
+The **Target delta band** control keeps its two boxes either way, so setting a
+multiplier does not rearrange the bar — only what fills them changes. Typed while
+the numbers are yours; the derived pair, read-only and in brand ink, once gamma is
+computing them, with `set 0 to type the band in yourself` under the multiplier as
+the way back. The readout shows `Net Γp × multiplier` beside Δp, and the band
+meter prints its ends in the same brand ink when gamma is what set them.
 
 #### The margin guard
 
