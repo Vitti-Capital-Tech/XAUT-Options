@@ -342,6 +342,14 @@ not published stands the whole book down for that cycle, exactly as a missing
 delta already did. With the multiplier set, a leg silently absent from Γp would
 move the band by that leg's entire share.
 
+On a reload the band reads `—` until it is actually known. Three things land at
+different times — the settings row, the first plan, and the greeks Γp is computed
+from — and each used to repaint the field with a different pair: the built-in
+default, then your saved one, then the derived one. A fallback shown before the
+greeks arrive is not the band, it is the band that is about to be replaced, so
+the field says nothing rather than something wrong. Nothing trades in that window
+either; Δp is unknown for the same reason.
+
 The **Target delta band** control keeps its two boxes either way, so setting a
 multiplier does not rearrange the bar — only what fills them changes. Typed while
 the numbers are yours; the derived pair, read-only and in brand ink, once gamma is

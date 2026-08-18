@@ -457,6 +457,21 @@ export interface Band {
   high: number
   /** True when `gammaMultiplier` derived it, false when it is the typed-in pair. */
   derived: boolean
+  /**
+   * The band is meant to be derived and Γp is not known *yet* — legs are held but
+   * their greeks have not arrived. `low`/`high` carry the fallback, because that
+   * is what the rule gives for an unknown Γp, but they are about to change and a
+   * reader should not be shown them as though they were settled.
+   *
+   * Distinct from a plain `derived: false`, which is a *settled* answer: a flat
+   * book, or gamma rounded away, where the typed pair really is the band and will
+   * stay it. Only `planCycle` can tell the two apart, since it is the only thing
+   * that knows whether there are positions whose greeks are still outstanding.
+   *
+   * Nothing acts in this window regardless — Δp is null for the same reason, and
+   * every branch that reads the band is behind a non-null Δp.
+   */
+  pending: boolean
 }
 
 /**
@@ -490,11 +505,11 @@ export function effectiveBand(
   /** Γp in the same unit the band is set in, or null when the book cannot be valued. */
   gp: number | null,
 ): Band {
-  const stored = { low: cfg.bandLow, high: cfg.bandHigh, derived: false }
+  const stored = { low: cfg.bandLow, high: cfg.bandHigh, derived: false, pending: false }
   if (!(cfg.gammaMultiplier > 0) || gp === null) return stored
   const width = Math.abs(gp) * cfg.gammaMultiplier
   if (!(width > 0)) return stored
-  return { low: -width, high: width, derived: true }
+  return { low: -width, high: width, derived: true, pending: false }
 }
 
 export function bandBreach(dp: number, band: Band): Breach {
@@ -898,7 +913,14 @@ export function planCycle(input: CycleInput): CyclePlan {
   // Γp in the band's unit, scaled the same way Δp is — the multiplier is applied
   // to a figure in the unit the band is read in, or the two would not compare.
   const gp = missing.length === 0 ? portfolioGamma(legs) * cv : null
-  const band = effectiveBand(cfg, gp)
+  // `pending` separates "Γp is not in yet" from "there is no Γp". Both hand back
+  // the stored pair, but only the second is an answer: the first is a band about
+  // to be replaced the moment the greeks land, and printing it as settled is what
+  // makes the bar appear to show a wrong band for a second after a reload.
+  const band: Band = {
+    ...effectiveBand(cfg, gp),
+    pending: cfg.gammaMultiplier > 0 && gp === null && live.length > 0,
+  }
   const queue = itmQueue(legs, cfg)
   const margin =
     input.marginBlocked === undefined || input.equity === undefined

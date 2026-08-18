@@ -588,6 +588,14 @@ multiplier is set against a band figure and the two have to be in one unit. The
 magnitude is taken: this strategy only sells, so Γp is negative, and a signed
 band would come out with `low` above `high`.
 
+`Band.pending` separates *Γp is not in yet* from *there is no Γp*. Both hand back
+the typed pair, but only the second is a settled answer; the first is a band about
+to be replaced the moment the greeks land, and `planCycle` sets it because it is
+the only thing that knows whether legs are held whose greeks are outstanding. The
+readout prints an em dash rather than a fallback while it is set. Nothing acts in
+that window — Δp is null for the same reason, and every branch that reads the band
+is behind a non-null Δp.
+
 Everything downstream reads the `Band`, not the config — the breach test, the
 landing target, and the margin cut's side preference. The SQL side derives it
 once per account per pass in

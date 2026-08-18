@@ -41,7 +41,7 @@ export function DeltaStrategyTab({
   strategy: DeltaStrategyApi
   expiries: Expiry[]
 }) {
-  const { config, setConfig, armed, setArmed, session, hasAccount, plan, error, refresh, entryLots, apply, cancel, dirty } =
+  const { config, setConfig, armed, setArmed, session, hasAccount, plan, error, refresh, entryLots, apply, cancel, dirty, loading } =
     strategy
   const [refreshing, setRefreshing] = useState(false)
   // Open by default: a bar that starts folded hides the settings from someone who
@@ -63,7 +63,27 @@ export function DeltaStrategyTab({
   // multiplier is set, the typed-in pair otherwise. The meter and the breach
   // colour both read this rather than the config, or they would draw one band
   // while the strategy defended another.
-  const band = plan?.band ?? { low: config.bandLow, high: config.bandHigh, derived: false }
+  const band = plan?.band ?? {
+    low: config.bandLow,
+    high: config.bandHigh,
+    derived: false,
+    pending: config.gammaMultiplier > 0,
+  }
+  /**
+   * Whether the band is knowable yet, and the reason a reload used to show two
+   * wrong bands before the right one.
+   *
+   * Three things have to land before the answer is settled, and they land at
+   * different times: the settings row (until then `config` is the built-in
+   * default), the first plan, and the greeks the plan needs to compute Γp. Each
+   * arrival used to repaint the field with a different pair — the default −1/1,
+   * then the saved pair, then the derived one.
+   *
+   * So the field says nothing until it can say the truth. Consistent with how
+   * every other unknown here reads: an em dash, never a plausible-looking wrong
+   * number.
+   */
+  const bandUnknown = loading || band.pending
   const callsLeft = Math.max(0, config.maxRolls - session.rollsUsedCall)
   const putsLeft = Math.max(0, config.maxRolls - session.rollsUsedPut)
 
@@ -193,7 +213,13 @@ export function DeltaStrategyTab({
                 under you when the multiplier is set — only what fills them does.
                 Typed while the numbers are yours; the derived pair, read-only and
                 in brand ink, once gamma is computing them. */}
-            {band.derived ? (
+            {bandUnknown ? (
+              <div className="flex items-center gap-2">
+                <DerivedBox value={null} />
+                <span className="text-ink-4">–</span>
+                <DerivedBox value={null} />
+              </div>
+            ) : band.derived ? (
               <div className="flex items-center gap-2">
                 <DerivedBox value={band.low} />
                 <span className="text-ink-4">–</span>
@@ -505,7 +531,13 @@ export function DeltaStrategyTab({
               {dp === null ? '—' : greek(dp, 2)}
             </span>
           </div>
-          <BandMeter low={band.low} high={band.high} dp={dp} derived={band.derived} />
+          <BandMeter
+            low={band.low}
+            high={band.high}
+            dp={dp}
+            derived={band.derived}
+            unknown={bandUnknown}
+          />
         </div>
 
         <GroupRule />
@@ -612,13 +644,19 @@ function Readout({
  * is a reading rather than a field — the same two marks the band meter's ends
  * use when gamma is what set them.
  */
-function DerivedBox({ value }: { value: number }) {
+function DerivedBox({ value }: { value: number | null }) {
   return (
     <div
       className="flex h-9 w-16 items-center rounded-md border border-raised-3 bg-surface px-2.5"
-      title="Derived from Γp × the gamma multiplier"
+      title={
+        value === null
+          ? 'Waiting on Γp — the band is derived from it'
+          : 'Derived from Γp × the gamma multiplier'
+      }
     >
-      <span className="num text-[13px] text-brand-text">{greek(value, 2)}</span>
+      <span className={`num text-[13px] ${value === null ? 'text-ink-4' : 'text-brand-text'}`}>
+        {value === null ? '—' : greek(value, 2)}
+      </span>
     </div>
   )
 }
@@ -633,16 +671,22 @@ function BandMeter({
   high,
   dp,
   derived,
+  unknown,
 }: {
   low: number
   high: number
   dp: number | null
   /** Gamma set these ends, so they move on their own — marked, not just drawn. */
   derived: boolean
+  /** The band is not knowable yet: draw the track, but no ends and no marker. */
+  unknown: boolean
 }) {
   const span = high - low
-  const frac = dp === null || !(span > 0) ? null : Math.min(1, Math.max(0, (dp - low) / span))
-  const breached = dp !== null && (dp < low || dp > high)
+  // No marker either, when the ends are unknown: a position along a track whose
+  // scale has not been established yet is not a reading of anything.
+  const frac =
+    unknown || dp === null || !(span > 0) ? null : Math.min(1, Math.max(0, (dp - low) / span))
+  const breached = !unknown && dp !== null && (dp < low || dp > high)
 
   // No eyebrow of its own: it sits under the Net Δp figure, which names it, and the
   // two end labels say what the track spans. A third label would only repeat one of
@@ -651,13 +695,20 @@ function BandMeter({
   // A derived band's ends are printed in the brand ink: they are a live reading
   // rather than a setting, and a number that moves by itself should not look the
   // same as one that was typed.
-  const endInk = derived ? 'text-brand-text' : 'text-ink-3'
+  const endInk = unknown ? 'text-ink-4' : derived ? 'text-brand-text' : 'text-ink-3'
+  const end = (v: number) => (unknown ? '—' : price(v, 2))
   return (
     <div
       className="flex w-56 items-center gap-2 pb-0.5"
-      title={derived ? 'Band width is Γp × the gamma multiplier' : undefined}
+      title={
+        unknown
+          ? 'Waiting on Γp — the band is derived from it'
+          : derived
+            ? 'Band width is Γp × the gamma multiplier'
+            : undefined
+      }
     >
-      <span className={`num shrink-0 text-[10px] ${endInk}`}>{price(low, 2)}</span>
+      <span className={`num shrink-0 text-[10px] ${endInk}`}>{end(low)}</span>
       <div className="relative h-1.5 flex-1 rounded-full border border-raised-3 bg-surface">
         {/* The mid-point, so the marker's drift off centre reads at a glance. */}
         <span className="absolute top-1/2 left-1/2 h-2 w-px -translate-x-1/2 -translate-y-1/2 bg-raised-3" />
@@ -670,7 +721,7 @@ function BandMeter({
           />
         )}
       </div>
-      <span className={`num shrink-0 text-[10px] ${endInk}`}>{price(high, 2)}</span>
+      <span className={`num shrink-0 text-[10px] ${endInk}`}>{end(high)}</span>
     </div>
   )
 }
