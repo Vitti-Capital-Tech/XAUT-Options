@@ -297,8 +297,8 @@ written in, and the band is calibrated to the same one.
 
 #### The gamma multiplier
 
-The band does not have to be a number you type. Set **`gamma_multiplier`** above
-zero and it is derived from the book's own gamma instead, recomputed every cycle
+The band does not have to be a number you type. **`gamma_multiplier`** derives it from the
+book's own gamma instead, recomputed every cycle, and **defaults to 2**
 ([`0039`](supabase/migrations/0039_delta_gamma_band.sql)):
 
 ```
@@ -329,20 +329,25 @@ Three details worth knowing:
 - **The band is symmetric.** An asymmetric `band_low`/`band_high` — a valid thing
   to type — is not preserved when the multiplier takes over. If you want the band
   off-centre, leave the multiplier at zero.
-- **`0` is off**, which is the default, so no existing account changes behaviour
-  until the number is moved. `band_low`/`band_high` stay live as the fallback for
-  the two cases where a derived band would be nonsense: a flat book, and a book
-  whose gamma has rounded to nothing. Either gives a width of zero, which every
-  non-zero Δp breaches, and the engine would "correct" a book it cannot measure.
+- **`0` switches it off** and gives you back a band you type in. It is not the
+  default — running `0039` puts every delta account on a gamma-derived band, so
+  read the warning above before applying it. `band_low`/`band_high` stay live as
+  the fallback for the two cases where a derived band would be nonsense: a flat
+  book, and a book whose gamma has rounded to nothing. Either gives a width of
+  zero, which every non-zero Δp breaches, and the engine would "correct" a book
+  it cannot measure.
 
 Gamma is now required on the same terms as delta: a leg whose gamma the venue has
 not published stands the whole book down for that cycle, exactly as a missing
 delta already did. With the multiplier set, a leg silently absent from Γp would
 move the band by that leg's entire share.
 
-The readout shows `Net Γp × multiplier` beside Δp, and the band meter prints its
-ends in the brand ink when gamma is what set them — a number that moves by itself
-should not look like one that was typed.
+While the band is derived, the **Target delta band** control shows the live range
+rather than two inputs — the numbers are no longer yours to set, and a field you
+can type into that changes nothing would be a lie. It reverts to the pair of
+inputs whenever the fallback is what is actually in force. The readout shows
+`Net Γp × multiplier` beside Δp, and the band meter prints its ends in the brand
+ink when gamma is what set them.
 
 #### The margin guard
 

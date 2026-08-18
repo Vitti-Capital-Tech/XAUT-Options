@@ -189,28 +189,30 @@ export function DeltaStrategyTab({
             label="Target delta band"
             help="The delta of everything you hold, added up. Inside this range it does nothing at all; outside it, it fixes the position. This is the whole position, not one option — so it can be any size, and negatives are fine. −2 to 1 is a valid range. With a gamma multiplier set, these two are only the fallback — the live band is derived instead."
           >
-            <div className="flex items-center gap-2">
-              <NumInput
-                value={config.bandLow}
-                step={0.1}
-                width="w-16"
-                onChange={(v) => setConfig({ bandLow: keepBelow(v, config.bandHigh) })}
-              />
-              <span className="text-ink-4">–</span>
-              <NumInput
-                value={config.bandHigh}
-                step={0.1}
-                width="w-16"
-                onChange={(v) => setConfig({ bandHigh: keepAbove(v, config.bandLow) })}
-              />
-            </div>
-            {/* Said here, beside the numbers being overridden, rather than only in
-                the readout: a pair of inputs that no longer decide anything has to
-                say so where it is edited. */}
-            {config.gammaMultiplier > 0 && (
-              <span className="text-[10px] whitespace-nowrap text-brand-text">
-                {plan?.band.derived ? 'gamma is setting this' : 'fallback — no Γp yet'}
+            {/* Two inputs while the numbers are yours; the range itself once gamma
+                computes it. The field shows the band actually in force either way,
+                which is also what keeps the fallback editable in exactly the case
+                where the fallback is what is being used. */}
+            {band.derived ? (
+              <span className="num rounded border border-raised-3 bg-surface px-2.5 py-1 text-[13px] whitespace-nowrap text-brand-text">
+                {greek(band.low, 2)} – {greek(band.high, 2)}
               </span>
+            ) : (
+              <div className="flex items-center gap-2">
+                <NumInput
+                  value={config.bandLow}
+                  step={0.1}
+                  width="w-16"
+                  onChange={(v) => setConfig({ bandLow: keepBelow(v, config.bandHigh) })}
+                />
+                <span className="text-ink-4">–</span>
+                <NumInput
+                  value={config.bandHigh}
+                  step={0.1}
+                  width="w-16"
+                  onChange={(v) => setConfig({ bandHigh: keepAbove(v, config.bandLow) })}
+                />
+              </div>
             )}
           </Field>
 
@@ -218,6 +220,9 @@ export function DeltaStrategyTab({
             label="Gamma multiplier"
             help="Ties the range's width to the position's own gamma instead of holding it fixed: the range becomes ± total gamma × this number, recomputed every cycle. At a total gamma of 0.5, a multiplier of 2 gives −1 to 1, and the range widens on its own as gamma grows. 0 switches it off and the two numbers above are used as typed."
           >
+            {/* No arithmetic printed beside it: the band field above already shows
+                the range this produces, and the same sum written twice in one row
+                is noise. */}
             <NumInput
               value={config.gammaMultiplier}
               step={0.5}
@@ -225,18 +230,6 @@ export function DeltaStrategyTab({
               width="w-16"
               onChange={(v) => setConfig({ gammaMultiplier: v })}
             />
-            {/* The arithmetic, live, so the multiplier can be set against what it
-                is actually about to produce rather than by trial and error. */}
-            <span className="text-[10px] whitespace-nowrap text-ink-3">
-              {config.gammaMultiplier <= 0
-                ? 'off — band as typed'
-                : gp === null
-                  ? 'waiting on Γp'
-                  : `|${greek(gp, 3)}| × ${config.gammaMultiplier} = ±${greek(
-                      Math.abs(gp) * config.gammaMultiplier,
-                      2,
-                    )}`}
-            </span>
           </Field>
 
           <Field

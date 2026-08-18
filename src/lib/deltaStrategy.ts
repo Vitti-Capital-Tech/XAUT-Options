@@ -89,8 +89,9 @@ export interface DeltaConfig {
    * the band becomes `±|Γp| × gammaMultiplier`, recomputed every cycle, so it
    * moves as gamma does. At `Γp = 0.5` a multiplier of 2 gives `[-1, +1]`.
    *
-   * Zero switches it off and `bandLow`/`bandHigh` stand, which is the default and
-   * what every existing account keeps until the number is moved.
+   * Zero switches it off and `bandLow`/`bandHigh` stand instead. The default is
+   * 2, so the band is gamma-derived out of the box and the stored pair is only
+   * the fallback — set this to 0 to go back to a band that is typed in.
    *
    * Note what this does to a book that is losing: gamma is largest where the
    * strikes are nearest the money, so a book being run over gets a *wider*
@@ -188,8 +189,9 @@ export const DEFAULT_DELTA_CONFIG: DeltaConfig = {
   tradeDays: [1, 2, 3, 4, 5, 6, 7],
   bandLow: -1,
   bandHigh: 1,
-  // Off: the band is the pair above until the trader ties it to gamma.
-  gammaMultiplier: 0,
+  // On by default: the band is derived from the book's gamma, and the pair above
+  // is only what stands in while there is no gamma to derive it from.
+  gammaMultiplier: 2,
   targetLanding: 'edge',
   bandBuffer: 0.4,
   itmTrigger: 5,

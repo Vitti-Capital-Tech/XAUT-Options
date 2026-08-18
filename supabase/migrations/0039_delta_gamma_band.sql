@@ -28,13 +28,14 @@
 -- 0031, not this, is what bounds the book.
 --
 -- ---------------------------------------------------------------------------
--- Off by default, and the fallback
+-- The fallback, and how to switch it off
 -- ---------------------------------------------------------------------------
--- `gamma_multiplier` defaults to 0, which reads as off and leaves `band_low` and
--- `band_high` in force exactly as before. No existing account changes behaviour
--- until the number is moved. `band_low`/`band_high` are not dropped and are not
--- dead: they are the fallback whenever a derived band cannot be computed, which
--- is two real cases --
+-- `gamma_multiplier` defaults to 2, so the band is gamma-derived from the moment
+-- this file runs. Set it to 0 to switch the rule off and go back to a band that
+-- is typed in.
+--
+-- `band_low`/`band_high` are not dropped and are not dead: they are the fallback
+-- whenever a derived band cannot be computed, which is two real cases --
 --
 --     * a flat book, before the daily entry has run
 --     * a book whose gamma has rounded to nothing
@@ -75,7 +76,16 @@
 -- 1. The setting
 -- ---------------------------------------------------------------------------
 alter table public.delta_strategy_settings
-  add column if not exists gamma_multiplier numeric(20, 8) not null default 0;
+  add column if not exists gamma_multiplier numeric(20, 8) not null default 2;
+
+-- Stated separately as well, for anyone who ran an earlier draft of this file
+-- where the default was 0: `add column if not exists` is a no-op once the column
+-- is there, so the default would otherwise stay behind. Existing rows are left
+-- alone deliberately -- a 0 somebody set on purpose means "band as typed", and
+-- this must not overwrite that. A row still on the old default reads 0 and is
+-- moved from the strategy bar.
+alter table public.delta_strategy_settings
+  alter column gamma_multiplier set default 2;
 
 alter table public.delta_strategy_settings drop constraint if exists delta_gamma_mult_chk;
 alter table public.delta_strategy_settings
