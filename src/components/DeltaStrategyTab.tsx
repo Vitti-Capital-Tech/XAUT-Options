@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useMarketTick } from '../lib/marketStore'
+import { market, useMarketTick } from '../lib/marketStore'
 import { expiryIsLive, expiryOptions, type Expiry } from '../lib/delta'
 import type { DeltaStrategyApi } from '../hooks/useDeltaStrategy'
 import { greek, price } from '../lib/format'
@@ -84,6 +84,12 @@ export function DeltaStrategyTab({
    * number.
    */
   const bandUnknown = loading || band.pending
+  // The notional cap read back in the underlying, which is the unit the size
+  // beside it is set in. Needs a spot, so it is null until the feed has one.
+  const capXaut =
+    market.spot > 0 && config.maxNotionalPerStrike > 0
+      ? config.maxNotionalPerStrike / market.spot
+      : null
   const callsLeft = Math.max(0, config.maxRolls - session.rollsUsedCall)
   const putsLeft = Math.max(0, config.maxRolls - session.rollsUsedPut)
 
@@ -242,6 +248,32 @@ export function DeltaStrategyTab({
                 />
               </div>
             )}
+          </Field>
+
+          {/* Sits with the sizing controls rather than the band ones: it is a
+              limit on how much goes into one contract, not on where delta may
+              sit. */}
+          <Field
+            label="Max notional / strike"
+            help="The most it will hold in any one contract, in dollars. A sale that would take a strike past this goes to the next strike instead, and is trimmed to whatever room the strike has left. A call and a put at the same strike get this much each. 0 turns the limit off."
+          >
+            <NumInput
+              value={config.maxNotionalPerStrike}
+              step={5000}
+              min={0}
+              width="w-24"
+              unit="$"
+              onChange={(v) => setConfig({ maxNotionalPerStrike: v })}
+            />
+            {/* The cap in the unit the trader sizes in, since the field is in
+                dollars and `Qty · XAUT` next to it is not. */}
+            <span className="text-[10px] whitespace-nowrap text-ink-3">
+              {config.maxNotionalPerStrike <= 0
+                ? 'no limit'
+                : capXaut === null
+                  ? '—'
+                  : `≈ ${capXaut.toFixed(1)} XAUT / strike`}
+            </span>
           </Field>
 
           <Field

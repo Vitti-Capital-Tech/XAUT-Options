@@ -120,6 +120,7 @@ erDiagram
         numeric band_delta_low
         numeric band_delta_high
         numeric qty "XAUT per leg -> lots"
+        numeric max_notional_per_strike "USD ceiling per contract; 0 = off"
         text expiry_label "ddmmyy, or null"
         text session_day "IST YYYY-MM-DD"
         integer rolls_used_call
@@ -568,7 +569,8 @@ copy is PL/pgSQL in
 | `itmQueue` | `(legs, cfg) → LegDelta[]` | Shorts at or beyond the trigger, most-ITM first |
 | `rollQty` | `(target, dp, dItm, dRepl) → number` | §5.2, rounded down |
 | `bandQty` | `(target, dp, dSelected) → number` | §5.4, rounded down |
-| `pickByPremium` | `(expiry, kind, cfg, tickerFor, beyond?) → StrikePick \| null` | `beyond` is what makes a roll a roll |
+| `strikeRoomLots` | `(cfg, heldLots, cv, spot) → number \| null` | Lots left under the notional cap; null when off |
+| `pickByPremium` | `(expiry, kind, cfg, tickerFor, beyond?, roomFor?) → StrikePick \| null` | `beyond` is what makes a roll a roll; a strike with no room is not a candidate |
 | `pickByDelta` | `(expiry, kind, cfg, tickerFor) → StrikePick \| null` | Inside `band_correction_delta` |
 | `planCycle` | `(CycleInput) → CyclePlan` | One next action, plus the reason either way |
 

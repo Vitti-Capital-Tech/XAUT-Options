@@ -295,6 +295,43 @@ band correction: q = (target_landing - Δp) / d_selected
 contract-value factor. That is the unit the document's own worked example is
 written in, and the band is calibrated to the same one.
 
+#### The per-strike notional cap
+
+**`max_notional_per_strike`**, default **$95,000**, caps how much the strategy
+will stack into any one contract
+([`0042`](supabase/migrations/0042_notional_cap_per_strike.sql)):
+
+```
+notional at a strike = spot × contract_value × |net_qty|
+```
+
+At a spot of 4,341 one lot is $4.34 of notional, so the cap is about **21,880
+lots — 21.9 XAUT — per contract**. At `qty = 10` XAUT a leg, that is two sales
+into one strike; the third goes somewhere else.
+
+Every sale goes through the same picker, so the cap applies to the daily entry,
+the roll replacement and the band correction alike. The price rule is unchanged —
+still *the strike quoted closest to `entry_premium`* — the cap only removes
+strikes that are already full, so the sale lands on the next-nearest one with
+room, on its own.
+
+A sale that does not fit entirely is **trimmed, not skipped**: it sells what the
+strike can still take and the next cycle carries on from the strike after it.
+Delta keeps being managed, which is the same reason the hold zone went.
+
+Three details:
+
+- **Per contract, not per strike price.** `C-XAUT-4400` and `P-XAUT-4400` get
+  $95,000 each — unrelated exposures on opposite sides of spot.
+- **The entry stays symmetric.** Both legs are trimmed to the smaller of the two
+  rooms rather than selling different sizes; a cap is not a reason to open a
+  directional position.
+- **Nothing is closed by it.** It governs where new sales go. A strike drifting
+  past the cap because spot moved just stops receiving — notional is
+  `spot × cv × qty`, and spot is not something the book chose.
+
+`0` turns the cap off.
+
 #### The gamma multiplier
 
 The band does not have to be a number you type. **`gamma_multiplier`** derives it from the

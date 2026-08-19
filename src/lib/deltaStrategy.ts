@@ -129,6 +129,24 @@ export interface DeltaConfig {
    * exactly one lot.
    */
   qty: number
+  /**
+   * USD notional ceiling per contract. A sale that would take a strike past it
+   * is not stacked there — the pick moves to the next-nearest premium with room,
+   * and the size is trimmed to whatever that strike can still take.
+   *
+   *     notional at a strike = spot × contract_value × |net_qty|
+   *
+   * At a spot of 4,341 one lot is $4.34 of notional, so 95,000 is about 21,880
+   * lots — 21.9 XAUT — per contract.
+   *
+   * Per *contract*, not per strike price: a call and a put at 4,400 get the cap
+   * each, being unrelated exposures on opposite sides of spot.
+   *
+   * Zero switches it off. It governs where new sales go and nothing else — a
+   * strike drifting past the cap because spot moved is not closed, it just stops
+   * receiving.
+   */
+  maxNotionalPerStrike: number
   tieBreak: TieBreak
   /** The rule used only while `expiryLabel` is unset. */
   expiryPick: ExpiryPick
@@ -204,6 +222,7 @@ export const DEFAULT_DELTA_CONFIG: DeltaConfig = {
   entryPremium: 4,
   // One lot at the venue's 0.001 contract value.
   qty: 0.001,
+  maxNotionalPerStrike: 95_000,
   tieBreak: 'closest',
   expiryPick: 'nearest',
   // Unset until the trader picks a date, so a new account trades the nearest.
@@ -452,6 +471,9 @@ export function portfolioDelta(legs: LegDelta[]): number {
 export function portfolioGamma(legs: LegDelta[]): number {
   return legs.reduce((sum, l) => sum + l.gammaContribution, 0)
 }
+
+/** `95000` -> `$95,000`, for the one reason line that names the cap. */
+const usd0 = (v: number) => `$${Math.round(v).toLocaleString('en-US')}`
 
 export type Breach = 'low' | 'high' | null
 
@@ -775,6 +797,8 @@ export interface StrikePick {
   strike: number
   premium: number
   optionDelta: number
+  /** Lots this contract can still take under the notional cap; null when off. */
+  roomLots: number | null
 }
 
 function book(expiry: Expiry, kind: OptionKind): Map<number, Product> {
@@ -794,12 +818,35 @@ function furtherOtm(strike: number, from: number, kind: OptionKind): boolean {
  * is what makes a roll a roll — the replacement always sits further from the
  * money than the leg it replaces.
  */
+/**
+ * How many more lots a contract can take before it hits the notional cap, or
+ * null when there is no cap to apply.
+ *
+ *     room = floor(cap / (spot × contract_value)) − |lots already held|
+ *
+ * Null rather than Infinity so callers can pass it straight to `Math.min` with a
+ * `?? q` fallback, and so the SQL mirror — where `least` ignores nulls — reads
+ * the same way.
+ */
+export function strikeRoomLots(
+  cfg: Pick<DeltaConfig, 'maxNotionalPerStrike'>,
+  heldLots: number,
+  contractValue: number,
+  spot: number,
+): number | null {
+  const cap = cfg.maxNotionalPerStrike
+  if (!(cap > 0) || !(spot > 0) || !(contractValue > 0)) return null
+  return Math.max(0, Math.floor(cap / (spot * contractValue)) - Math.abs(heldLots))
+}
+
 export function pickByPremium(
   expiry: Expiry,
   kind: OptionKind,
   cfg: Pick<DeltaConfig, 'entryPremium' | 'tieBreak'>,
   tickerFor: (symbol: string) => Ticker | undefined,
   beyond?: number,
+  /** Lots a contract can still take; null means uncapped. Omit for no cap. */
+  roomFor?: (product: Product) => number | null,
 ): StrikePick | null {
   const candidates: StrikePick[] = []
 
@@ -809,7 +856,12 @@ export function pickByPremium(
     const premium = salePremium(ticker)
     const optionDelta = tickerDelta(ticker)
     if (premium === null || optionDelta === null) continue
-    candidates.push({ product, strike, premium, optionDelta })
+    // A strike with no room left is not a candidate at all. That is the whole
+    // mechanism: dropping it here is what makes the rules below land on the
+    // next-nearest premium without any of them knowing a cap exists.
+    const roomLots = roomFor ? roomFor(product) : null
+    if (roomLots !== null && roomLots <= 0) continue
+    candidates.push({ product, strike, premium, optionDelta, roomLots })
   }
 
   if (candidates.length === 0) return null
@@ -936,6 +988,12 @@ export function planCycle(input: CycleInput): CyclePlan {
     pending: cfg.gammaMultiplier > 0 && gp === null && live.length > 0,
   }
   const queue = itmQueue(legs, cfg)
+  // Lots already short per contract, for the notional cap. Off `live` rather than
+  // `legs`: a leg whose greek has not arrived still occupies room at its strike.
+  const heldLots = new Map<string, number>()
+  for (const pos of live) heldLots.set(pos.symbol, Math.abs(pos.net_qty))
+  const roomFor = (product: Product) =>
+    strikeRoomLots(cfg, heldLots.get(product.symbol) ?? 0, Number(product.contract_value), spot)
   const margin =
     input.marginBlocked === undefined || input.equity === undefined
       ? null
@@ -1017,8 +1075,8 @@ export function planCycle(input: CycleInput): CyclePlan {
     // flattened at the previous close, so blocked margin is at or near zero when
     // it fires; a gate on it was guarding a state the session clock already makes
     // unreachable. Above the cap the cut branch has returned long before this.
-    const call = pickByPremium(expiry, 'call', cfg, tickerFor)
-    const put = pickByPremium(expiry, 'put', cfg, tickerFor)
+    const call = pickByPremium(expiry, 'call', cfg, tickerFor, undefined, roomFor)
+    const put = pickByPremium(expiry, 'put', cfg, tickerFor, undefined, roomFor)
     if (!call || !put) {
       return {
         ...base,
@@ -1026,8 +1084,19 @@ export function planCycle(input: CycleInput): CyclePlan {
         reason: `No ${!call ? 'call' : 'put'} strike quoted yet`,
       }
     }
-    const callLots = entryLots(call.product, cfg)
-    const putLots = entryLots(put.product, cfg)
+    // The tighter of the two rooms, applied to both. Selling a full leg against a
+    // trimmed one would open exactly the directional position the symmetric entry
+    // exists to avoid, so a cap shortens the pair rather than skewing it.
+    const room = Math.min(call.roomLots ?? Infinity, put.roomLots ?? Infinity)
+    const callLots = Math.min(entryLots(call.product, cfg), room)
+    const putLots = Math.min(entryLots(put.product, cfg), room)
+    if (callLots <= 0 || putLots <= 0) {
+      return {
+        ...base,
+        action: null,
+        reason: `No strike under the ${usd0(cfg.maxNotionalPerStrike)} cap has room for an entry`,
+      }
+    }
     return {
       ...base,
       action: {
@@ -1080,9 +1149,15 @@ export function planCycle(input: CycleInput): CyclePlan {
       }
     }
 
-    const replacement = pickByPremium(expiry, rollSide, cfg, tickerFor, leg.strike)
+    const replacement = pickByPremium(expiry, rollSide, cfg, tickerFor, leg.strike, roomFor)
     if (!replacement) continue
-    const q = Math.min(open, rollQty(targetLots, dpl, leg.optionDelta, replacement.optionDelta))
+    // Never more than the leg being replaced holds, and never more than the
+    // replacement strike has room for under the cap.
+    const q = Math.min(
+      open,
+      rollQty(targetLots, dpl, leg.optionDelta, replacement.optionDelta),
+      replacement.roomLots ?? Infinity,
+    )
     if (q <= 0) continue
 
     return {
@@ -1112,16 +1187,18 @@ export function planCycle(input: CycleInput): CyclePlan {
   // exactly the side this sell would have corrected, so the two pull the same way
   // rather than against each other.
   const sellSide = correctiveSellSide(breach)
-  const pick = pickByPremium(expiry, sellSide, cfg, tickerFor)
+  const pick = pickByPremium(expiry, sellSide, cfg, tickerFor, undefined, roomFor)
   if (!pick) {
     return {
       ...base,
       breach,
       action: null,
-      reason: `Δp ${fmt(dp)} outside the band — no ${sellSide} strike quoted to correct with`,
+      reason: `Δp ${fmt(dp)} outside the band — no ${sellSide} strike with room to correct with`,
     }
   }
-  const q = bandQty(targetLots, dpl, pick.optionDelta)
+  // Sell what fits. Full strikes are already out of the candidate set, so this
+  // only trims the last partial one and the next cycle carries on from the next.
+  const q = Math.min(bandQty(targetLots, dpl, pick.optionDelta), pick.roomLots ?? Infinity)
   if (q <= 0) {
     return { ...base, breach, action: null, reason: `Δp ${fmt(dp)} — breach is under one contract` }
   }

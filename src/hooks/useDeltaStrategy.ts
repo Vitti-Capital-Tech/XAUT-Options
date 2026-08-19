@@ -99,6 +99,7 @@ interface Row {
   roll_counts: string
   entry_premium: string | number
   qty: string | number
+  max_notional_per_strike: string | number
   tie_break: string
   expiry_pick: string
   expiry_label: string | null
@@ -116,7 +117,7 @@ interface Row {
 }
 
 const COLS =
-  'account_id, armed, session_open, session_close, band_low, band_high, gamma_multiplier, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, qty, tie_break, expiry_pick, expiry_label, cycle_seconds, take_profit_mark, stop_loss_mark, margin_cap_pct, margin_target_pct, trade_days, session_day, rolls_used_call, rolls_used_put, entered_day, flattened_day'
+  'account_id, armed, session_open, session_close, band_low, band_high, gamma_multiplier, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, qty, max_notional_per_strike, tie_break, expiry_pick, expiry_label, cycle_seconds, take_profit_mark, stop_loss_mark, margin_cap_pct, margin_target_pct, trade_days, session_day, rolls_used_call, rolls_used_put, entered_day, flattened_day'
 
 // Postgres numerics come back as strings over PostgREST.
 const n = (v: string | number) => Number(v)
@@ -135,6 +136,7 @@ function rowToConfig(row: Row): DeltaConfig {
     rollCounts: row.roll_counts as RollCounts,
     entryPremium: n(row.entry_premium),
     qty: n(row.qty),
+    maxNotionalPerStrike: n(row.max_notional_per_strike),
     tieBreak: row.tie_break as TieBreak,
     expiryPick: row.expiry_pick as ExpiryPick,
     expiryLabel: row.expiry_label,
@@ -165,6 +167,7 @@ function configToRow(cfg: DeltaConfig) {
     roll_counts: cfg.rollCounts,
     entry_premium: cfg.entryPremium,
     qty: cfg.qty,
+    max_notional_per_strike: cfg.maxNotionalPerStrike,
     tie_break: cfg.tieBreak,
     expiry_pick: cfg.expiryPick,
     expiry_label: cfg.expiryLabel,
