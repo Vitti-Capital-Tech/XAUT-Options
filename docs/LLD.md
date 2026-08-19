@@ -131,7 +131,7 @@ erDiagram
         numeric take_profit_mark "a price on the option's mark"
         numeric stop_loss_mark "a price on the mark; 0 = none"
         numeric margin_cap_pct "cut at this % of equity; 0 = off"
-        numeric margin_target_pct "cut down to this %"
+        numeric margin_target_pct "cut depth, not a gate; cap - this = hysteresis"
     }
     ORDERS {
         uuid id PK

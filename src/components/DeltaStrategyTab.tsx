@@ -577,11 +577,20 @@ export function DeltaStrategyTab({
 
         {/* Blocked margin against equity — the guard's own number, so a trader can
             see a cut coming rather than only reading about it after the fact. Warn
-            in the hold zone, bad once it is cutting; an em dash when equity is zero,
+            once past the cut's target — where a cut would leave the book, so a cut
+            is now the next thing that can happen — and bad once it is actually
+            cutting. Amber is a warning only: nothing is gated on it, and the book
+            trades on through it. An em dash when equity is zero,
             because a ratio against nothing says nothing. */}
         <Readout
           label="Margin / equity"
-          tone={plan?.margin?.cut ? 'bad' : plan?.margin?.hold ? 'warn' : 'ok'}
+          tone={
+            plan?.margin?.cut
+              ? 'bad'
+              : plan?.margin && plan.margin.marginBlocked > plan.margin.goal
+                ? 'warn'
+                : 'ok'
+          }
         >
           {plan?.margin == null
             ? '—'

@@ -257,7 +257,7 @@ an exit — never a long option.
 | No ITM legs left | Band-correct with fresh OTM sells in the `band_correction_delta` range |
 | Close (22:00 IST) | Flatten everything, stand flat overnight, reset counters |
 | Off day | A weekday outside `trade_days` reports the session **closed**, so the same flatten covers it and nothing is opened |
-| Margin over `margin_cap_pct` | Stop selling and **cut** instead: close lots, deepest ITM first, on the side whose exit pulls Δp toward the band, down to `margin_target_pct` — loss booked ([`0031`](supabase/migrations/0031_delta_margin_guard.sql)) |
+| Margin over `margin_cap_pct` | Stop selling and **cut** instead: close lots, deepest ITM first, on the side whose exit pulls Δp toward the band, down to `margin_target_pct` — loss booked ([`0031`](supabase/migrations/0031_delta_margin_guard.sql)). Below the cap every rule runs, at any margin ([`0041`](supabase/migrations/0041_always_manage_delta.sql)) |
 
 Every short it opens carries a **take-profit and no stop**, watched on the
 option's own mark:
@@ -369,11 +369,35 @@ the one rule that answers to equity instead
 | Blocked margin | What runs |
 | --- | --- |
 | `> margin_cap_pct` of equity | **Cut only.** Close lots, deepest ITM first, preferring the side whose exit pulls Δp toward the band. Nothing else runs this cycle |
-| `> margin_target_pct` of equity | **Hold.** No entry, no band correction — but rolls carry on, since a roll closes `q` and re-sells `q` further out and so cannot grow the book |
-| otherwise | Unchanged |
+| otherwise | Everything — entries, rolls and band corrections alike |
 
-The two thresholds are separate so the control cannot flap: one would cut to just
-under it, sell, and cut again. Cut lots are rounded **up** — the opposite of every
+There used to be a third row: between `margin_target_pct` and `margin_cap_pct` the
+book was frozen against new premium, rolls only. It is gone
+([`0041`](supabase/migrations/0041_always_manage_delta.sql)). The intent was sound
+— the band correction is the one rule that grows the book with nothing pairing it
+off — but what it did in practice was leave Δp outside its band with **no rule able
+to act on it**: the ITM queue is only walkable when a short is actually in the
+money, so on an all-OTM book the queue is empty, the correction is frozen, and the
+engine logs *correction held back* while net delta runs. For a strategy whose
+entire job is holding Δp inside a band, that is the one state it must not reach.
+Risk is answered at the cap now, by cutting — not by declining to manage delta.
+
+`margin_target_pct` stays, as the **depth** of a cut rather than a gate, and that
+is now its most important job: a cut leaves the book at the target, so there is
+`cap - target` of headroom before another can fire. Without that gap the
+correction would sell, cross the cap, be cut back to just under it and sell again,
+churning every cycle. Setting the two equal is what that mistake looks like.
+
+> **The trade-off, plainly.** Between the target and the cap the book now keeps
+> selling. That is more premium collected and a delta held where it is meant to
+> be; it is also a bigger book, closer to the cap, reached sooner, so cuts fire
+> more often than they did — and a cut books a loss. `margin_cap_pct = 0` still
+> turns the whole guard off.
+
+Cut lots are rounded **up** — the opposite of every
+other size here, because a cut landing a hair above the target has resolved
+nothing — and capped at the leg, so the remainder falls to the next cycle and the
+next leg. That keeps the realized loss to the smallest one that clears the breach. Cut lots are rounded **up** — the opposite of every
 other size here, because a cut landing a hair above the target has resolved
 nothing — and capped at the leg, so the remainder falls to the next cycle and the
 next leg. That keeps the realized loss to the smallest one that clears the breach.

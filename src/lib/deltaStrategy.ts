@@ -176,9 +176,13 @@ export interface DeltaConfig {
    * Where a cut stops — blocked margin as a percentage of equity.
    *
    * Separate from the cap so the control cannot flap: one threshold would cut to
-   * just under it, sell, and cut again. Between the two the book is held rather
-   * than idle — no entry and no band correction, but rolls still run, since a roll
-   * closes q and sells q further out and so cannot grow the book.
+   * just under it, sell, and cut again. The gap between the two is pure
+   * hysteresis — a cut leaves `cap - goal` of headroom before the next one can
+   * fire, which is what keeps the cut and the band correction from trading
+   * against each other every cycle.
+   *
+   * It is only a depth. Nothing is gated on it: every rule runs at every margin
+   * below the cap.
    */
   marginTargetPct: number
 }
@@ -633,20 +637,31 @@ export function bandQty(target: number, dp: number, dSelected: number): number {
 /**
  * Where an account sits against its two margin thresholds.
  *
- * `cut` is the emergency: blocked margin has passed the cap, so the only thing
- * the engine may do is close legs. `hold` is the wider zone above the target,
- * where the book is frozen against new premium but rolls carry on.
+ * `cut` is the only state that stops anything: blocked margin has passed the cap,
+ * so the only thing the engine may do is close legs. Below the cap every rule
+ * runs — entries, rolls and band corrections alike.
  *
- * Both read false when `marginCapPct` is zero, which is how the guard is turned
- * off. Negative equity lands in `cut` on its own arithmetic — every threshold is
- * then at or below zero, so any open short is over it.
+ * There used to be a third state between the target and the cap, in which the
+ * book was frozen against new premium while rolls carried on. It is gone. The
+ * zone left Δp outside its band with no rule able to act on it, which for a
+ * strategy whose entire job is holding Δp inside a band is the one failure that
+ * cannot be traded through. Delta is now managed at every margin level up to the
+ * cap, and the cap is where risk is answered.
+ *
+ * The hysteresis that zone was also providing is not lost: a cut works the book
+ * down to `goal`, so there is `cap - goal` of headroom before the next one. That
+ * gap is what stops the cut and the correction trading against each other every
+ * cycle, and it is the reason `marginTargetPct` still exists.
+ *
+ * `cut` reads false when `marginCapPct` is zero, which is how the guard is turned
+ * off entirely. Negative equity lands in `cut` on its own arithmetic — every
+ * threshold is then at or below zero, so any open short is over it.
  */
 export interface MarginState {
   cut: boolean
-  hold: boolean
   /** Blocked margin the cut triggers at. */
   cap: number
-  /** Blocked margin a cut works down to. */
+  /** Blocked margin a cut works down to. Not a gate — only a depth. */
   goal: number
   marginBlocked: number
   equity: number
@@ -667,7 +682,6 @@ export function marginState(
     // threshold is negative, so a flat book would read as cutting with nothing to
     // cut. Nothing with zero blocked margin has anything to close.
     cut: on && marginBlocked > cap && marginBlocked > 0,
-    hold: on && marginBlocked > goal,
     cap,
     goal,
     marginBlocked,
@@ -999,15 +1013,10 @@ export function planCycle(input: CycleInput): CyclePlan {
 
   // ---- Daily entry ---------------------------------------------------------
   if (session.enteredDay !== day) {
-    // Two fresh shorts is the last thing a book already near its cap should add.
-    // `enteredDay` stays unset, so the entry is retried once margin allows.
-    if (margin?.hold) {
-      return {
-        ...base,
-        action: null,
-        reason: `Margin ${pctOf(margin)} of equity — entry held back`,
-      }
-    }
+    // No margin gate here. The entry only runs on a book that has just been
+    // flattened at the previous close, so blocked margin is at or near zero when
+    // it fires; a gate on it was guarding a state the session clock already makes
+    // unreachable. Above the cap the cut branch has returned long before this.
     const call = pickByPremium(expiry, 'call', cfg, tickerFor)
     const put = pickByPremium(expiry, 'put', cfg, tickerFor)
     if (!call || !put) {
@@ -1095,19 +1104,13 @@ export function planCycle(input: CycleInput): CyclePlan {
   // delta range, but a price rule already says which strike that is, and one rule
   // the trader can see beats two that have to agree.
   //
-  // This is the one rule here that grows the book with nothing to pair it off, so
-  // it is the rule the hold zone exists to stop. Δp stays outside the band for
-  // now; the cut above is what brings it back once margin passes the cap, and it
-  // prefers exactly the side this sell would have corrected.
-  if (margin?.hold) {
-    return {
-      ...base,
-      breach,
-      action: null,
-      reason: `Δp ${fmt(dp)} outside the band — margin ${pctOf(margin)} of equity, correction held back`,
-    }
-  }
-
+  // This is the one rule here that grows the book with nothing to pair it off,
+  // and it now runs at any margin below the cap. It used to be frozen above
+  // `marginTargetPct`, which meant a breached band went uncorrected through the
+  // whole zone — the strategy's one job, not done, in the state where Δp is most
+  // likely to be running. The cut above is what answers the risk, and it prefers
+  // exactly the side this sell would have corrected, so the two pull the same way
+  // rather than against each other.
   const sellSide = correctiveSellSide(breach)
   const pick = pickByPremium(expiry, sellSide, cfg, tickerFor)
   if (!pick) {
