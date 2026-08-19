@@ -431,10 +431,32 @@ churning every cycle. Setting the two equal is what that mistake looks like.
 > more often than they did — and a cut books a loss. `margin_cap_pct = 0` still
 > turns the whole guard off.
 
+Two rules keep the cut and the band correction from trading against each other
+([`0043`](supabase/migrations/0043_stop_the_cut_correction_loop.sql)) — a loop
+that cost a live account **$2,724 in one morning**, every dollar of it bid-ask
+spread, with no market move involved:
+
+- **The cut picks its side off the band's *midpoint*, not off a breach.** Read
+  from a breach, the preference was null for every Δp *inside* the band, so the
+  cut fell through to "deepest in the money" — whichever leg spot had drifted
+  nearest, chosen with no regard for delta. Closing a short put removes positive
+  delta, so a put-side cut with Δp already below the middle drove Δp **out** of
+  the band, and the correction answered by re-selling the strike the cut had just
+  bought back. Against the midpoint the preference is defined at every Δp: below
+  it, closing a call raises Δp; above it, closing a put lowers it. On a genuine
+  breach the answer is identical to before.
+- **The correction is trimmed to what the cap has left.** Sized off Δp alone it
+  re-blocked the exact margin the cut had freed, putting the book straight back
+  over the cap. It now sells what it can margin and no more, priced per lot the
+  same way the cut prices its own.
+
+Together these make the intent above hold: sell freely up to the cap, never
+through it, and let the cut answer only the breaches a *price move* causes rather
+than the ones the book caused itself. With margin at the cap and Δp outside the
+band the correction sells nothing and says so — the book has genuinely run out of
+room, which no amount of trading fixes.
+
 Cut lots are rounded **up** — the opposite of every
-other size here, because a cut landing a hair above the target has resolved
-nothing — and capped at the leg, so the remainder falls to the next cycle and the
-next leg. That keeps the realized loss to the smallest one that clears the breach. Cut lots are rounded **up** — the opposite of every
 other size here, because a cut landing a hair above the target has resolved
 nothing — and capped at the leg, so the remainder falls to the next cycle and the
 next leg. That keeps the realized loss to the smallest one that clears the breach.

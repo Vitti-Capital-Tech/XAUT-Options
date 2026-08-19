@@ -22,7 +22,13 @@
  */
 
 import type { Expiry, Product, Ticker } from './delta'
-import { bestBid, markPrice, valuePosition, type PositionRow } from '../engine/paper'
+import {
+  FALLBACK_SHORT_IM_RATE,
+  bestBid,
+  markPrice,
+  valuePosition,
+  type PositionRow,
+} from '../engine/paper'
 
 export type OptionKind = 'call' | 'put'
 
@@ -772,9 +778,42 @@ export function cutCandidates(positions: PositionRow[], spot: number): CutCandid
  * whether or not the tidy version of it is on offer — and with Δp unknown there
  * is no preference to apply, so ITM distance decides alone.
  */
-export function pickCutLeg(candidates: CutCandidate[], breach: Breach): CutCandidate | null {
+/**
+ * Which side a cut should take lots off, given where Δp sits.
+ *
+ * Measured against the band's **midpoint**, not against whether Δp has breached.
+ * That distinction is the whole of this function, and the reason it exists:
+ * `bandBreach` is null while Δp is inside the band, and a cut that reads it got
+ * no preference at all and fell through to "deepest in the money" — which on a
+ * short strangle is whichever leg spot has drifted nearest, with no regard for
+ * what closing it does to Δp.
+ *
+ * That is not a cosmetic gap. Closing a short put removes positive delta, so a
+ * cut taken on the put side with Δp already below the midpoint drives Δp *out*
+ * of the band — and the band correction then answers by re-selling the very
+ * strike the cut just bought back. The two rules trade against each other every
+ * cycle, each paying the spread, until someone notices.
+ *
+ * Below the midpoint, closing a call raises Δp; above it, closing a put lowers
+ * Δp. Either way the cut moves Δp toward the middle of the band while it frees
+ * the margin, so the two goals are served by one action instead of fighting.
+ *
+ * On a genuine breach this returns exactly what `correctiveRollSide(breach)` did,
+ * so nothing changes on the path that was already working.
+ */
+export function cutPreferredSide(dp: number | null, band: Band): OptionKind | null {
+  if (dp === null) return null
+  const mid = (band.low + band.high) / 2
+  if (dp === mid) return null
+  return dp < mid ? 'call' : 'put'
+}
+
+export function pickCutLeg(
+  candidates: CutCandidate[],
+  /** From `cutPreferredSide`. Null only when Δp is unknown or exactly at the mid. */
+  preferred: OptionKind | null,
+): CutCandidate | null {
   if (candidates.length === 0) return null
-  const preferred = breach ? correctiveRollSide(breach) : null
   const rank = (c: CutCandidate) => (preferred && c.kind === preferred ? 0 : 1)
   return candidates.reduce((best, c) => {
     if (rank(c) !== rank(best)) return rank(c) < rank(best) ? c : best
@@ -1036,7 +1075,7 @@ export function planCycle(input: CycleInput): CyclePlan {
     // `legs` but is every bit as much of a margin problem, and cutting it needs
     // no delta. Δp only decides which side to prefer, so a null one just leaves
     // ITM distance to decide alone.
-    const leg = pickCutLeg(cutCandidates(live, spot), dp === null ? null : bandBreach(dp, band))
+    const leg = pickCutLeg(cutCandidates(live, spot), cutPreferredSide(dp, band))
     if (!leg) {
       return {
         ...base,
@@ -1196,9 +1235,40 @@ export function planCycle(input: CycleInput): CyclePlan {
       reason: `Δp ${fmt(dp)} outside the band — no ${sellSide} strike with room to correct with`,
     }
   }
-  // Sell what fits. Full strikes are already out of the candidate set, so this
-  // only trims the last partial one and the next cycle carries on from the next.
-  const q = Math.min(bandQty(targetLots, dpl, pick.optionDelta), pick.roomLots ?? Infinity)
+  // Sell what fits — under the strike's notional room, and under what is left of
+  // the margin cap.
+  //
+  // The margin half is what stops this rule and the cut trading against each
+  // other. Sized off Δp alone, a correction happily re-blocks the exact margin a
+  // cut just freed, which puts the book back over the cap and fires the next cut:
+  // a loop that converges on nothing and pays the bid-ask spread every lap. A
+  // sale that cannot be margined is not a sale the book can hold.
+  //
+  // Landing exactly on the cap is allowed — `cut` needs `> cap`, so the boundary
+  // is not a breach. What the book cannot do is cross it.
+  const marginRoomLots = (() => {
+    if (!margin || !(cfg.marginCapPct > 0)) return null
+    const imRate = input.imRateFor?.(pick.product.symbol) ?? FALLBACK_SHORT_IM_RATE
+    const perLot = (imRate * spot + pick.premium) * Number(pick.product.contract_value)
+    if (!(perLot > 0)) return null
+    return Math.max(0, Math.floor((margin.cap - margin.marginBlocked) / perLot))
+  })()
+
+  const q = Math.min(
+    bandQty(targetLots, dpl, pick.optionDelta),
+    pick.roomLots ?? Infinity,
+    marginRoomLots ?? Infinity,
+  )
+  // `margin` is re-tested only to narrow it for `pctOf` — `marginRoomLots` is
+  // non-null exactly when it is set.
+  if (margin && marginRoomLots !== null && marginRoomLots <= 0) {
+    return {
+      ...base,
+      breach,
+      action: null,
+      reason: `Δp ${fmt(dp)} outside the band — margin ${pctOf(margin)} of equity, at the cap`,
+    }
+  }
   if (q <= 0) {
     return { ...base, breach, action: null, reason: `Δp ${fmt(dp)} — breach is under one contract` }
   }
