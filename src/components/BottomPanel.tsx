@@ -1113,7 +1113,8 @@ function fillKind(f: FillRow): { label: string; cls: string } {
 function DayHeader({ iso, count, realized }: { iso: string; count: number; realized: number }) {
   return (
     <tr className="bg-sub">
-      <td colSpan={9} className="border-y border-line px-3 py-1.5">
+      {/* Spans the whole history row — ten columns since Index Price joined them. */}
+      <td colSpan={10} className="border-y border-line px-3 py-1.5">
         <div className="flex items-baseline justify-between gap-4">
           <span className="text-[11px] font-semibold tracking-[0.1em] text-ink-2 uppercase">
             {dayLabel(iso)}
@@ -1156,7 +1157,7 @@ function HistoryTable({ fills }: { fills: FillRow[] }) {
   return (
     <Paged rows={fills}>
       {(visible) => (
-    <table className="w-full min-w-[1040px] text-[13px]">
+    <table className="w-full min-w-[1140px] text-[13px]">
       {/* Auto layout gives its slack to whichever cell holds the longest string.
           That is what took Symbol out to a quarter of the row and opened the void
           between Side and Execution Price.
@@ -1172,9 +1173,12 @@ function HistoryTable({ fills }: { fills: FillRow[] }) {
         <col className="w-[7%]" />
         <col className="w-[9%]" />
         <col className="w-[10%]" />
+        {/* Index Price. Its share comes out of Exit Reason, which had the largest
+            and is the only column that can give any back without wrapping a figure. */}
+        <col className="w-[9%]" />
+        <col className="w-[9%]" />
         <col className="w-[10%]" />
-        <col className="w-[10%]" />
-        <col className="w-[23%]" />
+        <col className="w-[15%]" />
         <col className="w-[9%]" />
       </colgroup>
       <thead className="sticky top-0 z-10">
@@ -1190,6 +1194,10 @@ function HistoryTable({ fills }: { fills: FillRow[] }) {
           <Th align="center">Side</Th>
           <Th align="center">Type</Th>
           <Th align="center">Execution Price</Th>
+          {/* Where the underlying was when this filled. Named as the positions
+              table names the same quantity, and it reads well against the column
+              before it: what the contract traded at, and what gold was doing. */}
+          <Th align="center">Index Price</Th>
           <Th align="center">Size</Th>
           <Th align="center">Realized PnL</Th>
           {/* Why the leg was closed, in the engine's own words. Left-aligned: it
@@ -1233,6 +1241,21 @@ function HistoryTable({ fills }: { fills: FillRow[] }) {
                   say before. */}
               <Td align="center" className={kind.cls}>{kind.label}</Td>
               <Td align="center" className="text-ink">{price(f.price)}</Td>
+              {/* Recorded on the fill, not read live: this is where the underlying
+                  was at that moment, and re-reading it now would answer a
+                  different question on every repaint.
+
+                  A dash where the row predates the column being written on that
+                  path, and on a settlement, which is driven by the option's own
+                  settlement price and carries no underlying
+                  ([`0040`](../../supabase/migrations/0040_spot_on_every_fill.sql)). */}
+              <Td
+                align="center"
+                className={f.spot_at_fill === null ? 'text-ink-4' : 'text-ink-2'}
+                title={f.spot_at_fill === null ? 'No underlying price recorded for this fill' : undefined}
+              >
+                {f.spot_at_fill === null ? '—' : price(f.spot_at_fill)}
+              </Td>
               <Td align="center" className={buy ? 'text-pos' : 'text-neg'}>
                 {buy ? '+' : '-'}
                 {size.toFixed(3)} {UNDERLYING}

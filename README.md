@@ -402,6 +402,28 @@ the strike tie-break, expiry selection and the cycle frequency.
 > at Δp −1.5, which implies `N` nearer 3. Set it before expecting the rest of the
 > strategy to fire.
 
+#### Where gold was
+
+Trade History carries an **Index Price** column beside the execution price: the
+underlying at the instant of the fill, recorded on the row rather than read live,
+so it answers the same question on every repaint.
+
+`fills.spot_at_fill` has held it since `0001` for everything routed through
+`execute_fill` — manual trades, and every leg either strategy opens or closes.
+What it did *not* hold was the triggered closes, which write a fill directly and
+passed a literal null: every take-profit, every stop, the auto strategy's window
+close, and the futures book's liquidation. On a delta account running the default
+0.70 take-profit that is a large share of the ledger.
+[`0040`](supabase/migrations/0040_spot_on_every_fill.sql) threads the spot each
+of those three callers already holds into the fill, and computes the `notional`
+that was likewise being written as zero for want of it.
+
+Settlement stays blank, and is now the only thing that is: it is driven by the
+option's own settlement price off the product, and the underlying at that instant
+is not in that payload. Nothing is backfilled — the spot at a fill that has
+already happened is not recoverable from anything this database holds, and
+inventing it from today's price would be worse than the dash.
+
 #### Why it did that
 
 Every leg the engine touches carries its own reason, on the row it belongs to
@@ -411,6 +433,7 @@ Every leg the engine touches carries its own reason, on the row it belongs to
 | --- | --- | --- |
 | Positions | **Entry Reason** | Why this leg is on the book |
 | Trade History | **Exit Reason** | Why this leg was closed |
+| Trade History | **Index Price** | Where gold was when it filled |
 
 Both read the same shape of line — the rule that ran, where it was aiming, the
 spot it was priced at, and net portfolio delta either side of the action:
