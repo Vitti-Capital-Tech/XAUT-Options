@@ -1,42 +1,47 @@
 -- export_delta_day.sql
 --
--- One query. Paste into the Supabase SQL Editor (Dashboard > SQL Editor > New
--- query), run it, and download the result as CSV — Excel opens that directly.
+-- One delta account, one day, one expiry. Paste into the Supabase SQL Editor
+-- (Dashboard > SQL Editor > New query), run it, download the result as CSV —
+-- Excel opens that directly.
 --
 -- Read-only: one select, no writes.
 --
--- Edit the ONE literal on the next line if you want a different expiry. It is the
--- `ddmmyy` tail of the symbol, so 20 Aug 2026 is '200826'.
+-- ---------------------------------------------------------------------------
+-- The three literals at the top of the query
+-- ---------------------------------------------------------------------------
+--   account   the account name, matched case-insensitively.
+--   expiry    the `ddmmyy` tail of the symbol. 20 Aug 2026 is '200826'.
+--   day_ist   which IST calendar day of fills to return. Defaults to yesterday,
+--             computed at run time. Pin it to a date — '2026-08-19' — to get the
+--             same rows however long from now this is run, or set it to null for
+--             every day on that expiry.
 --
--- Every delta account is included, with a column saying which — so there is no
--- name to get wrong, and Jigar's rows can be filtered in the spreadsheet if there
--- is more than one book. A TOTAL row is appended at the bottom.
+-- Only accounts of kind 'delta' are considered, so a name shared with a manual or
+-- futures book cannot pull the wrong rows in.
 --
--- The SQL Editor connects as the project owner, so RLS does not apply there and
--- this sees every account. The app's anon key cannot — every policy on accounts
--- and fills is scoped to the owning user (0001_init) — which is why this is run
--- by hand rather than from a script.
+-- ---------------------------------------------------------------------------
+-- Two blanks that are expected rather than missing
+-- ---------------------------------------------------------------------------
+--   * Exit Reason is empty on opening fills. Why a leg was opened is written to
+--     `positions.entry_reason`, and a position row is deleted the moment it goes
+--     flat (docs/LLD.md, invariant 2) — so for a leg already closed only the
+--     closing fill's reason survives, which is this column.
+--   * Index Price is empty on take-profit, stop and margin-cut rows written
+--     before 0040 was applied. That migration records it going forward and cannot
+--     backfill: the spot at a fill that has already happened is not recoverable.
 --
--- Two things the ledger cannot answer, so nobody goes looking for them:
---
---   * Entry Reason is missing on closed legs. It lives on the position row, and a
---     position is deleted the moment it goes flat (docs/LLD.md, invariant 2), so
---     only the closing fill's reason survives — the Exit Reason column here.
---   * Index Price is blank on take-profit, stop and margin-cut rows from before
---     0040 was applied. That migration records it going forward and cannot
---     backfill: the spot at a fill that already happened is not recoverable.
---
--- Money conventions: Premium Flow is signed — positive is premium collected on a
--- sale, negative is premium paid to buy a leg back — so the TOTAL row reads as
--- the session's actual cash flow. Times are IST, the zone the app pins to.
+-- Premium Flow is signed — positive is premium collected on a sale, negative is
+-- premium paid to buy a leg back — so the TOTAL row reads as the day's actual
+-- cash flow rather than adding the two together. Times are IST.
 -- ============================================================================
 
 with params as (
-  select '200826'::text as expiry            -- <<< the only thing to edit
+  select 'jd_us'::text  as account,
+         '200826'::text as expiry,
+         ((now() at time zone 'Asia/Kolkata')::date - 1)::date as day_ist
 ),
 rows_ as (
-  select a.name                                                        as account,
-         f.created_at,
+  select f.created_at,
          f.symbol,
          f.contract_type,
          f.strike_price::numeric                                       as strike,
@@ -58,11 +63,13 @@ rows_ as (
   join public.accounts a on a.id = f.account_id
   join params p on true
   where a.kind = 'delta'
+    and lower(a.name) = lower(p.account)
     and split_part(f.symbol, '-', 4) = p.expiry
+    and (p.day_ist is null
+         or (f.created_at at time zone 'Asia/Kolkata')::date = p.day_ist)
 ),
 detail as (
-  select row_number() over (order by account, created_at)              as seq,
-         account,
+  select row_number() over (order by created_at)                       as seq,
          to_char(created_at at time zone 'Asia/Kolkata', 'YYYY-MM-DD') as date_ist,
          to_char(created_at at time zone 'Asia/Kolkata', 'HH24:MI:SS') as time_ist,
          symbol,
@@ -85,9 +92,8 @@ detail as (
 ),
 total as (
   select 9223372036854775807::bigint                                   as seq,
-         'TOTAL'::text                                                 as account,
-         count(*)::text || ' fills'                                    as date_ist,
-         null::text                                                    as time_ist,
+         'TOTAL'::text                                                 as date_ist,
+         count(*)::text || ' fills'                                    as time_ist,
          null::text                                                    as symbol,
          null::text                                                    as type,
          null::numeric                                                 as strike,
