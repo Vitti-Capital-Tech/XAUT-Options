@@ -27,6 +27,8 @@ interface Props {
   positions: PositionRow[]
   fills: FillRow[]
   productsBySymbol: Map<string, Product>
+  /** The fills fetch hit its cap, so the oldest day group may be incomplete. */
+  fillsTruncated?: boolean
   variant?: BookVariant
   /**
    * The account's cash, needed only by the futures variant: the book is
@@ -55,6 +57,7 @@ export function BottomPanel({
   positions,
   fills,
   productsBySymbol,
+  fillsTruncated = false,
   variant = 'options',
   cashBalance = 0,
   emptyPositions,
@@ -109,7 +112,7 @@ export function BottomPanel({
             onPickSymbol={onPickSymbol}
           />
         )}
-        {tab === 'history' && <HistoryTable fills={fills} />}
+        {tab === 'history' && <HistoryTable fills={fills} truncated={fillsTruncated} />}
       </div>
     </div>
   )
@@ -1110,7 +1113,18 @@ function fillKind(f: FillRow): { label: string; cls: string } {
  * netted nothing shows no figure at all instead of a `$0.00` that reads like a
  * result.
  */
-function DayHeader({ iso, count, realized }: { iso: string; count: number; realized: number }) {
+function DayHeader({
+  iso,
+  count,
+  realized,
+  partial = false,
+}: {
+  iso: string
+  count: number
+  realized: number
+  /** The fetch cap cut this day off, so the count and the P&L are lower bounds. */
+  partial?: boolean
+}) {
   return (
     <tr className="bg-sub">
       {/* Spans the whole history row — ten columns since Index Price joined them. */}
@@ -1119,8 +1133,18 @@ function DayHeader({ iso, count, realized }: { iso: string; count: number; reali
           <span className="text-[11px] font-semibold tracking-[0.1em] text-ink-2 uppercase">
             {dayLabel(iso)}
           </span>
-          <span className="text-[11px] text-ink-3">
-            {count} fill{count === 1 ? '' : 's'}
+          {/* A trailing + on a truncated day, because the bare number reads as the
+              day's total and on a busy book it is only what fit in the fetch. */}
+          <span
+            className="text-[11px] text-ink-3"
+            title={
+              partial
+                ? 'Older fills on this day were not loaded — the count and P&L are at least this much. Query the database for the full ledger.'
+                : undefined
+            }
+          >
+            {count}
+            {partial ? '+' : ''} fill{count === 1 && !partial ? '' : 's'}
             {realized !== 0 && (
               <>
                 {' · '}
@@ -1136,7 +1160,7 @@ function DayHeader({ iso, count, realized }: { iso: string; count: number; reali
   )
 }
 
-function HistoryTable({ fills }: { fills: FillRow[] }) {
+function HistoryTable({ fills, truncated }: { fills: FillRow[]; truncated: boolean }) {
   // Per-day counts and realized totals, over the whole ledger rather than the
   // visible page — a day split across two pages must report the same figures on
   // both, or the header becomes a per-page artefact.
@@ -1153,6 +1177,10 @@ function HistoryTable({ fills }: { fills: FillRow[] }) {
   }, [fills])
 
   if (fills.length === 0) return <Empty>No trades yet.</Empty>
+
+  // Only the last day loaded can be cut short by the fetch cap: every day above
+  // it is bounded by the day after it, so its count is the day's own.
+  const oldestDay = truncated ? dayKey(fills[fills.length - 1].created_at) : null
 
   return (
     <Paged rows={fills}>
@@ -1222,7 +1250,12 @@ function HistoryTable({ fills }: { fills: FillRow[] }) {
           return (
             <Fragment key={f.id}>
               {newDay && (
-                <DayHeader iso={f.created_at} count={day?.count ?? 0} realized={day?.realized ?? 0} />
+                <DayHeader
+                  iso={f.created_at}
+                  count={day?.count ?? 0}
+                  realized={day?.realized ?? 0}
+                  partial={key === oldestDay}
+                />
               )}
             <tr className="border-b border-line hover:bg-raised">
               <Td align="left" wall="start">

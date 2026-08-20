@@ -52,6 +52,27 @@ const ORDER_COLS =
 const FILL_COLS =
   'id, symbol, contract_type, strike_price, side, order_type, qty, price, contract_value, premium, notional, fee, realized_pnl, spot_at_fill, is_settlement, close_reason, reason, created_at'
 
+/**
+ * How many rows each history fetch takes, newest first.
+ *
+ * Orders stay at 200 — nobody reads past the last few, and a resting order is
+ * resolved by the fill engine rather than by being looked at.
+ *
+ * Fills are 1000, up from the same 200, because that cap was silently wrong in a
+ * way that mattered: the panel groups what it loaded by day and prints the count
+ * per group, so on a book making hundreds of fills a day the oldest visible day
+ * reported however many rows happened to fit rather than what the day did. 49
+ * fills today plus a 200 cap showed yesterday as "151 fills" when it was 429.
+ *
+ * 1000 is a bigger window, not a fix for the shape of the problem — a day is
+ * still capped, it is just capped further out. What makes it honest is
+ * `fillsTruncated` below, which the panel uses to mark the one group that may be
+ * short. Anything wanting a real ledger should query the database:
+ * scripts/export_delta_day.sql.
+ */
+const FILL_LIMIT = 1000
+const ORDER_LIMIT = 200
+
 export interface PlaceOrderArgs {
   product: Product
   side: Side
@@ -100,13 +121,13 @@ export function useTrading(accountId: string | null, onAccountChanged: () => voi
         .select(ORDER_COLS)
         .eq('account_id', accountId)
         .order('created_at', { ascending: false })
-        .limit(200),
+        .limit(ORDER_LIMIT),
       supabase
         .from('fills')
         .select(FILL_COLS)
         .eq('account_id', accountId)
         .order('created_at', { ascending: false })
-        .limit(200),
+        .limit(FILL_LIMIT),
     ])
 
     if (!posRes.error) setPositions((posRes.data ?? []) as PositionRow[])
@@ -365,12 +386,17 @@ export function useTrading(accountId: string | null, onAccountChanged: () => voi
   }, [tick, orders, executeFill, reload, onAccountChanged])
 
   const openOrders = orders.filter((o) => o.status === 'open')
+  // The fetch came back full, so there are older fills that were not read. Only
+  // the oldest day group can be short — every day above it is bounded by the day
+  // after it, not by the cap.
+  const fillsTruncated = fills.length >= FILL_LIMIT
 
   return {
     positions,
     orders,
     openOrders,
     fills,
+    fillsTruncated,
     loading,
     reload,
     placeOrder,

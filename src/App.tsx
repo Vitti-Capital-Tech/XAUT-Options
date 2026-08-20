@@ -404,6 +404,7 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
             <BottomPanel
               positions={trading.positions}
               fills={trading.fills}
+              fillsTruncated={trading.fillsTruncated}
               productsBySymbol={productsBySymbol}
               onClosePosition={(pos, product) => trading.closePosition(pos, product)}
               onSetTpSl={trading.setTpSl}
@@ -445,6 +446,7 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
             <BottomPanel
               positions={autoTrading.positions}
               fills={autoTrading.fills}
+              fillsTruncated={autoTrading.fillsTruncated}
               productsBySymbol={productsBySymbol}
               emptyPositions="No open positions yet. Set it Running and it sells on each closed 1h candle."
               onClosePosition={(pos, product) => autoTrading.closePosition(pos, product)}
@@ -482,6 +484,7 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
             <BottomPanel
               positions={deltaTrading.positions}
               fills={deltaTrading.fills}
+              fillsTruncated={deltaTrading.fillsTruncated}
               productsBySymbol={productsBySymbol}
               emptyPositions="No open positions. Set it Running and it sells its first pair at the session open."
               onClosePosition={(pos, product) => deltaTrading.closePosition(pos, product)}
@@ -524,6 +527,7 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
             <BottomPanel
               positions={futuresTrading.positions}
               fills={futuresTrading.fills}
+              fillsTruncated={futuresTrading.fillsTruncated}
               productsBySymbol={productsBySymbol}
               variant="futures"
               cashBalance={Number(futuresAccounts.selected?.cash_balance ?? 0)}
