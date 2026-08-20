@@ -1155,50 +1155,70 @@ function DayHeader({
     <tr className="bg-sub">
       {/* Spans the whole history row — ten columns since Index Price joined them. */}
       <td colSpan={10} className="border-y border-line px-3 py-1.5">
-        <div className="flex items-baseline justify-between gap-4">
-          <span className="flex items-baseline gap-2">
-            <span className="text-[11px] font-semibold tracking-[0.1em] text-ink-2 uppercase">
-              {dayLabel(iso)}
+        {/* Date, then what the day did, then what you can do with it — the row
+            reads left to right and the action sits at its end, where the
+            positions table walls its own Action column. It used to sit against
+            the date, which crowded the one label that has to be findable while
+            scrolling and left the button in the middle of nothing. */}
+        <div className="flex items-center justify-between gap-4">
+          <span className="text-[11px] font-semibold tracking-[0.1em] text-ink-2 uppercase">
+            {dayLabel(iso)}
+          </span>
+
+          <span className="flex items-center gap-3">
+            {/* A trailing + on a truncated day, because the bare number reads as
+                the day's total and on a busy book it is only what fit in the
+                fetch. */}
+            <span
+              className="text-[11px] text-ink-3"
+              title={
+                partial
+                  ? 'Older fills on this day were not loaded — the count and P&L are at least this much. Export the day for the full ledger.'
+                  : undefined
+              }
+            >
+              {count}
+              {partial ? '+' : ''} fill{count === 1 && !partial ? '' : 's'}
+              {realized !== 0 && (
+                <>
+                  {' · '}
+                  <span className={pnlClass(realized)}>
+                    <Money value={realized} signed suffix="inherit" />
+                  </span>
+                </>
+              )}
             </span>
-            {/* Beside the date rather than out with the figures: it acts on this
-                day, and the count and P&L to the right are what it exports, not
-                what it is. */}
+
+            {/* A bordered box in brand ink, which is what an action reads as
+                everywhere else here — the TP/SL pencil, the account reset. The
+                first version was 10px in tertiary ink on a tertiary border, which
+                is the styling this codebase uses for things that are *not*
+                clickable, and it duly went unnoticed.
+
+                Labelled Export rather than Excel: the file is a CSV. It opens in
+                Excel, and the title says so, but the button should not name a
+                format it does not write. */}
             {onExport && (
               <button
                 onClick={run}
                 disabled={state === 'busy'}
-                title={`Download every fill on ${dayKey(iso)} as a spreadsheet. Read from the database, so the file is the whole day even where this table is showing a capped view of it.`}
-                className="rounded border border-raised-3 px-1.5 py-0.5 text-[10px] leading-none font-medium text-ink-3 hover:border-ink-3 hover:text-ink disabled:opacity-40"
+                title={`Download every fill on ${dayKey(iso)} as a CSV — opens in Excel. Read from the database, so the file is the whole day even where this table is showing a capped view of it.`}
+                className={`shrink-0 rounded border px-2 py-1 text-[11px] leading-none font-medium transition-colors disabled:opacity-60 ${
+                  state === 'done'
+                    ? 'border-pos-on-muted bg-pos-muted text-pos'
+                    : state === 'empty'
+                      ? 'border-raised-3 text-ink-3'
+                      : 'border-raised-3 text-brand-text hover:border-brand-text hover:bg-brand-muted/40'
+                }`}
               >
                 {state === 'busy'
-                  ? '…'
+                  ? 'Exporting…'
                   : state === 'done'
-                    ? '✓ saved'
+                    ? 'Saved ✓'
                     : state === 'empty'
-                      ? 'no rows'
-                      : '↓ Excel'}
+                      ? 'No rows'
+                      : 'Export'}
               </button>
-            )}
-          </span>
-          {/* A trailing + on a truncated day, because the bare number reads as the
-              day's total and on a busy book it is only what fit in the fetch. */}
-          <span
-            className="text-[11px] text-ink-3"
-            title={
-              partial
-                ? 'Older fills on this day were not loaded — the count and P&L are at least this much. Query the database for the full ledger.'
-                : undefined
-            }
-          >
-            {count}
-            {partial ? '+' : ''} fill{count === 1 && !partial ? '' : 's'}
-            {realized !== 0 && (
-              <>
-                {' · '}
-                <span className={pnlClass(realized)}>
-                  <Money value={realized} signed suffix="inherit" />
-                </span>
-              </>
             )}
           </span>
         </div>
