@@ -33,6 +33,21 @@
 -- Premium Flow is signed — positive is premium collected on a sale, negative is
 -- premium paid to buy a leg back — so the TOTAL row reads as the day's actual
 -- cash flow rather than adding the two together. Times are IST.
+--
+-- ---------------------------------------------------------------------------
+-- If it comes back with only the TOTAL row, reading 0 fills
+-- ---------------------------------------------------------------------------
+-- One of the three filters excluded everything. Run this to see what actually
+-- exists, then set the literals to a combination that is really there. The usual
+-- culprit is the expiry: the strategy trades whichever expiry is pinned on its
+-- own bar, so a given day's fills are not necessarily on the expiry that day's
+-- date suggests.
+--
+--     select a.name, a.kind, split_part(f.symbol,'-',4) as expiry,
+--            (f.created_at at time zone 'Asia/Kolkata')::date as day_ist,
+--            count(*) as fills
+--     from public.fills f join public.accounts a on a.id = f.account_id
+--     group by 1,2,3,4 order by day_ist desc, a.name, expiry;
 -- ============================================================================
 
 with params as (
@@ -64,7 +79,10 @@ rows_ as (
   join params p on true
   where a.kind = 'delta'
     and lower(a.name) = lower(p.account)
-    and split_part(f.symbol, '-', 4) = p.expiry
+    -- Both filters accept null as "every one of these", so the same query answers
+    -- "yesterday, whatever expiry" and "that expiry, whatever day". Setting both
+    -- to null returns the account's whole history.
+    and (p.expiry is null or split_part(f.symbol, '-', 4) = p.expiry)
     and (p.day_ist is null
          or (f.created_at at time zone 'Asia/Kolkata')::date = p.day_ist)
 ),
