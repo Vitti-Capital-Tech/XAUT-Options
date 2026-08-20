@@ -29,6 +29,12 @@ interface Props {
   productsBySymbol: Map<string, Product>
   /** The fills fetch hit its cap, so the oldest day group may be incomplete. */
   fillsTruncated?: boolean
+  /**
+   * Download one IST day of this account's fills. Queried fresh from the
+   * database rather than taken from `fills`, so the file is the whole day even
+   * where the panel is showing a capped view of it. Omit and no button renders.
+   */
+  onExportDay?: (day: string) => Promise<number>
   variant?: BookVariant
   /**
    * The account's cash, needed only by the futures variant: the book is
@@ -58,6 +64,7 @@ export function BottomPanel({
   fills,
   productsBySymbol,
   fillsTruncated = false,
+  onExportDay,
   variant = 'options',
   cashBalance = 0,
   emptyPositions,
@@ -112,7 +119,7 @@ export function BottomPanel({
             onPickSymbol={onPickSymbol}
           />
         )}
-        {tab === 'history' && <HistoryTable fills={fills} truncated={fillsTruncated} />}
+        {tab === 'history' && <HistoryTable fills={fills} truncated={fillsTruncated} onExportDay={onExportDay} />}
       </div>
     </div>
   )
@@ -1118,20 +1125,60 @@ function DayHeader({
   count,
   realized,
   partial = false,
+  onExport,
 }: {
   iso: string
   count: number
   realized: number
   /** The fetch cap cut this day off, so the count and the P&L are lower bounds. */
   partial?: boolean
+  /** Resolves with how many rows were written. Omit and no button renders. */
+  onExport?: () => Promise<number>
 }) {
+  // Three states rather than two: a spreadsheet of a busy day is a round trip to
+  // the database, and a button that looks idle while it works gets clicked again.
+  const [state, setState] = useState<'idle' | 'busy' | 'done' | 'empty'>('idle')
+
+  const run = async () => {
+    if (!onExport || state === 'busy') return
+    setState('busy')
+    try {
+      setState((await onExport()) > 0 ? 'done' : 'empty')
+    } catch {
+      setState('idle')
+    }
+    // Back to a plain button, so the next day exported does not look already done.
+    setTimeout(() => setState('idle'), 2500)
+  }
+
   return (
     <tr className="bg-sub">
       {/* Spans the whole history row — ten columns since Index Price joined them. */}
       <td colSpan={10} className="border-y border-line px-3 py-1.5">
         <div className="flex items-baseline justify-between gap-4">
-          <span className="text-[11px] font-semibold tracking-[0.1em] text-ink-2 uppercase">
-            {dayLabel(iso)}
+          <span className="flex items-baseline gap-2">
+            <span className="text-[11px] font-semibold tracking-[0.1em] text-ink-2 uppercase">
+              {dayLabel(iso)}
+            </span>
+            {/* Beside the date rather than out with the figures: it acts on this
+                day, and the count and P&L to the right are what it exports, not
+                what it is. */}
+            {onExport && (
+              <button
+                onClick={run}
+                disabled={state === 'busy'}
+                title={`Download every fill on ${dayKey(iso)} as a spreadsheet. Read from the database, so the file is the whole day even where this table is showing a capped view of it.`}
+                className="rounded border border-raised-3 px-1.5 py-0.5 text-[10px] leading-none font-medium text-ink-3 hover:border-ink-3 hover:text-ink disabled:opacity-40"
+              >
+                {state === 'busy'
+                  ? '…'
+                  : state === 'done'
+                    ? '✓ saved'
+                    : state === 'empty'
+                      ? 'no rows'
+                      : '↓ Excel'}
+              </button>
+            )}
           </span>
           {/* A trailing + on a truncated day, because the bare number reads as the
               day's total and on a busy book it is only what fit in the fetch. */}
@@ -1160,7 +1207,15 @@ function DayHeader({
   )
 }
 
-function HistoryTable({ fills, truncated }: { fills: FillRow[]; truncated: boolean }) {
+function HistoryTable({
+  fills,
+  truncated,
+  onExportDay,
+}: {
+  fills: FillRow[]
+  truncated: boolean
+  onExportDay?: (day: string) => Promise<number>
+}) {
   // Per-day counts and realized totals, over the whole ledger rather than the
   // visible page — a day split across two pages must report the same figures on
   // both, or the header becomes a per-page artefact.
@@ -1255,6 +1310,7 @@ function HistoryTable({ fills, truncated }: { fills: FillRow[]; truncated: boole
                   count={day?.count ?? 0}
                   realized={day?.realized ?? 0}
                   partial={key === oldestDay}
+                  onExport={onExportDay ? () => onExportDay(key) : undefined}
                 />
               )}
             <tr className="border-b border-line hover:bg-raised">

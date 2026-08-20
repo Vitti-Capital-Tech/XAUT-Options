@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { market, useMarketTick } from '../lib/marketStore'
 import type { Product } from '../lib/delta'
 import { isPerp, parseSymbol } from '../lib/delta'
+import { downloadCsv, fillsFilename, fillsToCsv, istDayRange } from '../lib/exportFills'
 import {
   computeFee,
   crossesNow,
@@ -317,6 +318,38 @@ export function useTrading(accountId: string | null, onAccountChanged: () => voi
     [reload],
   )
 
+  /**
+   * Download one IST calendar day of this account's fills as a spreadsheet.
+   *
+   * Queried fresh rather than filtered out of `fills`, and that is the whole
+   * point: the loaded set is the newest `FILL_LIMIT` rows, so exporting from it
+   * would hand over whatever happened to fit — which is exactly the way the day
+   * header used to under-report a busy session. This asks the database for the
+   * day and takes all of it.
+   *
+   * Returns how many rows were written, so the caller can say so.
+   */
+  const exportDay = useCallback(
+    async (day: string, accountName: string): Promise<number> => {
+      if (!accountId) return 0
+      const { start, end } = istDayRange(day)
+      const { data, error } = await supabase
+        .from('fills')
+        .select(FILL_COLS)
+        .eq('account_id', accountId)
+        .gte('created_at', start)
+        .lt('created_at', end)
+        .order('created_at', { ascending: true })
+      if (error) throw new Error(error.message)
+
+      const rows = (data ?? []) as FillRow[]
+      if (rows.length === 0) return 0
+      downloadCsv(fillsFilename(accountName, day), fillsToCsv(rows))
+      return rows.length
+    },
+    [accountId],
+  )
+
   /** Flatten a position with an opposing market order. */
   const closePosition = useCallback(
     async (pos: PositionRow, product: Product, lots?: number) => {
@@ -403,6 +436,7 @@ export function useTrading(accountId: string | null, onAccountChanged: () => voi
     cancelOrder,
     closePosition,
     setTpSl,
+    exportDay,
     registerProducts,
   }
 }

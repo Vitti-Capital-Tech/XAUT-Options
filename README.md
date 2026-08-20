@@ -614,6 +614,25 @@ perpetual as a put — a long XAUTUSD would have taken profit on the index
 *falling*. [`0038`](supabase/migrations/0038_futures.sql) splits the case so that
 a non-option is simply bullish when long.
 
+### Downloading a day
+
+Every day group in **Trade History** carries a **↓ Excel** button. It writes that
+IST day's fills as a CSV — Excel opens it directly — with the columns in the same
+order as [`scripts/export_delta_day.sql`](scripts/export_delta_day.sql), so the
+two routes cannot disagree about the same day.
+
+It **queries the database for the day** rather than exporting what the table is
+showing, and that is the point. The panel loads the newest 1,000 fills for the
+account; a book making hundreds a day will have days that do not fit, and the
+oldest visible group is marked `151+ fills` when so. The button ignores all of
+that and takes the whole day.
+
+Rows come out oldest-first — the opposite of the panel — because a ledger someone
+reads down and reconciles wants the session in the order it happened. A `TOTAL`
+row closes the file, with the fill count, the net premium flow, fees and realized
+P&L. The file carries a UTF-8 BOM, without which Excel reads the `Δ` in every
+engine reason line as mojibake.
+
 ### Multiple accounts
 
 The switcher (top right) holds any number of independent paper accounts, each
