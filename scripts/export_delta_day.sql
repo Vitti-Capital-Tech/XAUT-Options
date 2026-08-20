@@ -1,23 +1,26 @@
 -- export_delta_day.sql
 --
--- One delta account, one day, one expiry. Paste into the Supabase SQL Editor
--- (Dashboard > SQL Editor > New query), run it, download the result as CSV —
--- Excel opens that directly.
+-- One delta account, one day. Paste into the Supabase SQL Editor (Dashboard >
+-- SQL Editor > New query), run it, download the result as CSV — Excel opens that
+-- directly.
 --
 -- Read-only: one select, no writes.
+--
+-- As set below: JD US, 19 Aug 2026 IST, every expiry it traded that day.
 --
 -- ---------------------------------------------------------------------------
 -- The three literals at the top of the query
 -- ---------------------------------------------------------------------------
---   account   the account name, matched case-insensitively.
---   expiry    the `ddmmyy` tail of the symbol. 20 Aug 2026 is '200826'.
---   day_ist   which IST calendar day of fills to return. Defaults to yesterday,
---             computed at run time. Pin it to a date — '2026-08-19' — to get the
---             same rows however long from now this is run, or set it to null for
---             every day on that expiry.
+--   account   the account name, matched case-insensitively and trimmed. It is
+--             'JD US' with a space, not an underscore.
+--   day_ist   which IST calendar day to return. Null for every day.
+--   expiry    the `ddmmyy` tail of the symbol, or null for every expiry. A single
+--             day often spans two: an expiry settles mid-session and the strategy
+--             is pinned to the next one, so 19 Aug 2026 carries fills on both
+--             '190826' and '200826'. The Expiry column below splits them.
 --
--- Only accounts of kind 'delta' are considered, so a name shared with a manual or
--- futures book cannot pull the wrong rows in.
+-- Only accounts of kind 'delta' are considered, so a name shared with a manual,
+-- auto or futures book cannot pull the wrong rows in.
 --
 -- ---------------------------------------------------------------------------
 -- Two blanks that are expected rather than missing
@@ -37,11 +40,8 @@
 -- ---------------------------------------------------------------------------
 -- If it comes back with only the TOTAL row, reading 0 fills
 -- ---------------------------------------------------------------------------
--- One of the three filters excluded everything. Run this to see what actually
--- exists, then set the literals to a combination that is really there. The usual
--- culprit is the expiry: the strategy trades whichever expiry is pinned on its
--- own bar, so a given day's fills are not necessarily on the expiry that day's
--- date suggests.
+-- One of the filters excluded everything. Run this to see what actually exists,
+-- then set the literals to a combination that is really there:
 --
 --     select a.name, a.kind, split_part(f.symbol,'-',4) as expiry,
 --            (f.created_at at time zone 'Asia/Kolkata')::date as day_ist,
@@ -51,13 +51,14 @@
 -- ============================================================================
 
 with params as (
-  select 'jd_us'::text  as account,
-         '200826'::text as expiry,
-         ((now() at time zone 'Asia/Kolkata')::date - 1)::date as day_ist
+  select 'JD US'::text        as account,
+         '2026-08-19'::date   as day_ist,
+         null::text           as expiry
 ),
 rows_ as (
   select f.created_at,
          f.symbol,
+         split_part(f.symbol, '-', 4)                                  as expiry,
          f.contract_type,
          f.strike_price::numeric                                       as strike,
          f.side,
@@ -78,19 +79,19 @@ rows_ as (
   join public.accounts a on a.id = f.account_id
   join params p on true
   where a.kind = 'delta'
-    and lower(a.name) = lower(p.account)
+    and lower(trim(a.name)) = lower(trim(p.account))
     -- Both filters accept null as "every one of these", so the same query answers
-    -- "yesterday, whatever expiry" and "that expiry, whatever day". Setting both
-    -- to null returns the account's whole history.
-    and (p.expiry is null or split_part(f.symbol, '-', 4) = p.expiry)
+    -- "that day, whatever expiry" and "that expiry, whatever day".
     and (p.day_ist is null
          or (f.created_at at time zone 'Asia/Kolkata')::date = p.day_ist)
+    and (p.expiry is null or split_part(f.symbol, '-', 4) = p.expiry)
 ),
 detail as (
   select row_number() over (order by created_at)                       as seq,
          to_char(created_at at time zone 'Asia/Kolkata', 'YYYY-MM-DD') as date_ist,
          to_char(created_at at time zone 'Asia/Kolkata', 'HH24:MI:SS') as time_ist,
          symbol,
+         expiry,
          case contract_type when 'call_options' then 'Call'
                             when 'put_options'  then 'Put'
                             else contract_type end                     as type,
@@ -113,6 +114,7 @@ total as (
          'TOTAL'::text                                                 as date_ist,
          count(*)::text || ' fills'                                    as time_ist,
          null::text                                                    as symbol,
+         null::text                                                    as expiry,
          null::text                                                    as type,
          null::numeric                                                 as strike,
          null::text                                                    as side,
