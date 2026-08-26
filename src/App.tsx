@@ -6,7 +6,6 @@ import { OrderTicket, type TicketRequest } from './components/OrderTicket'
 import { BottomPanel } from './components/BottomPanel'
 import { StrategyTab } from './components/StrategyTab'
 import { DeltaStrategyTab } from './components/DeltaStrategyTab'
-import { FuturesTab } from './components/FuturesTab'
 import { AdminPanel } from './components/AdminPanel'
 import { Toasts } from './components/Toasts'
 import { useAuth } from './hooks/useAuth'
@@ -48,9 +47,11 @@ export default function App() {
 
 function Terminal({ userId, email }: { userId: string; email: string | undefined }) {
   // Four independent books, one per page: the chain trades manual accounts, the
-  // auto strategy trades auto accounts, the delta strategy trades delta ones and
-  // the futures page trades the perpetual on its own. Same tables throughout,
-  // partitioned by account kind — nothing is shared between them.
+  // auto strategy trades auto accounts, and the delta strategy trades two books
+  // of its own — the delta account, which corrects its delta with options, and
+  // the futures account, which corrects it by buying and selling the XAUT
+  // perpetual instead. Same tables throughout, partitioned by account kind —
+  // nothing is shared between them.
   const manualAccounts = useAccounts(userId, 'manual')
   const autoAccounts = useAccounts(userId, 'auto')
   const deltaAccounts = useAccounts(userId, 'delta')
@@ -252,6 +253,25 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
   )
   const deltaExpiry = pickExpiry(expiries, deltaStrategy.config)
 
+  // ---- The same strategy, hedged with futures ------------------------------
+  // One hook, one settings table and one server-side engine; `futures` is what
+  // tells all three that a breach of the band is answered by trading the
+  // perpetual rather than by rolling an option. The engine reads the same thing
+  // off the account's kind, so the page and the rule cannot disagree
+  // (0044_futures_delta_hedge).
+  const futuresStrategy = useDeltaStrategy(
+    futuresAccounts.selectedId,
+    {
+      positions: futuresTrading.positions,
+      expiries,
+      cashBalance: Number(futuresAccounts.selected?.cash_balance ?? 0),
+      imRateFor,
+    },
+    futuresTrading.reload,
+    'futures',
+  )
+  const futuresExpiry = pickExpiry(expiries, futuresStrategy.config)
+
   // ---- Live stream ---------------------------------------------------------
   const [stream] = useState(() => new MarketStream())
 
@@ -274,10 +294,12 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
       for (const p of e.puts.values()) symbols.add(p.symbol)
     }
     addChain(expiry)
-    // The delta strategy picks strikes by premium and by delta across its whole
-    // expiry, so that chain has to be streamed even while the chain page is
-    // showing a different one.
+    // Both delta books pick strikes by premium across their whole expiry, so
+    // those chains have to be streamed even while the chain page is showing a
+    // different one. The futures book sells the same option pair at the open —
+    // only its delta correction is different.
     addChain(deltaExpiry)
+    addChain(futuresExpiry)
     // Every book's holdings, so P&L, limit fills and the strategies' marks keep
     // ticking whichever page is up.
     for (const p of manualTrading.positions) symbols.add(p.symbol)
@@ -288,10 +310,11 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
     for (const o of deltaTrading.openOrders) symbols.add(o.symbol)
     for (const p of futuresTrading.positions) symbols.add(p.symbol)
     for (const o of futuresTrading.openOrders) symbols.add(o.symbol)
-    // Always, held or not: it is a single symbol, and the futures page has to
-    // paint a price the moment it is opened rather than a dash until the first
-    // trade. It is also the one contract whose mark keeps costing money while
-    // nobody is looking, since funding does not wait for the tab.
+    // Always, held or not: it is a single symbol, and the futures book needs its
+    // mark to value a hedge and its funding rate to say what that hedge will pay
+    // — the second of which is worth showing before there is a hedge at all. It
+    // is also the one contract whose mark keeps costing money while nobody is
+    // looking, since funding does not wait for the tab.
     symbols.add(PERP_SYMBOL)
     stream.setSymbols([...symbols])
   }, [
@@ -306,6 +329,7 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
     futuresTrading.positions,
     futuresTrading.openOrders,
     deltaExpiry,
+    futuresExpiry,
   ])
 
   // ---- Account summary ----------------------------------------------------
@@ -498,34 +522,55 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
         </>
       ) : (
         <>
-          {/* The perpetual. No expiry strip and no chain — there is one contract,
-              so the page is the ticket and the book beneath it. Nothing here
-              needs the screen's height, which is why this section is sized by its
-              content rather than pinned to the viewport like the other three. */}
-          <div className="flex flex-col">
+          {/* The same page as the delta strategy's, because it is the same
+              strategy: one control bar, the expiry strip and the chain it sells
+              its pair from. What differs is under the hood — a breach is answered
+              by trading the perpetual — and on the bar, where the roll controls
+              give way to the hedge's leverage, size and funding.
+
+              min-h-screen for the same reason as the other two strategy pages:
+              the bar is tall and wraps, and h-screen would resolve the chain's
+              flex-1 to nothing on a short viewport. */}
+          <div className="flex min-h-screen flex-col">
             {topBar}
-            <FuturesTab
-              product={perp}
-              error={perpError}
-              position={futuresTrading.positions.find((p) => p.symbol === PERP_SYMBOL)}
-              cashBalance={Number(futuresAccounts.selected?.cash_balance ?? 0)}
-              available={summary.available}
-              onSubmit={async ({ product, side, qty, leverage }) => {
-                await futuresTrading.placeOrder({
-                  product,
-                  side,
-                  orderType: 'market',
-                  qty,
-                  limitPrice: null,
-                  leverage,
-                })
-              }}
+            <DeltaStrategyTab
+              strategy={futuresStrategy}
+              expiries={expiries}
+              mode="futures"
+              perp={perp}
+              hedgePosition={futuresTrading.positions.find((p) => p.symbol === PERP_SYMBOL)}
             />
+            {/* The contract behind the hedge, when its own fetch has failed. Worth
+                saying rather than swallowing, but worth being precise about: the
+                engine polls the perpetual server-side and hedges regardless. What
+                is degraded here is the bar — the leverage ceiling and the funding
+                clock are read off this product. */}
+            {perpError && (
+              <div className="border-b border-line bg-raised px-5 py-2 text-[12px] text-neg">
+                The XAUT perpetual did not load — {perpError}. Hedging continues
+                server-side; the leverage cap and funding clock above are unknown until it does.
+              </div>
+            )}
+            <ExpiryTabs expiries={expiries} active={activeExpiry} onSelect={setActiveExpiry} />
+            <div className="flex min-h-[320px] flex-1 flex-col">
+              {expiry && (
+                <OptionChain
+                  expiry={expiry}
+                  // The futures book, so a held strike is marked on the page that
+                  // trades it.
+                  positions={futuresTrading.positions}
+                  onPick={openTicket}
+                />
+              )}
+            </div>
           </div>
 
-          {/* The futures book, on the futures account — separate from all three
-              option books. The table swaps its greek columns for the leverage and
-              the liquidation price, which are what a perpetual is read by. */}
+          {/* The futures book, on the futures account — separate again from the
+              other three. Read in the options table rather than the perpetual
+              one: this book is a short strangle that happens to carry a hedge,
+              so the greeks and the reason each leg is on the book are what it is
+              read by. The hedge's own row shows a delta of exactly its size and
+              no gamma, which is what a linear contract has. */}
           <div className="flex flex-col">
             <BottomPanel
               positions={futuresTrading.positions}
@@ -533,12 +578,10 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
               fillsTruncated={futuresTrading.fillsTruncated}
               onExportDay={(day) => futuresTrading.exportDay(day, futuresAccounts.selected?.name ?? 'account')}
               productsBySymbol={productsBySymbol}
-              variant="futures"
-              cashBalance={Number(futuresAccounts.selected?.cash_balance ?? 0)}
-              emptyPositions="No open position. Size an order above and go long or short."
+              emptyPositions="No open positions. Set it Running and it sells its first pair at the session open."
               onClosePosition={(pos, product) => futuresTrading.closePosition(pos, product)}
               onSetTpSl={futuresTrading.setTpSl}
-              onPickSymbol={() => {}}
+              onPickSymbol={(product) => openTicket(product, 'buy', null)}
             />
           </div>
         </>

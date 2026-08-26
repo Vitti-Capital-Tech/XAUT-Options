@@ -4,11 +4,21 @@
  * their own. `planCycle` is the whole engine: hand it the book and the market,
  * and it returns the single next action, or null with a reason.
  *
- * The rules come from Gold_Options_Delta_Strategy.docx. It is sell-only: no leg
- * is ever bought to reduce delta. Every session opens flat, sells N symmetric
- * a call/put pair near the entry premium, keeps net portfolio delta inside the
- * band by rolling in-the-money shorts, falls back to fresh out-of-the-money
- * sells when nothing is left to roll, and flattens at the close.
+ * The rules come from Gold_Options_Delta_Strategy.docx. Every session opens flat,
+ * sells one symmetric call/put pair near the entry premium, keeps net portfolio
+ * delta inside the band, and flattens at the close.
+ *
+ * How the band is defended is the one thing that differs between the two books
+ * this drives — `mode` on `CycleInput`, read off the account's kind:
+ *
+ *   options   the document's own rule, and sell-only: roll an in-the-money short
+ *             further out, fall back to a fresh out-of-the-money sell, and never
+ *             buy an option to reduce delta
+ *   futures   one trade in the XAUT perpetual, bought or sold, and no option is
+ *             touched to move Δp at all
+ *
+ * Everything else — the session clock, the entry, the band and its gamma
+ * derivation, the brackets, the margin guard, the close — is shared by both.
  *
  * Units — the one thing worth being careful about. Δp here is
  *
@@ -21,16 +31,41 @@
  * short put (negative lots, negative delta) pushes it up.
  */
 
-import type { Expiry, Product, Ticker } from './delta'
+import { isPerp, type Expiry, type Product, type Ticker } from './delta'
 import {
   FALLBACK_SHORT_IM_RATE,
   bestBid,
   markPrice,
   valuePosition,
   type PositionRow,
+  type Side,
 } from '../engine/paper'
 
 export type OptionKind = 'call' | 'put'
+
+/**
+ * What a leg is, for the purpose of measuring Δp — the two option kinds plus the
+ * perpetual a futures-hedged book carries.
+ *
+ * Kept apart from `OptionKind` on purpose: a perpetual is a leg of the book and
+ * has to be in Δp, but it is never a thing the strike picker may choose, never a
+ * side a roll can be taken on, and never a candidate for a margin cut. The type
+ * is what stops it being passed to any of them.
+ */
+export type LegKind = OptionKind | 'perp'
+
+/**
+ * How a book brings Δp back inside its band.
+ *
+ * `options` is the strategy as the rules document writes it: roll an in-the-money
+ * short further out, and fall back to a fresh out-of-the-money sell. `futures`
+ * replaces both with one trade in the XAUT perpetual, bought or sold.
+ *
+ * Not a setting — it is read off the account's kind, so the page a trader is
+ * looking at and the rule the engine runs cannot disagree. See
+ * [`0044`](../../supabase/migrations/0044_futures_delta_hedge.sql).
+ */
+export type HedgeMode = 'options' | 'futures'
 
 /**
  * Where a correction aims to land once the band has been breached — the two
@@ -109,10 +144,22 @@ export interface DeltaConfig {
   gammaMultiplier: number
   targetLanding: TargetLanding
   bandBuffer: number
-  /** Points of |spot − strike| that flag a short leg as needing management. */
+  /** Points of |spot − strike| that flag a short leg as needing management.
+   *  Options-hedged books only — a futures hedge reads Δp, not distance. */
   itmTrigger: number
   maxRolls: number
   rollCounts: RollCounts
+  /**
+   * Leverage the futures hedge is opened at, on a futures-hedged book. Margin is
+   * `notional / leverage`, floored at the contract's own 1% — so 100, the
+   * default and the venue's maximum, is the cheapest a hedge can be carried.
+   *
+   * Worth being clear about what it does and does not change: the hedge's P&L is
+   * the perpetual's move against its size, whatever this says. Leverage sets the
+   * margin the position blocks, and nothing else. Ignored on an options-hedged
+   * book, which never opens one.
+   */
+  hedgeLeverage: number
   /**
    * The premium every sale aims for — the strike quoted closest to this wins.
    * It is the only price rule the strategy has: entries, roll replacements and
@@ -242,6 +289,10 @@ export const DEFAULT_DELTA_CONFIG: DeltaConfig = {
   // Cut once margin passes equity, and cut down to 90% of it.
   marginCapPct: 100,
   marginTargetPct: 90,
+  // The venue's maximum, which on a hedge is the right end of the range: it
+  // blocks the least margin for the same position, and the position's risk is
+  // its size either way.
+  hedgeLeverage: 100,
 }
 
 /** State that lives for one session and resets at the next open. */
@@ -395,21 +446,26 @@ export function tickerGamma(t: Ticker | undefined): number | null {
 
 export interface LegDelta {
   position: PositionRow
-  kind: OptionKind
+  kind: LegKind
+  /** NaN on the perpetual, which has no strike. */
   strike: number
-  /** The option's own delta, signed: positive for a call, negative for a put. */
+  /** The contract's own delta, signed: positive for a call, negative for a put,
+   *  and exactly 1 on the perpetual — one lot of it is one lot of the underlying. */
   optionDelta: number
-  /** signed lots × option delta — this leg's contribution to Δp. */
+  /** signed lots × delta — this leg's contribution to Δp. */
   contribution: number
-  /** The option's own gamma, always positive as the venue quotes it. */
+  /** The option's own gamma, always positive as the venue quotes it. Zero on the
+   *  perpetual, whose delta does not move with spot. */
   optionGamma: number
-  /** signed lots × option gamma — this leg's contribution to Γp. Negative on a short. */
+  /** signed lots × gamma — this leg's contribution to Γp. Negative on a short. */
   gammaContribution: number
-  /** How far in the money the *short* leg is, in points. Negative when OTM. */
+  /** How far in the money the *short* leg is, in points. Negative when OTM, and
+   *  −∞ on the perpetual, which is never in the money and never queued. */
   itmDistance: number
 }
 
-export function legKind(pos: PositionRow): OptionKind {
+export function legKind(pos: PositionRow): LegKind {
+  if (isPerp(pos.contract_type)) return 'perp'
   return pos.contract_type === 'put_options' ? 'put' : 'call'
 }
 
@@ -428,6 +484,18 @@ export function itmDistanceOf(kind: OptionKind, strike: number, spot: number): n
  * gamma multiplier set it decides the band itself, so a leg silently missing from
  * Γp would widen or narrow the band by that leg's whole share and the breach test
  * would be answering a different question than the trader asked.
+ *
+ * The perpetual is the one leg whose greeks are not read from the feed, because
+ * the venue publishes none for it — `"greeks": null` on the ticker. It does not
+ * need them: a linear contract has delta 1 per lot and gamma 0 by definition, and
+ * those are constants rather than quotes. Mirrors the chain row
+ * [`0044`](../../supabase/migrations/0044_futures_delta_hedge.sql) writes for it,
+ * so the readout and the engine measure the same book.
+ *
+ * The consequence worth stating: a futures hedge is *inside* Δp. So the gap
+ * between Δp and the target is always the size the hedge still needs, and a hedge
+ * that has grown too big for the option deltas it was answering shows up as a
+ * breach on the other edge — one that the same rule sells back down.
  */
 export function bookDeltas(
   positions: PositionRow[],
@@ -439,15 +507,16 @@ export function bookDeltas(
 
   for (const pos of positions) {
     if (pos.net_qty === 0) continue
+    const kind = legKind(pos)
+    const perp = kind === 'perp'
     const ticker = tickerFor(pos.symbol)
-    const optionDelta = tickerDelta(ticker)
-    const optionGamma = tickerGamma(ticker)
+    const optionDelta = perp ? 1 : tickerDelta(ticker)
+    const optionGamma = perp ? 0 : tickerGamma(ticker)
     if (optionDelta === null || optionGamma === null) {
       missing.push(pos)
       continue
     }
-    const kind = legKind(pos)
-    const strike = Number(pos.strike_price)
+    const strike = perp ? NaN : Number(pos.strike_price)
     legs.push({
       position: pos,
       kind,
@@ -456,7 +525,8 @@ export function bookDeltas(
       contribution: pos.net_qty * optionDelta,
       optionGamma,
       gammaContribution: pos.net_qty * optionGamma,
-      itmDistance: itmDistanceOf(kind, strike, spot),
+      itmDistance:
+        kind === 'perp' ? Number.NEGATIVE_INFINITY : itmDistanceOf(kind, strike, spot),
     })
   }
 
@@ -658,6 +728,30 @@ export function bandQty(target: number, dp: number, dSelected: number): number {
   return floorContracts(Math.abs(target - dp) / d)
 }
 
+/**
+ * Perpetual lots to trade to land Δp on its target, **signed**: positive buys,
+ * negative sells.
+ *
+ *     lots = (target − Δp) ÷ contract_value
+ *
+ * No delta divisor, because a perpetual's delta is 1: one lot of it carries one
+ * lot of the underlying, so the only conversion is out of the band's own qty
+ * units and into venue lots. And no side to choose — the same instrument adds
+ * delta when bought and removes it when sold, which is the whole reason this
+ * replaces two option rules with one trade.
+ *
+ * Rounded down in magnitude like every other size here, so a hedge cannot
+ * overshoot the landing point: a breach worth less than one lot sizes to zero and
+ * is left alone. Mirrors the futures branch of `apply_delta_strategy` in
+ * [`0044`](../../supabase/migrations/0044_futures_delta_hedge.sql).
+ */
+export function hedgeLots(target: number, dp: number, contractValue: number): number {
+  if (!(contractValue > 0)) return 0
+  const need = (target - dp) / contractValue
+  const lots = floorContracts(Math.abs(need))
+  return need < 0 ? -lots : lots
+}
+
 // ---------------------------------------------------------------------------
 // The margin guard
 // ---------------------------------------------------------------------------
@@ -750,13 +844,22 @@ export interface CutCandidate {
   itmDistance: number
 }
 
-/** Every short in the book, as cut candidates. Longs are excluded: their margin
- *  is the premium already paid and closing one frees nothing. */
+/**
+ * Every short **option** in the book, as cut candidates.
+ *
+ * Two exclusions, for two different reasons. Longs: their margin is the premium
+ * already paid, so closing one frees nothing. The perpetual hedge: closing it
+ * would take off the one position that is *reducing* the book's directional
+ * risk, and it has no strike for the most-in-the-money ordering to read. The cut
+ * takes lots off the option shorts instead, and the rebalance re-sizes the hedge
+ * against whatever Δp the cut left behind.
+ */
 export function cutCandidates(positions: PositionRow[], spot: number): CutCandidate[] {
   const out: CutCandidate[] = []
   for (const pos of positions) {
     if (pos.net_qty >= 0) continue
     const kind = legKind(pos)
+    if (kind === 'perp') continue
     const strike = Number(pos.strike_price)
     out.push({ position: pos, kind, strike, itmDistance: itmDistanceOf(kind, strike, spot) })
   }
@@ -945,6 +1048,13 @@ export type Action =
   /** Fresh OTM sell, with no ITM leg left to roll. */
   | { type: 'band'; side: OptionKind; product: Product; qty: number }
   /**
+   * The whole of a futures-hedged book's delta management: one trade in the
+   * perpetual, `lots` of it, bought or sold. It replaces `roll` and `band`
+   * rather than joining them — a book that hedges with futures never touches an
+   * option to move Δp.
+   */
+  | { type: 'hedge'; side: Side; lots: number }
+  /**
    * Margin over the cap: close lots outright, loss booked, no replacement. Not a
    * roll with `replace: null` — that is the roll budget running out on one side,
    * which is a delta rule. This one answers to equity and outranks every rule
@@ -955,6 +1065,11 @@ export type Action =
 export interface CycleInput {
   now: Date
   cfg: DeltaConfig
+  /**
+   * How this book corrects Δp — options or futures. Defaults to `options`, which
+   * is the delta account's rule and the one the rules document describes.
+   */
+  mode?: HedgeMode
   session: SessionState
   positions: PositionRow[]
   expiry: Expiry | null
@@ -996,14 +1111,20 @@ export interface CyclePlan {
 /**
  * One pass of the intraday loop, as a single next action.
  *
- * Priority is the spec's: flatten at the close, enter at the open, then rebuild
- * the ITM queue and resolve it, and only when that queue is exhausted correct the
- * band with fresh OTM sells. Returning one action at a time rather than a batch
- * is deliberate — Δp is recomputed off fresh marks before each step, so a
+ * Priority is the spec's: flatten at the close, cut over the margin cap, enter at
+ * the open, then answer a breach. Returning one action at a time rather than a
+ * batch is deliberate — Δp is recomputed off fresh marks before each step, so a
  * correction can never be sized against a book it has already changed.
+ *
+ * How a breach is answered is the one thing `mode` changes. An options-hedged
+ * book rebuilds the ITM queue and resolves it, and only when that queue is
+ * exhausted corrects the band with fresh OTM sells. A futures-hedged book trades
+ * the perpetual instead — one order, either direction, and neither the queue nor
+ * the roll budget is consulted. Every other rule above is shared verbatim.
  */
 export function planCycle(input: CycleInput): CyclePlan {
   const { now, cfg, session, positions, expiry, spot, tickerFor, touched } = input
+  const mode = input.mode ?? 'options'
   const { phase, day, tradingDay } = sessionPhase(now, cfg)
 
   const live = positions.filter((p) => p.net_qty !== 0)
@@ -1165,6 +1286,38 @@ export function planCycle(input: CycleInput): CyclePlan {
   const dpl = dpLots as number
   const target = landingTarget(cfg, band, breach)
   const targetLots = target / cv
+
+  // ---- The breach, answered with futures -----------------------------------
+  //
+  // One trade and no side to pick: the perpetual adds delta when bought and
+  // removes it when sold, so the sign of the gap is the whole decision. Sized
+  // straight off `(target − Δp) / cv`, since a perpetual's delta is 1 — and
+  // rounded down in magnitude, so it lands short of the target rather than past
+  // it.
+  //
+  // Δp already includes the hedge, so this is always the incremental size. An
+  // over-large hedge is not a special case: as the option deltas come back it
+  // pushes Δp through the *other* edge, and this same branch sells it down.
+  //
+  // Nothing here reads the margin cap. The band correction below is trimmed to
+  // what the cap has left, because a fresh short adds the risk the cut then has
+  // to take off again; a hedge does the opposite, and refusing to place one for
+  // being expensive in margin would be refusing to reduce risk. Over the cap the
+  // cut has already returned above, so a hedge waits a cycle at most.
+  if (mode === 'futures') {
+    const lots = hedgeLots(target, dp, cv)
+    if (lots === 0) {
+      return { ...base, breach, action: null, reason: `Δp ${fmt(dp)} — breach is under one contract` }
+    }
+    const side: Side = lots > 0 ? 'buy' : 'sell'
+    return {
+      ...base,
+      breach,
+      action: { type: 'hedge', side, lots: Math.abs(lots) },
+      reason: `Δp ${fmt(dp)} → ${fmt(target)} — ${side === 'buy' ? 'buying' : 'selling'} ${Math.abs(lots)} futures lot${Math.abs(lots) === 1 ? '' : 's'}`,
+    }
+  }
+
   const rollSide = correctiveRollSide(breach)
   const used = rollSide === 'call' ? session.rollsUsedCall : session.rollsUsedPut
   const exitOnly = used >= cfg.maxRolls

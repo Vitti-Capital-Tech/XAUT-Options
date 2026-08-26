@@ -71,7 +71,7 @@ erDiagram
     ORDERS ||--o{ FILLS : produces
     ACCOUNTS ||--o| STRATEGY_SETTINGS : "if kind=auto"
     ACCOUNTS ||--o| DELTA_STRATEGY_SETTINGS : "if kind=delta"
-    ACCOUNTS ||--o{ FUNDING_PAYMENTS : "if kind=futures"
+    ACCOUNTS ||--o{ FUNDING_PAYMENTS : "if it holds a perpetual"
 
     AUTH_USERS {
         uuid id PK
@@ -84,7 +84,7 @@ erDiagram
         numeric starting_balance
         numeric cash_balance "start + realized - fees"
         boolean is_archived
-        text kind "manual | auto | delta | futures"
+        text kind "manual | auto | delta | futures; the last two are one strategy, hedged with options or with futures"
     }
     STRATEGY_SETTINGS {
         uuid account_id PK
@@ -121,6 +121,7 @@ erDiagram
         numeric band_delta_high
         numeric qty "XAUT per leg -> lots"
         numeric max_notional_per_strike "USD ceiling per contract; 0 = off"
+        numeric hedge_leverage "futures books only; margin is notional / this"
         text expiry_label "ddmmyy, or null"
         text session_day "IST YYYY-MM-DD"
         integer rolls_used_call
@@ -560,15 +561,16 @@ copy is PL/pgSQL in
 | Function | Signature | Notes |
 | --- | --- | --- |
 | `sessionPhase` | `(now, cfg) → { phase, day, tradingDay }` | `before \| open \| closed`, IST; handles a window that wraps midnight, and reports a day outside `tradeDays` as closed |
-| `bookDeltas` | `(positions, tickerFor, spot) → { legs, missing }` | `missing` legs are reported, never guessed at; a leg needs both delta and gamma to count |
-| `portfolioDelta` | `(legs) → number` | `Σ(signed lots × option delta)` |
-| `portfolioGamma` | `(legs) → number` | `Σ(signed lots × option gamma)`; negative on a short book |
+| `bookDeltas` | `(positions, tickerFor, spot) → { legs, missing }` | `missing` legs are reported, never guessed at; a leg needs both delta and gamma to count. The perpetual takes its two from the contract, not the feed — delta 1, gamma 0 — because the venue publishes `greeks: null` for it |
+| `portfolioDelta` | `(legs) → number` | `Σ(signed lots × delta)`, hedge included |
+| `portfolioGamma` | `(legs) → number` | `Σ(signed lots × gamma)`; negative on a short book, and unmoved by a hedge |
 | `effectiveBand` | `(cfg, gp) → Band` | `±\|Γp\| × gammaMultiplier`, or the typed pair when off or underivable |
 | `bandBreach` | `(dp, band) → 'low' \| 'high' \| null` | Reads the band in force, not the config |
 | `landingTarget` | `(cfg, band, breach) → number` | Edge drawn back by `B`, or the midpoint |
-| `itmQueue` | `(legs, cfg) → LegDelta[]` | Shorts at or beyond the trigger, most-ITM first |
+| `itmQueue` | `(legs, cfg) → LegDelta[]` | Shorts at or beyond the trigger, most-ITM first; the perpetual is never in it (its ITM distance is −∞) |
 | `rollQty` | `(target, dp, dItm, dRepl) → number` | §5.2, rounded down |
 | `bandQty` | `(target, dp, dSelected) → number` | §5.4, rounded down |
+| `hedgeLots` | `(target, dp, cv) → number` | Signed: `(target − Δp) ÷ cv`, magnitude rounded down. No delta divisor — a perpetual's delta is 1 |
 | `strikeRoomLots` | `(cfg, heldLots, cv, spot) → number \| null` | Lots left under the notional cap; null when off |
 | `pickByPremium` | `(expiry, kind, cfg, tickerFor, beyond?, roomFor?) → StrikePick \| null` | `beyond` is what makes a roll a roll; a strike with no room is not a candidate |
 | `pickByDelta` | `(expiry, kind, cfg, tickerFor) → StrikePick \| null` | Inside `band_correction_delta` |
@@ -624,7 +626,17 @@ is `1.9999999999999996` and floors to 1 where the document says 2.
 
 **Sides.** Δp below the band means a book too short-call heavy, so exiting an ITM
 *call* lifts it and selling a fresh *put* does the same — which is why the roll
-side and the sell side are always opposites.
+side and the sell side are always opposites. A futures-hedged book has no sides to
+choose between: the same contract adds delta when bought and removes it when sold,
+so the sign of `target − Δp` is the whole decision
+([`0044`](../supabase/migrations/0044_futures_delta_hedge.sql)).
+
+**Two hedging modes, one engine.** `planCycle` takes a `mode`, and
+`apply_delta_strategy` reads the same distinction off `accounts.kind`. Only the
+branch that answers a breach differs — flatten, cut, entry, band, brackets and
+session clock are shared verbatim. The hedge is *inside* Δp, so every hedge is
+sized incrementally and an over-large one unwinds itself as a breach of the
+opposite edge; nothing records what was hedged.
 
 **Brackets.** `delta_sell` arms `take_profit = take_profit_mark` with
 `tpsl_trigger = 'mark'` and no stop, on any short the fill leaves open. The level
@@ -765,12 +777,18 @@ upsert — has not executed. Postgres plans statements inside a PL/pgSQL functio
 first execution, so deployment success does not prove those two statements. The
 first real trade validates them; if the schema misbehaves, that is where to look.
 
-**The delta strategy past its daily entry.** The roll, exit-only and
-band-correction branches of `apply_delta_strategy` have never run against a live
+**Either strategy past its daily entry.** The roll, exit-only, band-correction and
+futures-hedge branches of `apply_delta_strategy` have never run against a live
 book — with `N = 1` the book cannot breach a ±1 band, so nothing has reached
 them. They are exactly the branches that place and unwind size. Treat the first
 live breach as the real test, and raise `N` deliberately rather than discovering
 it in a moving market.
+
+**No book is liquidated.** The liquidation pass in
+[`0038`](../supabase/migrations/0038_futures.sql) skips any account holding a leg
+with no fresh perpetual mark, and every option leg is one — so a strategy book
+carrying a hedge is never tested. That is deliberate and matches the option books,
+but it means the margin guard is the only thing bounding a hedged book.
 
 **Two implementations of one rule set.** `lib/deltaStrategy.ts` and
 [`0012`](../supabase/migrations/0012_delta_strategy_engine.sql) encode the same

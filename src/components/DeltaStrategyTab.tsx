@@ -1,7 +1,17 @@
 import { useState } from 'react'
 import { market, useMarketTick } from '../lib/marketStore'
-import { expiryIsLive, expiryOptions, type Expiry } from '../lib/delta'
+import {
+  PERP_SYMBOL,
+  UNDERLYING,
+  expiryIsLive,
+  expiryOptions,
+  nextFundingTime,
+  type Expiry,
+  type Product,
+} from '../lib/delta'
 import type { DeltaStrategyApi } from '../hooks/useDeltaStrategy'
+import type { HedgeMode } from '../lib/deltaStrategy'
+import { fundingPayment, markPrice, maxLeverage, type PositionRow } from '../engine/paper'
 import { greek, price } from '../lib/format'
 import {
   CollapseToggle,
@@ -18,18 +28,30 @@ import {
 /**
  * The Delta Management Strategy's controls — the same shape of bar the auto
  * strategy wears, with the parameters the rules spec actually names: the trading
- * session, the delta band and where a correction lands in it, the ITM trigger
- * and roll budget, the entry and floor premiums, and the delta range fresh
- * out-of-the-money sells are picked from.
+ * session, the delta band and where a correction lands in it, the entry premium,
+ * and how a breach of the band is answered.
+ *
+ * One bar, two books, told apart by `mode`:
+ *
+ *   options   the delta account. A breach is answered by rolling an in-the-money
+ *             short further out, so the ITM trigger and the roll budget are
+ *             controls and the queue and budget are readouts
+ *   futures    the futures account. A breach is answered by buying or selling the
+ *             XAUT perpetual, so those four disappear and the hedge's leverage,
+ *             size and funding take their place
+ *
+ * Everything else on the bar means the same thing to both, and is the same
+ * column of the same row underneath — which is the point of one component: the
+ * two strategies cannot drift apart in what they offer.
  *
  * Below the controls sits the readout — net portfolio delta against the band,
- * the roll budget each side has left, and the one line saying what the engine is
- * about to do next. The positions and trade history it produces are in the panel
- * under this, on the strategy's own delta account.
+ * what the book has spent, and the one line saying what the engine is about to do
+ * next. The positions and trade history it produces are in the panel under this,
+ * on the strategy's own account.
  *
  * The engine runs server-side on pg_cron, so the switch here arms it and it
- * trades with the tab closed. Every default is the spec's own figure; the nine
- * items the spec leaves OPEN are the controls with no number in the document —
+ * trades with the tab closed. Every default is the spec's own figure; the items
+ * the spec leaves OPEN are the controls with no number in the document —
  * target_landing, what counts as a roll, N, the strike tie-break, expiry
  * selection and the cycle frequency — so the choice is on screen rather than
  * buried in an engine.
@@ -37,9 +59,19 @@ import {
 export function DeltaStrategyTab({
   strategy,
   expiries,
+  mode = 'options',
+  perp = null,
+  hedgePosition,
 }: {
   strategy: DeltaStrategyApi
   expiries: Expiry[]
+  /** How this book corrects Δp. Read off the account kind by the caller. */
+  mode?: HedgeMode
+  /** The perpetual contract, for the leverage cap and the funding clock. Null
+   *  until its own fetch lands; the controls read as unknown rather than wrong. */
+  perp?: Product | null
+  /** The hedge on the book right now, if any. Futures mode only. */
+  hedgePosition?: PositionRow
 }) {
   const { config, setConfig, armed, setArmed, session, hasAccount, plan, error, refresh, entryLots, apply, cancel, dirty, loading } =
     strategy
@@ -92,6 +124,28 @@ export function DeltaStrategyTab({
       : null
   const callsLeft = Math.max(0, config.maxRolls - session.rollsUsedCall)
   const putsLeft = Math.max(0, config.maxRolls - session.rollsUsedPut)
+  // The hedge, on the books that have one. Size is read in the underlying, the
+  // same unit Δp and the positions table are read in, so the two can be compared
+  // by eye: a hedge of +1.50 is what answers a Δp of −1.50.
+  const futures = mode === 'futures'
+  const hedgeCv = hedgePosition ? Number(hedgePosition.contract_value) : 0
+  const hedgeQty = hedgePosition ? hedgePosition.net_qty * hedgeCv : 0
+  const perpTicker = market.get(PERP_SYMBOL)
+  const perpMark = markPrice(perpTicker)
+  const fundingRate = Number(perpTicker?.funding_rate ?? NaN)
+  // What the hedge pays (negative) or collects (positive) at the next boundary,
+  // and when that is. Both null unless there is a hedge and a price to bill it
+  // at — funding is charged on the position that exists, not on the one that
+  // might. Mirrors `apply_futures_maintenance` in 0038.
+  const nextFunding =
+    hedgePosition && perpMark !== null && Number.isFinite(fundingRate)
+      ? fundingPayment(perpMark, hedgeCv, hedgePosition.net_qty, fundingRate)
+      : null
+  const fundingAt = perp ? nextFundingTime(perp) : null
+  // The venue's own ceiling on the hedge's leverage — the reciprocal of the
+  // contract's initial-margin rate, so 100x at 1%. Falls back to 100 while the
+  // contract has not loaded, which is the same number in practice.
+  const leverageCap = perp ? Math.floor(maxLeverage(perp)) : 100
 
   return (
     <div className="border-b border-line bg-raised">
@@ -326,52 +380,78 @@ export function DeltaStrategyTab({
 
           <GroupRule />
 
-          <Field
-            label="ITM trigger"
-            help="How far past its strike gold must be before that sold option can be fixed. On its own this never starts anything — the position delta leaving its range is what does."
-          >
-            <NumInput
-              value={config.itmTrigger}
-              step={1}
-              min={0}
-              unit="pts"
-              width="w-16"
-              onChange={(v) => setConfig({ itmTrigger: v })}
-            />
-          </Field>
+          {/* How a breach is answered — the one place the two books differ.
 
-          <Field
-            label="Max rolls per side"
-            help="How many times a day the calls (or the puts) can be fixed by moving them further out. Once used up, the next problem on that side is closed in full and the loss taken. This is the risk control — there is no stop-loss."
-          >
-            <NumInput
-              value={config.maxRolls}
-              step={1}
-              min={0}
-              width="w-16"
-              onChange={(v) => setConfig({ maxRolls: Math.round(v) })}
-            />
-          </Field>
+              Options: which sold option is eligible to be fixed, and how often a
+              side may be fixed before it is closed instead. Futures: none of that
+              applies, because nothing is rolled and no side has a budget. What is
+              left to choose is what the hedge is margined at.
 
-          <Field
-            label="Count rolls by"
-            help="A fix buys back part of the option that is hurting and sells the same type further out. This decides whether one round of fixing counts as one, or every strike it touches counts as one."
-          >
-            <Select
-              value={config.rollCounts}
-              width="w-32"
-              onChange={(v) => setConfig({ rollCounts: v })}
-              options={[
-                { value: 'pass', label: 'One pass' },
-                { value: 'strike', label: 'Per strike' },
-              ]}
-            />
-          </Field>
+              A band-correction delta range used to sit in the options half,
+              picking the fresh sell by delta instead of by price. It is gone:
+              corrections take the same Entry premium every other sale does, so
+              there is one price rule on screen rather than two that have to be
+              kept in step. */}
+          {futures ? (
+            <Field
+              label="Hedge leverage"
+              help={`What the futures hedge is margined at: margin is its notional over this, so ${leverageCap}x — the most the venue offers — blocks the least. It changes what the hedge ties up, never what it risks: the position is the same size either way, and the same size is what the strategy needs it to be.`}
+            >
+              <NumInput
+                value={config.hedgeLeverage}
+                step={5}
+                min={1}
+                max={leverageCap}
+                unit="x"
+                width="w-16"
+                onChange={(v) => setConfig({ hedgeLeverage: Math.round(v) })}
+              />
+            </Field>
+          ) : (
+            <>
+              <Field
+                label="ITM trigger"
+                help="How far past its strike gold must be before that sold option can be fixed. On its own this never starts anything — the position delta leaving its range is what does."
+              >
+                <NumInput
+                  value={config.itmTrigger}
+                  step={1}
+                  min={0}
+                  unit="pts"
+                  width="w-16"
+                  onChange={(v) => setConfig({ itmTrigger: v })}
+                />
+              </Field>
 
-          {/* A band-correction delta range used to sit here, picking the fresh sell
-              by delta instead of by price. It is gone: corrections take the same
-              Entry premium every other sale does, so there is one price rule on
-              screen rather than two that have to be kept in step. */}
+              <Field
+                label="Max rolls per side"
+                help="How many times a day the calls (or the puts) can be fixed by moving them further out. Once used up, the next problem on that side is closed in full and the loss taken. This is the risk control — there is no stop-loss."
+              >
+                <NumInput
+                  value={config.maxRolls}
+                  step={1}
+                  min={0}
+                  width="w-16"
+                  onChange={(v) => setConfig({ maxRolls: Math.round(v) })}
+                />
+              </Field>
+
+              <Field
+                label="Count rolls by"
+                help="A fix buys back part of the option that is hurting and sells the same type further out. This decides whether one round of fixing counts as one, or every strike it touches counts as one."
+              >
+                <Select
+                  value={config.rollCounts}
+                  width="w-32"
+                  onChange={(v) => setConfig({ rollCounts: v })}
+                  options={[
+                    { value: 'pass', label: 'One pass' },
+                    { value: 'strike', label: 'Per strike' },
+                  ]}
+                />
+              </Field>
+            </>
+          )}
 
           <GroupRule />
 
@@ -429,7 +509,7 @@ export function DeltaStrategyTab({
 
           <Field
             label="Cut to"
-            help="How far a cut goes: it closes just enough to bring margin down to this share of equity, and no more, so the realised loss is the smallest one that clears the breach. Between this and Cut at the book is held — no new entry and no band correction — but rolls carry on, since a roll closes and re-sells the same size and so cannot grow the book."
+            help="How far a cut goes: it closes just enough to bring margin down to this share of equity, and no more, so the realised loss is the smallest one that clears the breach. The gap between this and Cut at is headroom, not a freeze — every rule runs at every margin below the cap."
           >
             <NumInput
               value={config.marginTargetPct}
@@ -584,12 +664,45 @@ export function DeltaStrategyTab({
           </Readout>
         )}
 
-        {/* State: what the session is doing and what it has spent. */}
+        {/* State: what the session is doing, and then what answering the band has
+            cost so far.
+
+            Options: how many sold legs are eligible to be fixed, and how much of
+            each side's budget is left. Futures: neither exists, so the two boxes
+            carry the hedge itself instead — its size in the underlying, which is
+            directly comparable with Δp beside it, and what it pays at the next
+            funding boundary. A hedge of +1.50 against a Δp of −1.50 is the whole
+            reading, in two figures. */}
         <PhaseChip label={plan ? phaseLabel(plan.phase, plan.tradingDay) : '—'} open={plan?.phase === 'open'} />
-        <Readout label="ITM queue">{plan ? plan.queue.length : '—'}</Readout>
-        <Readout label="Rolls left C / P" tone={callsLeft === 0 || putsLeft === 0 ? 'warn' : 'ok'}>
-          {callsLeft} / {putsLeft}
-        </Readout>
+        {futures ? (
+          <>
+            <Readout label={`Hedge · ${UNDERLYING}`} tone={hedgePosition ? 'warn' : 'ok'}>
+              {hedgePosition ? `${hedgeQty > 0 ? '+' : ''}${hedgeQty.toFixed(3)}` : 'flat'}
+            </Readout>
+            {/* Signed the way the ledger signs it: negative is paid away. The
+                clock is the venue's own eight-hour boundary, not a countdown of
+                ours — funding lands at 00:00, 08:00 and 16:00 UTC whether anyone
+                is watching or not. */}
+            <Readout
+              label="Funding next"
+              tone={nextFunding !== null && nextFunding < 0 ? 'bad' : 'ok'}
+            >
+              {nextFunding === null ? '—' : `${nextFunding > 0 ? '+' : '-'}$${Math.abs(nextFunding).toFixed(2)}`}
+              {fundingAt && (
+                <span className="ml-1.5 text-[10px] font-normal text-ink-3">
+                  {fundingAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              )}
+            </Readout>
+          </>
+        ) : (
+          <>
+            <Readout label="ITM queue">{plan ? plan.queue.length : '—'}</Readout>
+            <Readout label="Rolls left C / P" tone={callsLeft === 0 || putsLeft === 0 ? 'warn' : 'ok'}>
+              {callsLeft} / {putsLeft}
+            </Readout>
+          </>
+        )}
 
         <GroupRule />
 

@@ -36,21 +36,15 @@ export function shortImRate(product: Product): number {
   return Number.isFinite(pct) && pct > 0 ? pct / 100 : FALLBACK_SHORT_IM_RATE
 }
 
-/**
- * Fallback maintenance rate, used on the same terms as the initial-margin one.
- * Half the initial margin is what Delta publishes for XAUTUSD (1% and 0.5%), and
- * half is the shape across their book, so it is the least surprising guess.
- */
-export const FALLBACK_MM_RATE = 0.005
-
-/**
- * The venue's maintenance-margin rate, as a fraction. Below this share of the
- * position's notional the venue takes the position; above it, it lives.
- */
-export function maintenanceRate(product: Product): number {
-  const pct = Number(product.maintenance_margin)
-  return Number.isFinite(pct) && pct > 0 ? pct / 100 : FALLBACK_MM_RATE
-}
+// A maintenance rate and a liquidation price used to live here, for the page that
+// traded the perpetual by hand. Both are gone with it: no book in this app is
+// liquidated now. The two that can hold a perpetual are option strangles carrying
+// a hedge, and `apply_futures_maintenance` skips any account holding a leg with no
+// perpetual mark — which every option leg is — so its liquidation branch cannot
+// fire on either. What bounds them is the delta strategy's own margin guard: over
+// the cap it closes option shorts, deepest in the money first. The server-side
+// rate is still a constant in
+// [`0038`](../../supabase/migrations/0038_futures.sql) if that ever changes.
 
 /**
  * Highest leverage the contract may be opened at. Delta publishes it directly,
@@ -76,40 +70,6 @@ export function perpMargin(price: number, cv: number, lots: number, imRate: numb
   const notional = price * cv * lots
   const capped = leverage && leverage > 0 ? Math.min(leverage, 1 / imRate) : 1 / imRate
   return notional / capped
-}
-
-/**
- * The mark at which this position alone takes the account under maintenance
- * margin, or null when it never does.
- *
- * Solved against account equity rather than against the position's own margin,
- * because the book is cross-margined — every spare dollar of cash is defending
- * the position, which is why the answer moves when the balance does and not only
- * when the position does.
- *
- *     long    P = (q·cv·entry − cash) / (q·cv·(1 − mm))
- *     short   P = (q·cv·entry + cash) / (q·cv·(1 + mm))
- *
- * Read it as: equity is `cash ± (P − entry)·q·cv`, maintenance is `mm·P·cv·q`,
- * and the liquidation price is where the two meet. A long whose cash already
- * exceeds its entry notional has no such price — the numerator goes negative and
- * nothing this side of zero can take it — so null comes back.
- */
-export function liquidationPrice(
-  netQty: number,
-  avgEntry: number,
-  cv: number,
-  cashBalance: number,
-  mmRate: number,
-): number | null {
-  const lots = Math.abs(netQty)
-  if (lots === 0 || !(avgEntry > 0)) return null
-  const size = lots * cv // position size in the underlying
-  const p =
-    netQty > 0
-      ? (size * avgEntry - cashBalance) / (size * (1 - mmRate))
-      : (size * avgEntry + cashBalance) / (size * (1 + mmRate))
-  return p > 0 && Number.isFinite(p) ? p : null
 }
 
 /**

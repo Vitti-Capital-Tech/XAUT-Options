@@ -254,11 +254,12 @@ a freshness window.
 
 | | Auto strategy | Delta strategy |
 | --- | --- | --- |
-| Migration | [`0008`](../supabase/migrations/0008_strategy_engine.sql), fixed by [`0011`](../supabase/migrations/0011_strategy_expiry_fix.sql) | [`0012`](../supabase/migrations/0012_delta_strategy_engine.sql) |
+| Migration | [`0008`](../supabase/migrations/0008_strategy_engine.sql), fixed by [`0011`](../supabase/migrations/0011_strategy_expiry_fix.sql) | [`0012`](../supabase/migrations/0012_delta_strategy_engine.sql), latterly [`0044`](../supabase/migrations/0044_futures_delta_hedge.sql) |
 | Cadence | Top of the hour only — 1h bars close there | Every minute, spaced by `cycle_seconds` |
-| Feed | Candles + full option chain (~964 KB) | XAUT tickers only (~143 KB) |
-| Needs | Last closed candle, strike ladder | Per-strike `greeks.delta`, both sides of the touch |
+| Feed | Candles + full option chain (~964 KB) | XAUT tickers only (~143 KB), options **and** the perpetual in one request |
+| Needs | Last closed candle, strike ladder | Per-strike `greeks.delta` and `gamma`, both sides of the touch, and the perpetual's touch for the hedge |
 | State | `strategy_settings.last_acted`, one action per bar | `delta_strategy_settings` — roll budget, touched strikes, session day |
+| Books | One (`auto`) | Two: `delta` corrects Δp with options, `futures` with the XAUT perpetual. One engine, one settings table; the mode is read off the account's kind |
 
 Two consequences worth stating plainly:
 

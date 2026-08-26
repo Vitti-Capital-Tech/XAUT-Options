@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { market } from '../lib/marketStore'
-import type { Expiry } from '../lib/delta'
+import { isPerp, type Expiry } from '../lib/delta'
 import { summarizeAccount, type PositionRow } from '../engine/paper'
 import { toast } from '../lib/toastStore'
 import {
@@ -13,6 +13,7 @@ import {
   type CyclePlan,
   type DeltaConfig,
   type ExpiryPick,
+  type HedgeMode,
   type RollCounts,
   type SessionState,
   type TargetLanding,
@@ -108,6 +109,7 @@ interface Row {
   stop_loss_mark: string | number
   margin_cap_pct: string | number
   margin_target_pct: string | number
+  hedge_leverage: string | number
   trade_days: number[] | null
   session_day: string | null
   rolls_used_call: number
@@ -117,7 +119,7 @@ interface Row {
 }
 
 const COLS =
-  'account_id, armed, session_open, session_close, band_low, band_high, gamma_multiplier, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, qty, max_notional_per_strike, tie_break, expiry_pick, expiry_label, cycle_seconds, take_profit_mark, stop_loss_mark, margin_cap_pct, margin_target_pct, trade_days, session_day, rolls_used_call, rolls_used_put, entered_day, flattened_day'
+  'account_id, armed, session_open, session_close, band_low, band_high, gamma_multiplier, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, qty, max_notional_per_strike, tie_break, expiry_pick, expiry_label, cycle_seconds, take_profit_mark, stop_loss_mark, margin_cap_pct, margin_target_pct, hedge_leverage, trade_days, session_day, rolls_used_call, rolls_used_put, entered_day, flattened_day'
 
 // Postgres numerics come back as strings over PostgREST.
 const n = (v: string | number) => Number(v)
@@ -146,6 +148,7 @@ function rowToConfig(row: Row): DeltaConfig {
     stopLossMark: n(row.stop_loss_mark),
     marginCapPct: n(row.margin_cap_pct),
     marginTargetPct: n(row.margin_target_pct),
+    hedgeLeverage: n(row.hedge_leverage),
     // A null column is the engine's "every day"; carry that as the full week
     // rather than an empty selection, which would read as "never".
     tradeDays:
@@ -176,6 +179,7 @@ function configToRow(cfg: DeltaConfig) {
     stop_loss_mark: cfg.stopLossMark,
     margin_cap_pct: cfg.marginCapPct,
     margin_target_pct: cfg.marginTargetPct,
+    hedge_leverage: cfg.hedgeLeverage,
     trade_days: cfg.tradeDays,
   }
 }
@@ -196,6 +200,8 @@ function settingsError(message: string): string {
   if (message.includes('delta_cycle_chk')) return 'Refresh must be between 5 and 3600 seconds.'
   if (message.includes('delta_margin_pct_chk'))
     return 'Margin cut-at must be at or above cut-to, and neither can be negative.'
+  if (message.includes('delta_hedge_leverage_chk'))
+    return 'Hedge leverage must be above zero and no more than the 100x the venue offers.'
   if (message.includes('delta_expiry_label_chk')) return 'That expiry is not a valid date.'
   if (message.includes('delta_target_landing_chk')) return 'That is not a landing point the engine accepts.'
   if (message.includes('delta_roll_counts_chk')) return 'That is not a roll count the engine accepts.'
@@ -215,8 +221,14 @@ function rowToSession(row: Row): SessionState {
 }
 
 /**
- * The Delta Management Strategy's settings for one delta account, plus a
- * read-only view of what the engine is doing.
+ * The Delta Management Strategy's settings for one account, plus a read-only
+ * view of what the engine is doing.
+ *
+ * Drives both books. `mode` says how this one defends its band — `options` on a
+ * delta account, the rules document's roll-and-sell; `futures` on a futures
+ * account, one trade in the XAUT perpetual instead. The engine reads the same
+ * distinction off `accounts.kind`, so the two cannot disagree, and everything
+ * else on the row means the same thing to both.
  *
  * The engine itself runs server-side on pg_cron (see 0012_delta_strategy_engine),
  * the way the auto strategy's does, so the strategy trades with no tab open.
@@ -232,7 +244,11 @@ export function useDeltaStrategy(
   accountId: string | null,
   deps: DeltaEngineDeps,
   reloadPositions: () => void | Promise<void> = () => {},
+  mode: HedgeMode = 'options',
 ): DeltaStrategyApi {
+  // What to call this book in a toast. Both strategies arm independently and the
+  // toast stack is app-wide, so "Strategy running" alone would not say which.
+  const name = mode === 'futures' ? 'Futures strategy' : 'Delta strategy'
   // `config` is the editable draft; `savedConfig` is what the database holds.
   // Every field is staged here and only written on Apply, so nothing reaches the
   // engine mid-edit — the gap between the two is what lights the Apply button.
@@ -397,15 +413,15 @@ export function useDeltaStrategy(
         // quietly puts it back.
         if (err) {
           setArmedState(!on)
-          toast.error(`Delta strategy — could not ${on ? 'start' : 'pause'}: ${err}`)
+          toast.error(`${name} — could not ${on ? 'start' : 'pause'}: ${err}`)
           return
         }
         // Named, because the toast stack is app-wide and both strategies arm
         // independently — "Strategy running" alone would not say which one.
-        toast.ok(on ? 'Delta strategy running.' : 'Delta strategy paused.')
+        toast.ok(on ? `${name} running.` : `${name} paused.`)
       })
     },
-    [persist],
+    [persist, name],
   )
 
   // Apply: write every staged field, and push the marks onto the open shorts,
@@ -420,7 +436,7 @@ export function useDeltaStrategy(
     if (loading) return
     const err = await persist(configToRow(config))
     if (err) {
-      toast.error(`Delta strategy — settings not saved: ${err}`)
+      toast.error(`${name} — settings not saved: ${err}`)
       return
     }
     setSavedConfig(config)
@@ -428,18 +444,18 @@ export function useDeltaStrategy(
     // The settings did land, so this is not a failed Apply — but the marks on
     // those legs are not what the panel now shows, and that has to be said.
     if (failed > 0) {
-      toast.error(`Delta strategy — settings saved, but TP/SL did not update on ${failed} position(s).`)
+      toast.error(`${name} — settings saved, but TP/SL did not update on ${failed} position(s).`)
       return
     }
-    toast.ok('Delta strategy — settings applied.')
-  }, [config, loading, persist])
+    toast.ok(`${name} — settings applied.`)
+  }, [config, loading, persist, name])
 
   // Cancel: throw the draft away and snap back to what the database holds. Local
   // only, so there is nothing that can fail here.
   const cancel = useCallback(() => {
     setConfigState(savedConfig)
-    toast.ok('Delta strategy — changes discarded.')
-  }, [savedConfig])
+    toast.ok(`${name} — changes discarded.`)
+  }, [savedConfig, name])
 
   // Clearing last_cycle is all a manual refresh can do from here: the engine is
   // server-side and its spacing check is the one gate the client owns. The row is
@@ -464,8 +480,8 @@ export function useDeltaStrategy(
   // The same plan the server-side engine computes, recomputed here purely to
   // show it. Everything it reads goes through a ref so a market tick does not
   // tear the timer down and rebuild it.
-  const ctx = useRef({ config, session, deps })
-  ctx.current = { config, session, deps }
+  const ctx = useRef({ config, session, deps, mode })
+  ctx.current = { config, session, deps, mode }
 
   useEffect(() => {
     if (!accountId) return
@@ -473,7 +489,7 @@ export function useDeltaStrategy(
     // Named apart from the exported `refresh`, which pokes the engine rather than
     // recomputing the readout.
     const recompute = () => {
-      const { config: cfg, session: sess, deps: d } = ctx.current
+      const { config: cfg, session: sess, deps: d, mode: m } = ctx.current
       const tickerFor = (symbol: string) => market.get(symbol)
       // Only `marginBlocked` and `equity` are read from this, so the starting
       // balance is passed as zero — `realized` belongs to the header, which
@@ -490,6 +506,7 @@ export function useDeltaStrategy(
         planCycle({
           now: new Date(),
           cfg,
+          mode: m,
           session: sess,
           positions: d.positions,
           expiry: pickExpiry(d.expiries, cfg),
@@ -557,7 +574,11 @@ async function rearmOpenPositions(
   config: DeltaConfig,
   reload: () => void | Promise<void>,
 ): Promise<{ failed: number }> {
-  const open = positions.filter((p) => p.net_qty < 0)
+  // Short options only. The perpetual hedge is deliberately unbracketed — a
+  // take-profit on it would close the hedge on a move in the book's favour and
+  // leave the option legs uncovered, which is the one thing it is there to
+  // prevent — so Apply must not arm one either.
+  const open = positions.filter((p) => p.net_qty < 0 && !isPerp(p.contract_type))
   if (open.length === 0) return { failed: 0 }
   // Counted, not just logged: a leg left on the old marks is a leg whose exit
   // levels differ from what the panel says, and Apply has to be able to say so.

@@ -2,8 +2,9 @@
 
 A Delta-Exchange-style derivatives terminal for **XAUT** (Tether Gold). Live
 option chain, click-to-trade, positions, open orders and trade history — plus
-two automated strategies that run on a schedule and the XAUT perpetual future —
-with every order simulated. **No order ever reaches the exchange.**
+three automated strategies that run on a schedule, one of them hedging its delta
+with the XAUT perpetual future — with every order simulated. **No order ever
+reaches the exchange.**
 
 Four pages, each trading its own book:
 
@@ -11,8 +12,14 @@ Four pages, each trading its own book:
 | --- | --- | --- |
 | **Option Chain** | `manual` | Click-to-trade the live chain by hand |
 | **Auto Strategy** | `auto` | Sells one option per closed 1h candle — a call on a red bar, a put on a green |
-| **Delta Strategy** | `delta` | The delta-band strategy from `Gold_Options_Delta_Strategy.docx` |
-| **Futures** | `futures` | The XAUTUSD perpetual, long or short by hand, with leverage, funding and liquidation |
+| **Delta Strategy** | `delta` | The delta-band strategy from `Gold_Options_Delta_Strategy.docx`, correcting Δp with **options** |
+| **Futures Strategy** | `futures` | The same strategy, correcting Δp by buying and selling the **XAUTUSD perpetual** instead |
+
+The last two are one strategy on two books — one settings table, one engine, one
+session clock, one entry, one band, one bracket, one margin guard. The only rule
+that differs is the one that answers a breach of the band, and which one runs is
+read off the account's kind rather than a setting, so the page and the rule cannot
+disagree ([`0044`](supabase/migrations/0044_futures_delta_hedge.sql)).
 
 The four never share a balance or a position: an account carries a `kind`, and
 every order, fill and position is already scoped to an account.
@@ -240,21 +247,31 @@ tab closed. It acts at most once per bar, guarded by `last_acted`.
 
 ### Delta Strategy
 
-The sell-only delta-band strategy specified in
-`Gold_Options_Delta_Strategy.docx`. In short: sell a symmetric call/put pair at
-the session open, keep net portfolio delta **Δp** inside a band by rolling
-in-the-money shorts further out, fall back to fresh out-of-the-money sells when
-nothing is left to roll, and flatten at the close.
+The delta-band strategy specified in `Gold_Options_Delta_Strategy.docx`. In
+short: sell a symmetric call/put pair at the session open, keep net portfolio
+delta **Δp** inside a band, and flatten at the close.
 
-**No leg is ever bought as a hedge.** Every correction is more premium sold, or
-an exit — never a long option.
+It drives **two books**, and everything below is shared by both except the one
+row marked *Breach*:
+
+| | Delta Strategy (`delta`) | Futures Strategy (`futures`) |
+| --- | --- | --- |
+| Breach | Roll an ITM short further out; fresh OTM sell when nothing is left to roll | Buy or sell the XAUTUSD perpetual |
+| Book grows? | Yes — a correction is more premium sold | No — the option book is only what the entry sold |
+| Long exposure? | Never. **No leg is ever bought as a hedge** | The hedge is bought or sold outright |
+
+On the delta book the strategy is **sell-only**: every correction is more premium
+sold, or an exit — never a long option. The futures book keeps that rule for
+*options* and answers the band with a linear hedge instead; see
+[The futures hedge](#the-futures-hedge).
 
 | Phase | Rule |
 | --- | --- |
 | Open (06:00 IST) | Sell one symmetric pair at the strikes nearest `entry_premium`, sized by `qty` in XAUT — the spec's `N`, in XAUT rather than lots ([`0024`](supabase/migrations/0024_drop_pairs_and_fix_reentry.sql)). Both legs fill or neither does; a failed open is retried on the next refresh rather than written off for the day |
-| Intraday | Rebuild the ITM queue each cycle, most-ITM first; resolve breaches by partial exit-and-replace |
-| Roll budget | Each side gets `max_rolls`; once spent that side is **exit-only** — further triggers close in full, loss booked |
-| No ITM legs left | Band-correct with fresh OTM sells in the `band_correction_delta` range |
+| Intraday · `delta` | Rebuild the ITM queue each cycle, most-ITM first; resolve breaches by partial exit-and-replace |
+| Roll budget · `delta` | Each side gets `max_rolls`; once spent that side is **exit-only** — further triggers close in full, loss booked |
+| No ITM legs left · `delta` | Band-correct with fresh OTM sells at the entry premium |
+| Intraday · `futures` | One trade in the perpetual per breach, `(target − Δp) ÷ contract_value` lots, bought when Δp is short of the target and sold when it is past it |
 | Close (22:00 IST) | Flatten everything, stand flat overnight, reset counters |
 | Off day | A weekday outside `trade_days` reports the session **closed**, so the same flatten covers it and nothing is opened |
 | Margin over `margin_cap_pct` | Stop selling and **cut** instead: close lots, deepest ITM first, on the side whose exit pulls Δp toward the band, down to `margin_target_pct` — loss booked ([`0031`](supabase/migrations/0031_delta_margin_guard.sql)). Below the cap every rule runs, at any margin ([`0041`](supabase/migrations/0041_always_manage_delta.sql)) |
@@ -284,16 +301,117 @@ spec's — both are additions.
 > contribution — which the next cycle corrects by selling somewhere else. Set it
 > generously if at all.
 
-Sizing is the document's, both rounded **down** so a correction cannot overshoot:
+Sizing is the document's, all rounded **down** so a correction cannot overshoot:
 
 ```
 roll:            q = (target_landing - Δp) / (d_itm - d_replacement)
 band correction: q = (target_landing - Δp) / d_selected
+futures hedge:   q = (target_landing - Δp) / contract_value
 ```
+
+The hedge has no delta divisor because a perpetual's delta is **1**: one lot of it
+carries one lot of the underlying, so the only conversion is out of the band's qty
+units and into venue lots.
 
 **Δp is measured in contract-deltas** — `Σ(signed lots × option delta)`, with no
 contract-value factor. That is the unit the document's own worked example is
 written in, and the band is calibrated to the same one.
+
+#### The futures hedge
+
+On the **futures** book every breach is answered by one trade in `XAUTUSD`, and
+no option is ever touched to move Δp. The rule reads in full:
+
+```
+lots = (target_landing - Δp) / contract_value      rounded down in magnitude
+side = buy when the result is positive, sell when it is negative
+```
+
+The band still decides *when* — the same gamma-derived band, the same
+`target_landing` and `B` — so what changes is only the instrument the correction
+is made in. A breach worth less than one lot does nothing and says so.
+
+**The hedge is inside Δp.** It is not tracked separately: the perpetual lands in
+the engine's chain snapshot as one more row, with the greeks a linear contract
+actually has —
+
+```
+delta 1     one lot of the perpetual is one lot of the underlying
+gamma 0     that delta does not move, whatever spot does
+```
+
+— so `Σ(signed lots × delta)` counts it without being told to. Three things fall
+out of that, and they are the reason it is done this way:
+
+- **Every hedge is sized incrementally.** `target − Δp` already nets off whatever
+  hedge is on the book, so nothing has to remember what was hedged, and a cycle
+  that fires twice cannot double up.
+- **It unwinds itself.** As the option deltas come back, the hedge that answered
+  them is now too large — which reads as a breach of the *other* edge, and the
+  same rule sells it back down. There is no separate unwind rule to get wrong.
+- **The band is still set by the options.** Γp gets nothing from a gamma-0
+  contract, so a hedge neither widens nor narrows the band it was placed to
+  satisfy. That is the honest answer: the band scales with how fast Δp moves, and
+  a linear hedge does not move it.
+
+Delta publishes `"greeks": null` on the perpetual — no venue quotes greeks for a
+contract whose greeks are constants — so those two numbers are written as
+literals, in the engine and in the browser's copy alike. If the perpetual ever
+goes missing from the chain reply, a book holding a hedge stands down for the
+cycle with `waiting on greeks` rather than trading against a Δp it cannot
+measure.
+
+**What a hedge costs.** Margin, funding and the spread:
+
+```
+margin  = mark × contract_value × lots / hedge_leverage    (floored at the 1% IM)
+funding = mark × contract_value × |lots| × funding_rate / 100, every 8h
+```
+
+`hedge_leverage` defaults to **100** — the venue's maximum, and the right end of
+the range for a hedge: leverage decides what the position *blocks*, never what it
+risks. At a 1.5 XAUT hedge against a $4,600 index that is about **$69** of margin
+rather than $6,900. Funding is charged by the same cron that has always charged
+it ([`0038`](supabase/migrations/0038_futures.sql)), which bills every open
+perpetual whatever kind of account holds it, so the strategy bar shows what the
+next payment will be and when. The hedge buys the ask and sells the bid like
+every other engine trade — no mid is assumed.
+
+**Two things the hedge is deliberately exempt from.** Both concern the margin
+guard, and both cut the same way:
+
+- **A cut cannot close it.** Cut candidates are short *options* only. Closing the
+  hedge would take off the one position reducing the book's directional risk, and
+  it has no strike for the deepest-in-the-money ordering to read. The cut takes
+  lots off the option shorts, Δp moves, and the next cycle re-hedges what is left.
+- **It is not trimmed to the cap.** The band correction is
+  ([`0043`](supabase/migrations/0043_stop_the_cut_correction_loop.sql)), because a
+  fresh short adds the risk the cut then has to take back off. A hedge does the
+  opposite, and refusing to place one for being expensive in margin would be
+  refusing to reduce risk. Over the cap the cut still runs first — it outranks
+  everything below the session close — so a hedge waits at most one cycle.
+
+**No bracket rides on it.** Every short option the strategy opens carries the
+take-profit below; the hedge carries neither mark. A take-profit on a hedge would
+close it on a move in the book's favour and leave the option legs uncovered,
+which is the one thing it exists to prevent. Δp is its only exit condition, and
+the session close is its only other one — the flatten closes it with everything
+else, through the same two helpers, because a buy at the ask and a sell at the bid
+is right for a perpetual too.
+
+A worked cycle, at the defaults:
+
+```
+Δp -1.35   band [-1, +1]   target -0.60   cv 0.001
+lots = (-0.60 - -1.35) / 0.001 = 750       ->  buy 750 XAUTUSD
+Δp -1.35 -> -0.60          margin blocked +$34.67 at 100x
+```
+
+and the row it writes says exactly that:
+
+```
+Bought futures — band breach (target -0.60) · spot $4622.13 · Δp -1.35 → -0.60
+```
 
 #### The per-strike notional cap
 
@@ -406,7 +524,14 @@ the one rule that answers to equity instead
 | Blocked margin | What runs |
 | --- | --- |
 | `> margin_cap_pct` of equity | **Cut only.** Close lots, deepest ITM first, preferring the side whose exit pulls Δp toward the band. Nothing else runs this cycle |
-| otherwise | Everything — entries, rolls and band corrections alike |
+| otherwise | Everything — entries, rolls, band corrections and hedges alike |
+
+Two notes for the futures book. A cut takes lots off **option shorts only**: the
+hedge is not a candidate, because closing it would remove the position that is
+reducing the book's directional risk, and it has no strike for the walk to order
+by. And the hedge is never trimmed to what the cap has left, which the band
+correction is. Both are argued in
+[The futures hedge](#the-futures-hedge).
 
 There used to be a third row: between `margin_target_pct` and `margin_cap_pct` the
 book was frozen against new premium, rolls only. It is gone
@@ -495,7 +620,7 @@ so it answers the same question on every repaint.
 `execute_fill` — manual trades, and every leg either strategy opens or closes.
 What it did *not* hold was the triggered closes, which write a fill directly and
 passed a literal null: every take-profit, every stop, the auto strategy's window
-close, and the futures book's liquidation. On a delta account running the default
+close, and the futures liquidation that no longer fires. On a delta account running the default
 0.70 take-profit that is a large share of the ledger.
 [`0040`](supabase/migrations/0040_spot_on_every_fill.sql) threads the spot each
 of those three callers already holds into the fill, and computes the `notional`
@@ -523,9 +648,21 @@ spot it was priced at, and net portfolio delta either side of the action:
 
 ```
 Rolled further out — band breach (target -0.60) · spot $4243.10 · Δp -1.35 → -0.62
+Bought futures — band breach (target -0.60) · spot $4622.13 · Δp -1.35 → -0.60
 Margin cut — loss booked · spot $4251.80 · Δp -1.90 → -1.20
 Take-profit hit · spot $4243.10 · Δp -0.62 → -0.30
 ```
+
+The size is not in the sentence and does not need to be — it is on the row the
+sentence is written to, and the pair of deltas says what the trade achieved.
+
+One rule had to change for the hedge. Which fills count as *exits* was decided by
+`side = 'buy' or realized_pnl <> 0`, which is right on a sell-only option book
+where the only way out is to buy back. A hedge opens with a buy as often as with a
+sell, so a **perpetual** fill is an exit when it realized something and not
+otherwise. The one case that leaves blank is a hedge unwound at exactly its entry
+price, which books nothing and reads as an opening trade; a blank Exit Reason
+beats a wrong one.
 
 The delta *after* the action is the half that cannot be reconstructed later,
 which is the point of recording it: it is measured in the same transaction and
@@ -555,64 +692,68 @@ why.
 > a realtime feed and a retention sweep to duplicate two text columns and one line
 > of the readout.
 
-### Futures
+### The perpetual, as the hedge instrument
 
-The one non-option XAUT contract Delta lists, traded by hand:
+The one non-option XAUT contract Delta lists:
 
 ```
 XAUTUSD   perpetual future   0.001 XAUT per lot   tick 0.01
           IM 1%   MM 0.5%   up to 100x   funding every 8h
 ```
 
-One instrument, so there is no chain and no expiry strip — the page is a price
-strip and a ticket, with the book beneath it. What makes it different from the
-option pages is not the layout but the mechanics, and all three are simulated
-([`0038`](supabase/migrations/0038_futures.sql)):
+Nobody trades it by hand any more. It is what the **Futures Strategy** page
+corrects its delta with, one trade per breach — see
+[The futures hedge](#the-futures-hedge) for the rule, and the rest of this section
+for the contract's own mechanics, all of which are simulated
+([`0038`](supabase/migrations/0038_futures.sql)) and all of which now apply to a
+hedge on a strategy book:
 
 **Leverage.** Margin is `notional / leverage`, floored at the contract's own 1%,
 and **both sides post it**. That is the opposite of the option book, where a long
 has already paid its maximum loss with the premium and the venue asks nothing
-further. The leverage is chosen per order and stored on the position, because it
-is what margins that position from then on.
+further. The leverage rides on the order and is stored on the position, because it
+is what margins that position from then on — `hedge_leverage` on the strategy bar
+is what the engine sends, and `delta_account_margin` prices the resulting leg the
+same way ([`0044`](supabase/migrations/0044_futures_delta_hedge.sql)).
 
 **Funding.** A perpetual never settles; every eight hours (00:00, 08:00 and 16:00
-UTC — 05:30, 13:30 and 21:30 IST) the two sides pay each other instead:
+UTC — 05:30, 13:30 and 21:30 IST) the two sides pay each other instead. It is
+charged to whatever account holds the position, which now means a strategy book:
 
 ```
 payment = mark × contract_value × |net_qty| × funding_rate / 100
 ```
 
-A positive rate means longs pay shorts. The header shows the live rate, who pays
-and the countdown; the ticket shows what the position on the book will pay at the
-next one. Cash moves server-side on a cron, against a ledger keyed on
-`(account, symbol, funding_time)` so a re-run cannot double-charge. Only
-positions open *before* the boundary are billed.
+A positive rate means longs pay shorts. The strategy bar shows what the hedge on
+the book will pay at the next boundary, and when that is. Cash moves server-side
+on a cron, against a ledger keyed on `(account, symbol, funding_time)` so a re-run
+cannot double-charge. Only positions open *before* the boundary are billed — and
+since the strategy flattens at every session close, a hedge is billed only for the
+boundaries it was actually carried through.
 
-**Liquidation.** At 100x a 1% move is the whole margin. The book is
-cross-margined, so the test is account-wide rather than a per-position stop:
+**Liquidation — and why nothing is liquidated any more.**
+[`0038`](supabase/migrations/0038_futures.sql) liquidates a `futures` account
+whose equity falls under maintenance margin, all at the mark, and it is still
+there. It can no longer fire, and the reason is worth stating precisely rather
+than being left to look like an oversight: the pass skips any account holding a
+leg with no fresh *perpetual* mark, and every option leg is such a leg. A book
+that is a short strangle carrying a hedge is therefore never tested — which is
+the same answer the delta book has always got, and the reason it is acceptable
+here is that the margin guard, not a liquidation, is what bounds both books.
 
-```
-equity = cash + unrealized      maintenance = 0.5% × mark × cv × |qty|
-liquidate when equity < maintenance
-```
+What went with it: the client-side liquidation-price estimate and the perpetual
+variant of the positions table. The hedge is one row among option legs now, read
+by the same columns — its Delta cell shows exactly its own size, its Gamma, Vega
+and Theta zero, and its Entry Reason the sentence the engine wrote when it opened
+it.
 
-and the whole book closes at the mark, booked as `close_reason = 'liquidation'`.
-The estimated liquidation price is on the ticket before the order goes, priced
-for the position the order would actually leave behind — not for a flat book —
-and in the positions table after it. It reads `—` when there is genuinely no such
-price, which is what enough cash against a small position gives you.
-
-The positions table swaps its four greek columns and the Entry Reason for
-**Leverage** and **Liq. Price**: a perpetual has no greeks, and nothing on this
-page opens a position except the person looking at it. `UPNL %` is return on
-margin here rather than on entry value — at 100x, reading a 1% move as "1%" would
-understate it by the size of the account.
-
-Take-profit and stop-loss work as they do everywhere else. The bracket engine had
-decided direction with `(contract_type = 'call_options') = long`, which reads a
-perpetual as a put — a long XAUTUSD would have taken profit on the index
-*falling*. [`0038`](supabase/migrations/0038_futures.sql) splits the case so that
-a non-option is simply bullish when long.
+Take-profit and stop-loss still work on a perpetual set by hand from the panel.
+The bracket engine had decided direction with
+`(contract_type = 'call_options') = long`, which reads a perpetual as a put — a
+long XAUTUSD would have taken profit on the index *falling*.
+[`0038`](supabase/migrations/0038_futures.sql) splits the case so that a
+non-option is simply bullish when long. The engine's own hedge carries no bracket
+at all; see [The futures hedge](#the-futures-hedge).
 
 ### Downloading a day
 
@@ -675,23 +816,27 @@ protecting.
   portfolio rather than isolated margin are floored at
   `max(5% x premium, OM% x notional)`, which can bind higher. Long options are
   exact — risk is capped at the premium paid.
-- **No liquidation on the option books.** Nothing force-closes a losing option
-  position. The futures book *is* liquidated
-  ([`0038`](supabase/migrations/0038_futures.sql)), because a perpetual at 100x
-  is unreadable without it — but only to the extent below.
-- **Futures liquidation is all-or-nothing and takes no penalty.** Delta unwinds
-  a book in steps and deducts a `liquidation_penalty_factor` from what is left of
-  the margin; this closes the whole book at the mark and deducts nothing. It is
-  conservative in one direction and generous in the other: an account is never
-  left alive that the venue would have taken, but one that is taken keeps a
-  little more than it would have. The 0.5% maintenance rate is also a constant in
-  the migration rather than re-read from the product each pass.
+- **Nothing is liquidated.** No book here force-closes a losing position. The
+  liquidation pass in [`0038`](supabase/migrations/0038_futures.sql) survives but
+  cannot fire on either strategy book, since it skips accounts holding legs with
+  no perpetual mark and every option leg is one — see *The perpetual, as the hedge
+  instrument*. What bounds these books is the delta strategy's margin guard, which
+  closes option shorts over the cap. A hedge carried at 100x through a large
+  adverse move is therefore carried, not taken; its loss shows in equity, and the
+  option legs it was hedging are what the guard trims.
+- **The hedge blocks margin it is never trimmed for.** Deliberate — see *The
+  futures hedge* — but the consequence is worth naming: on a book already at its
+  margin cap, a hedge can push blocked margin above the cap, and the next cycle's
+  cut will answer by closing an option short rather than by shrinking the hedge.
 - **Funding is charged on an eight-hour boundary, not accrued continuously.** A
   position opened a minute after 08:00 UTC pays nothing until 16:00, which is how
   the venue works; but the pass that bills it runs on a five-second cron, so the
   mark it is priced at can be seconds past the boundary rather than exactly on
   it. `annualized_funding` on the product is ignored — the live `funding_rate`
   off the ticker is what is charged.
+- **The hedge pays no fee.** Like every other engine trade, `delta_hedge` passes
+  `0` to `execute_fill`, so a hedged book overstates its P&L by the taker
+  commission a real one would pay on each hedge trade. It does pay the spread.
 - **Expiry settles server-side** via `pg_cron`; see
   [`supabase/migrations/0002_settlement.sql`](supabase/migrations/0002_settlement.sql).
 - **Fills are all-or-nothing** and ignore quoted size, so a market order for
@@ -716,7 +861,7 @@ src/
   lib/supabase.ts          Supabase client
   lib/format.ts            Number/money/greek formatting
   lib/strategy.ts          Auto strategy: candle colour, moneyness, IST window
-  lib/deltaStrategy.ts     Delta strategy: Δp, band, ITM queue, sizing, cycle plan
+  lib/deltaStrategy.ts     Delta strategy: Δp, band, ITM queue, hedge sizing, cycle plan
   engine/paper.ts          Fees, margin, bid/ask P&L, order validation, crossing
   hooks/useAuth.ts         Session
   hooks/useAccounts.ts     Paper accounts CRUD + selection, per kind
@@ -725,17 +870,20 @@ src/
   hooks/useDeltaStrategy.ts Delta strategy settings + readout (engine is server-side)
   components/controls.tsx  Shared strategy-bar widgets: select, time picker, switch
   components/              Login, TopBar, OptionChain, OrderTicket, BottomPanel,
-                           StrategyTab, DeltaStrategyTab, FuturesTab, AdminPanel
+                           StrategyTab, DeltaStrategyTab, AdminPanel
 supabase/migrations/       Schema, RLS, execute_fill, settlement, TP/SL,
-                           both strategy engines, and the perpetual's funding
-                           and liquidation crons
+                           both strategy engines, and the perpetual's funding cron
 docs/                      HLD, LLD, setup
 ```
 
 `lib/deltaStrategy.ts` holds the strategy's logic with no React and no I/O, so
 the band maths and the sizing can be reasoned about on their own. It is also
 what the browser uses to render the live readout — the executing copy is the SQL
-in `0012`, and the two must be kept in step by hand.
+in `0012`, as amended through `0044`, and the two must be kept in step by hand.
+
+`DeltaStrategyTab` draws both strategy bars: one `mode` prop swaps the roll
+controls and readouts for the hedge's leverage, size and funding. `FuturesTab` is
+gone — there is no longer a page that trades a perpetual by hand.
 
 ## Verification status
 
@@ -763,19 +911,43 @@ Confirmed working:
 - **Delta strategy daily entry, live.** Armed against the real chain it built the
   113-symbol snapshot from the feed and sold its symmetric pair — two orders, two
   open legs, `entered_day` set.
-- **The futures page renders and prices correctly**, against the live `XAUTUSD`
-  feed: notional, both margins, ROE, the funding payment, the leverage ladder and
-  the liquidation estimate all agree with the figures computed by hand, the side
-  toggle switches the touch it prices against (ask for a long, bid for a short),
-  and an order that only reduces exposure asks for no new margin.
+- **The futures hedge logic** in `lib/deltaStrategy.ts` — 31 assertions: the
+  signed sizing rule and its rounding, the perpetual entering Δp at delta 1 and Γp
+  at zero without any published greek, a hedged book reading as inside the band,
+  an over-large hedge reading as a breach of the *other* edge and being sold back
+  by the incremental size, a hedge-only book after the options have gone, a
+  sub-lot breach trading nothing, the cut declining to take the hedge, the close
+  flattening it with everything else, and options mode never producing a hedge.
+  Fixtures are synthetic.
+- **The mixed ticker query the engine now makes.** `contract_types=call_options,
+  put_options,perpetual_futures&underlying_asset_symbols=XAUT` answers live with
+  126 options and `XAUTUSD` in one array — and `XAUTUSD` comes back *first*, with
+  `"greeks": null`. That is why the engine's reply guard still works unchanged: it
+  tests that the first element carries a `greeks` **key**, which a null-valued one
+  does.
+- **The build.** `tsc -b` and the production bundle are clean with the futures page
+  removed, the `variant` prop gone from `BottomPanel`, and the two liquidation
+  helpers deleted from `engine/paper.ts`.
 
 Not yet exercised:
 
-- **The delta strategy past its daily entry.** The roll, exit-only and
-  band-correction paths have run against synthetic fixtures only, never against
-  a live book — partly because `N = 1` cannot breach the band (see above). These
-  are the paths that place and unwind real size; treat the first live breach as
-  the actual test.
+- **Either strategy past its daily entry.** The roll, exit-only and
+  band-correction paths, and now the futures hedge, have run against synthetic
+  fixtures only, never against a live book — partly because `N = 1` cannot breach
+  the band (see above). These are the paths that place and unwind real size; treat
+  the first live breach as the actual test.
+- **Everything in [`0044`](supabase/migrations/0044_futures_delta_hedge.sql) that
+  runs in the database**, for the same reason as `0038` below: it has not been
+  executed against a live Postgres. That covers the perpetual's row in the chain
+  snapshot, `delta_hedge` and the order it writes, the perpetual arm of
+  `delta_account_margin`, the two new reason lines, and the futures branch of the
+  engine. The file is balanced and self-consistent on inspection — dollar quoting,
+  `if`/`end if`, loops and blocks all check out — which is not the same as having
+  run. Apply it and watch one live breach on a small book before trusting it.
+- **A hedge placed end to end.** Nothing has yet written a `perpetual_futures`
+  order from the engine, so the first one is what proves the nullable
+  `strike_price`, the `'PERP'` expiry label and the leverage column all land as
+  intended — the same three things `0038` was waiting on a manual trade to prove.
 - **The gamma band in the database.** [`0039`](supabase/migrations/0039_delta_gamma_band.sql)
   has not been run against a live Postgres, for the same reason `0038` has not:
   migrations are applied by hand in the Supabase SQL editor. The TypeScript copy
@@ -793,14 +965,10 @@ Not yet exercised:
   database.** The migration has not been executed against a live Postgres: no
   local instance exists in this project, and it is applied by hand in the
   Supabase SQL editor like every migration before it. That covers the funding
-  cron, the liquidation cron, the leverage column travelling from order to
-  position through `execute_fill`, and the bracket-direction fix. Run it and
-  place one small futures trade before trusting any of it.
-- **A futures order placed end to end.** The page was verified against the live
-  feed but with the order handler stubbed, since signing in to the paper account
-  needs the account holder's own credentials. The first real fill is what proves
-  the nullable `strike_price`, the `'PERP'` expiry label and the leverage column
-  all land as intended.
+  cron, the leverage column travelling from order to position through
+  `execute_fill`, and the bracket-direction fix. Its liquidation cron is now
+  unreachable by construction and is not worth testing; the funding cron is what
+  charges a hedge three times a day, and is.
 
 ## License
 

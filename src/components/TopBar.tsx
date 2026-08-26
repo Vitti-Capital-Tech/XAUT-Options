@@ -110,8 +110,10 @@ export function TopBar({
         </span>
       </div>
 
-      {/* The pages — three option books and the perpetual — read as the section
-          nav, in the same weight the expiry pills use below. */}
+      {/* The pages — a manual book and three strategies — read as the section
+          nav, in the same weight the expiry pills use below. The last two are the
+          same delta strategy on two books: one corrects its delta with options,
+          the other by buying and selling the perpetual. */}
       <nav className="flex shrink-0 items-center gap-1 sm:ml-3">
         <NavLink label="Option Chain" active={page === 'chain'} onClick={() => onNavigate('chain')} />
         <NavLink
@@ -125,7 +127,7 @@ export function TopBar({
           onClick={() => onNavigate('delta')}
         />
         <NavLink
-          label="Futures"
+          label="Futures Strategy"
           active={page === 'futures'}
           onClick={() => onNavigate('futures')}
         />
