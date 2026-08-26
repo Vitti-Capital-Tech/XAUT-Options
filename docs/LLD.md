@@ -112,7 +112,7 @@ erDiagram
         numeric band_high "U"
         text target_landing "edge | mid"
         numeric band_buffer "B"
-        numeric gamma_multiplier "band = +/- |Gp| x this; 0 = off"
+        numeric gamma_multiplier "band = +/- |Gp| x this; 0 = off; ignored on a futures book"
         numeric itm_trigger "points"
         integer max_rolls "per side per session"
         numeric entry_premium
@@ -561,7 +561,7 @@ copy is PL/pgSQL in
 | Function | Signature | Notes |
 | --- | --- | --- |
 | `sessionPhase` | `(now, cfg) → { phase, day, tradingDay }` | `before \| open \| closed`, IST; handles a window that wraps midnight, and reports a day outside `tradeDays` as closed |
-| `bookDeltas` | `(positions, tickerFor, spot) → { legs, missing }` | `missing` legs are reported, never guessed at; a leg needs both delta and gamma to count. The perpetual takes its two from the contract, not the feed — delta 1, gamma 0 — because the venue publishes `greeks: null` for it |
+| `bookDeltas` | `(positions, tickerFor, spot, requireGamma?) → { legs, missing, gammaMissing }` | `missing` legs are reported, never guessed at. With `requireGamma` (options books) a leg needs delta *and* gamma; without it (futures books) a delta is enough and the gap is reported in `gammaMissing`. The perpetual takes both from the contract, not the feed — delta 1, gamma 0 — because the venue publishes `greeks: null` for it |
 | `portfolioDelta` | `(legs) → number` | `Σ(signed lots × delta)`, hedge included |
 | `portfolioGamma` | `(legs) → number` | `Σ(signed lots × gamma)`; negative on a short book, and unmoved by a hedge |
 | `effectiveBand` | `(cfg, gp) → Band` | `±\|Γp\| × gammaMultiplier`, or the typed pair when off or underivable |
@@ -632,9 +632,12 @@ so the sign of `target − Δp` is the whole decision
 ([`0044`](../supabase/migrations/0044_futures_delta_hedge.sql)).
 
 **Two hedging modes, one engine.** `planCycle` takes a `mode`, and
-`apply_delta_strategy` reads the same distinction off `accounts.kind`. Only the
-branch that answers a breach differs — flatten, cut, entry, band, brackets and
-session clock are shared verbatim. The hedge is *inside* Δp, so every hedge is
+`apply_delta_strategy` reads the same distinction off `accounts.kind`. Three
+things differ and nothing else: the branch that answers a breach, where the band
+comes from (derived from Γp on an options book, typed on a futures one), and what
+a leg must publish to be counted — delta and gamma, or delta alone
+([`0045`](../supabase/migrations/0045_futures_band_without_gamma.sql)). Flatten,
+cut, entry, brackets and session clock are shared verbatim. The hedge is *inside* Δp, so every hedge is
 sized incrementally and an over-large one unwinds itself as a breach of the
 opposite edge; nothing records what was hedged.
 

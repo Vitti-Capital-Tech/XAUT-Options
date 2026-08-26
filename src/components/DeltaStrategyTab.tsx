@@ -99,7 +99,10 @@ export function DeltaStrategyTab({
     low: config.bandLow,
     high: config.bandHigh,
     derived: false,
-    pending: config.gammaMultiplier > 0,
+    // Never pending on a futures book: there is no derivation to wait for, so the
+    // typed pair is the answer from the first paint rather than an em dash that
+    // resolves to the same two numbers a moment later.
+    pending: mode === 'options' && config.gammaMultiplier > 0,
   }
   /**
    * Whether the band is knowable yet, and the reason a reload used to show two
@@ -267,7 +270,12 @@ export function DeltaStrategyTab({
 
           <Field
             label="Target delta band"
-            help="The delta of everything you hold, added up. Inside this range it does nothing at all; outside it, it fixes the position. This is the whole position, not one option — so it can be any size, and negatives are fine. −2 to 1 is a valid range. With a gamma multiplier set, these two are only the fallback — the live band is derived instead."
+            help={
+              'The delta of everything you hold, added up. Inside this range it does nothing at all; outside it, it fixes the position. This is the whole position, not one option — so it can be any size, and negatives are fine. −2 to 1 is a valid range.' +
+              (futures
+                ? ' On this book the range is always what you type — nothing derives it.'
+                : ' With a gamma multiplier set, these two are only the fallback — the live band is derived instead.')
+            }
           >
             {/* The same two boxes either way, so the field does not change shape
                 under you when the multiplier is set — only what fills them does.
@@ -330,25 +338,35 @@ export function DeltaStrategyTab({
             </span>
           </Field>
 
-          <Field
-            label="Gamma multiplier"
-            help="Ties the range's width to the position's own gamma instead of holding it fixed: the range becomes ± total gamma × this number, recomputed every cycle. At a total gamma of 0.5, a multiplier of 2 gives −1 to 1, and the range widens on its own as gamma grows. 0 switches it off and the two numbers above are used as typed."
-          >
-            <NumInput
-              value={config.gammaMultiplier}
-              step={0.5}
-              min={0}
-              width="w-16"
-              onChange={(v) => setConfig({ gammaMultiplier: v })}
-            />
-            {/* The way out, said where the way in is. The band boxes go read-only
-                the moment this is above zero, and nothing else on the bar explains
-                how to get them back. No arithmetic here — the band field beside it
-                already prints the range this produces. */}
-            <span className="text-[10px] whitespace-nowrap text-ink-3">
-              {config.gammaMultiplier > 0 ? 'set 0 to type the band in yourself' : 'band as typed'}
-            </span>
-          </Field>
+          {/* Options-hedged books only. Deriving the band from gamma buys
+              something when every correction is a fresh short — correct less
+              often, and the tolerance scales with how fast the book breaches. It
+              buys nothing when the correction is a hedge the next cycle can undo,
+              and a wider band on a fast-moving book is the opposite of what a
+              hedger wants. So the futures book defends the band as typed, and this
+              control is not on its bar at all
+              (0045_futures_band_without_gamma). */}
+          {!futures && (
+            <Field
+              label="Gamma multiplier"
+              help="Ties the range's width to the position's own gamma instead of holding it fixed: the range becomes ± total gamma × this number, recomputed every cycle. At a total gamma of 0.5, a multiplier of 2 gives −1 to 1, and the range widens on its own as gamma grows. 0 switches it off and the two numbers above are used as typed."
+            >
+              <NumInput
+                value={config.gammaMultiplier}
+                step={0.5}
+                min={0}
+                width="w-16"
+                onChange={(v) => setConfig({ gammaMultiplier: v })}
+              />
+              {/* The way out, said where the way in is. The band boxes go read-only
+                  the moment this is above zero, and nothing else on the bar explains
+                  how to get them back. No arithmetic here — the band field beside it
+                  already prints the range this produces. */}
+              <span className="text-[10px] whitespace-nowrap text-ink-3">
+                {config.gammaMultiplier > 0 ? 'set 0 to type the band in yourself' : 'band as typed'}
+              </span>
+            </Field>
+          )}
 
           <Field
             label="Target landing"
@@ -658,7 +676,7 @@ export function DeltaStrategyTab({
             including while Γp is still missing — the band being derived is the
             fact worth surfacing, and an em dash says the derivation has not run
             yet rather than hiding that it is meant to. */}
-        {config.gammaMultiplier > 0 && (
+        {!futures && config.gammaMultiplier > 0 && (
           <Readout label={`Net Γp × ${config.gammaMultiplier}`} tone={band.derived ? 'ok' : 'warn'}>
             {gp === null ? '—' : greek(gp, 3)}
           </Readout>

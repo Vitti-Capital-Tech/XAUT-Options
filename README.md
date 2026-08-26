@@ -257,6 +257,7 @@ row marked *Breach*:
 | | Delta Strategy (`delta`) | Futures Strategy (`futures`) |
 | --- | --- | --- |
 | Breach | Roll an ITM short further out; fresh OTM sell when nothing is left to roll | Buy or sell the XAUTUSD perpetual |
+| Band | Derived from Γp × `gamma_multiplier` by default | **As typed.** Gamma is not read at all |
 | Book grows? | Yes — a correction is more premium sold | No — the option book is only what the entry sold |
 | Long exposure? | Never. **No leg is ever bought as a hedge** | The hedge is bought or sold outright |
 
@@ -361,6 +362,32 @@ goes missing from the chain reply, a book holding a hedge stands down for the
 cycle with `waiting on greeks` rather than trading against a Δp it cannot
 measure.
 
+**No gamma on this book.** The band is `band_low`/`band_high` as typed, and
+`gamma_multiplier` is an options-only control that does not appear on the futures
+bar at all ([`0045`](supabase/migrations/0045_futures_band_without_gamma.sql)).
+
+The derivation exists because gamma is the rate Δp moves at, so a book that runs
+through delta twice as fast could be given twice the tolerance and correct half as
+often. That trade is worth making when every correction is a **fresh short** —
+expensive, irreversible, and one more leg on the book. It is worth nothing when
+the correction is a hedge: one linear trade, costing the spread and a little
+margin, undone next cycle if it turns out wrong. And a *wider* band on a
+fast-moving book is the opposite of what a hedger wants — a book running is the
+moment to be closer to flat, not further from it.
+
+The consequence that actually matters is not the width, though — it is the
+stand-down. [`0039`](supabase/migrations/0039_delta_gamma_band.sql) made gamma
+required on the same terms as delta, and rightly: with a multiplier set, a leg
+silently missing from Γp moves the band by that leg's whole share, so one null
+gamma stands the cycle down. On the futures book nothing reads Γp, so a missing
+gamma corrupts nothing — but it would still leave the book unhedged, which is the
+one job it has. **A futures account needs a delta on every leg and nothing more.**
+An options account is unchanged and still needs both.
+
+Γp is not shown on the futures bar either, because it is not computed there.
+The perpetual still carries gamma 0 in the chain snapshot — that is simply what a
+linear contract's gamma is — and the positions table still prints it.
+
 **What a hedge costs.** Margin, funding and the spread:
 
 ```
@@ -452,8 +479,12 @@ Three details:
 
 #### The gamma multiplier
 
-The band does not have to be a number you type. **`gamma_multiplier`** derives it from the
-book's own gamma instead, recomputed every cycle, and **defaults to 2**
+**Delta book only.** The futures book defends the band as typed and does not read
+gamma at all — see [The futures hedge](#the-futures-hedge).
+
+On the delta book the band does not have to be a number you type.
+**`gamma_multiplier`** derives it from the book's own gamma instead, recomputed
+every cycle, and **defaults to 2**
 ([`0039`](supabase/migrations/0039_delta_gamma_band.sql)):
 
 ```
@@ -492,10 +523,12 @@ Three details worth knowing:
   zero, which every non-zero Δp breaches, and the engine would "correct" a book
   it cannot measure.
 
-Gamma is now required on the same terms as delta: a leg whose gamma the venue has
-not published stands the whole book down for that cycle, exactly as a missing
+Gamma is required on the same terms as delta *here*: a leg whose gamma the venue
+has not published stands the whole book down for that cycle, exactly as a missing
 delta already did. With the multiplier set, a leg silently absent from Γp would
-move the band by that leg's entire share.
+move the band by that leg's entire share. On the futures book that requirement is
+lifted, because nothing there reads Γp
+([`0045`](supabase/migrations/0045_futures_band_without_gamma.sql)).
 
 On a reload the band reads `—` until it is actually known. Three things land at
 different times — the settings row, the first plan, and the greeks Γp is computed
@@ -918,7 +951,10 @@ Confirmed working:
   by the incremental size, a hedge-only book after the options have gone, a
   sub-lot breach trading nothing, the cut declining to take the hedge, the close
   flattening it with everything else, and options mode never producing a hedge.
-  Fixtures are synthetic.
+  Now 43 with the gamma rules: a futures book ignoring `gamma_multiplier = 2` and
+  reporting no Γp, hedging a book whose leg has no published gamma, the options
+  book still standing down on that same book, and each saying which greek it is
+  waiting for. Fixtures are synthetic.
 - **The mixed ticker query the engine now makes.** `contract_types=call_options,
   put_options,perpetual_futures&underlying_asset_symbols=XAUT` answers live with
   126 options and `XAUTUSD` in one array — and `XAUTUSD` comes back *first*, with
@@ -936,12 +972,13 @@ Not yet exercised:
   fixtures only, never against a live book — partly because `N = 1` cannot breach
   the band (see above). These are the paths that place and unwind real size; treat
   the first live breach as the actual test.
-- **Everything in [`0044`](supabase/migrations/0044_futures_delta_hedge.sql) that
-  runs in the database**, for the same reason as `0038` below: it has not been
-  executed against a live Postgres. That covers the perpetual's row in the chain
-  snapshot, `delta_hedge` and the order it writes, the perpetual arm of
-  `delta_account_margin`, the two new reason lines, and the futures branch of the
-  engine. The file is balanced and self-consistent on inspection — dollar quoting,
+- **Everything in [`0044`](supabase/migrations/0044_futures_delta_hedge.sql) and
+  [`0045`](supabase/migrations/0045_futures_band_without_gamma.sql) that runs in
+  the database**, for the same reason as `0038` below: neither has been executed
+  against a live Postgres. That covers the perpetual's row in the chain snapshot,
+  `delta_hedge` and the order it writes, the perpetual arm of
+  `delta_account_margin`, the two new reason lines, the futures branch of the
+  engine, and the per-mode band and stand-down. The file is balanced and self-consistent on inspection — dollar quoting,
   `if`/`end if`, loops and blocks all check out — which is not the same as having
   run. Apply it and watch one live breach on a small book before trusting it.
 - **A hedge placed end to end.** Nothing has yet written a `perpetual_futures`

@@ -485,6 +485,13 @@ export function itmDistanceOf(kind: OptionKind, strike: number, spot: number): n
  * Γp would widen or narrow the band by that leg's whole share and the breach test
  * would be answering a different question than the trader asked.
  *
+ * `requireGamma` is what a futures-hedged book turns off. Gamma is only ever read
+ * to derive the band, and that book does not derive it — so a leg whose gamma the
+ * venue has not published is no reason to stop measuring Δp and stop hedging. With
+ * it false, such a leg counts at gamma 0 and is reported in `gammaMissing`, so Γp
+ * is known to be unreliable and simply is not used
+ * ([`0045`](../../supabase/migrations/0045_futures_band_without_gamma.sql)).
+ *
  * The perpetual is the one leg whose greeks are not read from the feed, because
  * the venue publishes none for it — `"greeks": null` on the ticker. It does not
  * need them: a linear contract has delta 1 per lot and gamma 0 by definition, and
@@ -501,9 +508,12 @@ export function bookDeltas(
   positions: PositionRow[],
   tickerFor: (symbol: string) => Ticker | undefined,
   spot: number,
-): { legs: LegDelta[]; missing: PositionRow[] } {
+  /** False on a futures-hedged book, which never derives a band from Γp. */
+  requireGamma = true,
+): { legs: LegDelta[]; missing: PositionRow[]; gammaMissing: PositionRow[] } {
   const legs: LegDelta[] = []
   const missing: PositionRow[] = []
+  const gammaMissing: PositionRow[] = []
 
   for (const pos of positions) {
     if (pos.net_qty === 0) continue
@@ -511,11 +521,13 @@ export function bookDeltas(
     const perp = kind === 'perp'
     const ticker = tickerFor(pos.symbol)
     const optionDelta = perp ? 1 : tickerDelta(ticker)
-    const optionGamma = perp ? 0 : tickerGamma(ticker)
-    if (optionDelta === null || optionGamma === null) {
+    const rawGamma = perp ? 0 : tickerGamma(ticker)
+    if (rawGamma === null) gammaMissing.push(pos)
+    if (optionDelta === null || (requireGamma && rawGamma === null)) {
       missing.push(pos)
       continue
     }
+    const optionGamma = rawGamma ?? 0
     const strike = perp ? NaN : Number(pos.strike_price)
     legs.push({
       position: pos,
@@ -530,7 +542,7 @@ export function bookDeltas(
     })
   }
 
-  return { legs, missing }
+  return { legs, missing, gammaMissing }
 }
 
 export function portfolioDelta(legs: LegDelta[]): number {
@@ -1094,7 +1106,8 @@ export interface CyclePlan {
   reason: string
   /** Present whenever the book could be valued, so the UI can show it live. */
   dp: number | null
-  /** Γp in the band's own unit, on the same terms as `dp`. */
+  /** Γp in the band's own unit, on the same terms as `dp`. Always null on a
+   *  futures-hedged book, which has no use for it. */
   gp: number | null
   /** The band this pass judged `dp` against — derived from Γp, or the stored pair. */
   band: Band
@@ -1127,8 +1140,14 @@ export function planCycle(input: CycleInput): CyclePlan {
   const mode = input.mode ?? 'options'
   const { phase, day, tradingDay } = sessionPhase(now, cfg)
 
+  // Gamma is read for one purpose only — deriving the band — and a futures-hedged
+  // book does not derive it. So that book neither computes Γp nor waits for one:
+  // a leg the venue has published no gamma for still counts toward Δp and is
+  // still hedged, where an options-hedged book stands the whole cycle down for it
+  // ([`0045`](../../supabase/migrations/0045_futures_band_without_gamma.sql)).
+  const usesGamma = mode === 'options'
   const live = positions.filter((p) => p.net_qty !== 0)
-  const { legs, missing } = bookDeltas(live, tickerFor, spot)
+  const { legs, missing } = bookDeltas(live, tickerFor, spot, usesGamma)
   // Δp in qty (underlying) units, the same unit the band is set in: net_qty counts
   // venue lots, so each leg's lot-sized delta is scaled by the contract value to
   // read as the book's own delta. `dpLots` keeps the unscaled sum, because sizing a
@@ -1138,14 +1157,18 @@ export function planCycle(input: CycleInput): CyclePlan {
   const dp = dpLots === null ? null : dpLots * cv
   // Γp in the band's unit, scaled the same way Δp is — the multiplier is applied
   // to a figure in the unit the band is read in, or the two would not compare.
-  const gp = missing.length === 0 ? portfolioGamma(legs) * cv : null
+  const gp = usesGamma && missing.length === 0 ? portfolioGamma(legs) * cv : null
   // `pending` separates "Γp is not in yet" from "there is no Γp". Both hand back
   // the stored pair, but only the second is an answer: the first is a band about
   // to be replaced the moment the greeks land, and printing it as settled is what
   // makes the bar appear to show a wrong band for a second after a reload.
+  // The stored pair is the band outright on a futures book — `gammaMultiplier` is
+  // an options-only control there, and forcing it to zero here is what makes that
+  // true of the readout as well as of the engine. Nothing is ever `pending`
+  // either: there is no derivation to wait on.
   const band: Band = {
-    ...effectiveBand(cfg, gp),
-    pending: cfg.gammaMultiplier > 0 && gp === null && live.length > 0,
+    ...effectiveBand(usesGamma ? cfg : { ...cfg, gammaMultiplier: 0 }, gp),
+    pending: usesGamma && cfg.gammaMultiplier > 0 && gp === null && live.length > 0,
   }
   const queue = itmQueue(legs, cfg)
   // Lots already short per contract, for the notional cap. Off `live` rather than
@@ -1272,7 +1295,11 @@ export function planCycle(input: CycleInput): CyclePlan {
 
   // ---- Rebalance -----------------------------------------------------------
   if (dp === null) {
-    return { ...base, action: null, reason: `Waiting on greeks for ${missing.length} leg(s)` }
+    return {
+      ...base,
+      action: null,
+      reason: `Waiting on ${usesGamma ? 'greeks' : 'a delta'} for ${missing.length} leg(s)`,
+    }
   }
 
   const breach = bandBreach(dp, band)
