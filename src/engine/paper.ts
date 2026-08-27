@@ -211,6 +211,12 @@ export interface PositionValue {
   avgEntry: number
   /** Delta's fair mark price; the exit-side price if they have not published one. */
   mark: number | null
+  /**
+   * The price the position is valued at: the side of the book it would exit
+   * into — bid for a long, ask for a short. Falls back to the mark only when
+   * that side is empty, which is the one case the touch cannot answer.
+   */
+  exit: number | null
   /** price * cv * |qty| at entry — what the position cost (long) or collected (short). */
   entryValue: number
   /** Current exit value of the position. */
@@ -239,16 +245,28 @@ export function valuePosition(
   const avgEntry = Number(pos.avg_entry_price)
   const lots = Math.abs(netQty)
 
-  // Delta values open positions off the fair mark price, not off the touch, and
-  // this follows them. The exit price is kept as the fallback for the case their
-  // mark is missing, which is the only case where the book is the better guess.
+  // Two prices, and they are not interchangeable.
+  //
+  // `mark` is Delta's fair value. It is what the venue margins against, so it is
+  // what the margin figures below use and what the Mark Price column shows.
+  //
+  // `exit` is the side of the book the position would actually leave through — a
+  // long sells into the bid, a short buys the ask — and it is what P&L is valued
+  // at, because that is the money the position is worth right now. Marking at the
+  // mid or the mark flatters a position by half the spread each way, which on an
+  // illiquid strike is most of what the row shows; a book that pays the spread on
+  // the way out should carry it on the screen too.
+  //
+  // Each falls back to the other when its own source is missing: an empty side of
+  // the book leaves only the mark to go on, and vice versa.
   const mark = markPrice(ticker) ?? exitPrice(ticker, netQty)
+  const exit = exitPrice(ticker, netQty) ?? mark
   const entryValue = avgEntry * cv * lots
-  const currentValue = mark === null ? null : mark * cv * lots
+  const currentValue = exit === null ? null : exit * cv * lots
 
-  // Long: gain when the mark rises above entry. Short: gain when it falls below.
+  // Long: gain when the exit price is above entry. Short: gain when it is below.
   const unrealized =
-    mark === null ? null : netQty > 0 ? (mark - avgEntry) * lots * cv : (avgEntry - mark) * lots * cv
+    exit === null ? null : netQty > 0 ? (exit - avgEntry) * lots * cv : (avgEntry - exit) * lots * cv
 
   // A perpetual margins off its own notional, both ways round, at whatever
   // leverage it was opened at. An option keeps the two-sided rule it has always
@@ -266,6 +284,7 @@ export function valuePosition(
     netQty,
     avgEntry,
     mark,
+    exit,
     entryValue,
     currentValue,
     unrealized,

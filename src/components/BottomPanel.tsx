@@ -555,7 +555,20 @@ function PositionsTable({
                     premium of anything, so the hint stays off that row. */}
                 {isLong && !perp && <div className="text-[10px] text-ink-3">premium</div>}
               </Td>
-              <Td className={pnlClass(v.unrealized)}>
+              {/* Valued at the side of the book this position would exit through
+                  — the bid on a long, the ask on a short — not at the mark in the
+                  column before it. The two differ by the spread, which is why the
+                  price it was struck at is named in the hover rather than left to
+                  be inferred from a figure that will not tie out against the
+                  mark. Margin still reads off the mark, as the venue's does. */}
+              <Td
+                className={pnlClass(v.unrealized)}
+                title={
+                  v.exit === null
+                    ? 'No bid or ask on the exit side, and no mark either'
+                    : `Valued at ${price(v.exit)} — the ${isLong ? 'bid' : 'ask'} it would exit into`
+                }
+              >
                 <div className="font-semibold">
                   <Money value={v.unrealized} signed suffix="inherit" />
                 </div>
@@ -1052,8 +1065,18 @@ function fillKind(f: FillRow): { label: string; cls: string } {
   if (f.is_settlement) return { label: 'Settlement', cls: 'text-ink-3' }
   if (f.close_reason === 'take_profit') return { label: 'Take Profit', cls: 'text-pos' }
   if (f.close_reason === 'stop_loss') return { label: 'Stop Loss', cls: 'text-neg' }
+  // A liquidation is a loss and the worst kind, so it reads as one.
+  if (f.close_reason === 'liquidation') return { label: 'Liquidation', cls: 'text-neg' }
   // A window close is neither a win nor a loss — the clock ran out on it.
   if (f.close_reason === 'window_close') return { label: 'Window Close', cls: 'text-ink-3' }
+  // Any other reason the server books: title-cased from the column rather than
+  // enumerated here, so a new one shows up as itself instead of as `Trade`.
+  if (f.close_reason) {
+    return {
+      label: f.close_reason.replace(/_/g, ' ').replace(/\w/g, (c) => c.toUpperCase()),
+      cls: 'text-ink-2',
+    }
+  }
   return { label: 'Trade', cls: 'text-ink-2' }
 }
 

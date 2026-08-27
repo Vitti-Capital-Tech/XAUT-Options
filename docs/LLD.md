@@ -524,7 +524,7 @@ symbols instead of 150, without breaking P&L on other expiries.
 | `marketFillPrice` | `(ticker, side) → number \| null` | `null` = that side is empty |
 | `exitPrice` | `(ticker, netQty) → number \| null` | Bid for longs, ask for shorts |
 | `computeFee` | `(product, price, qty, spot) → number` | Rates from the product |
-| `valuePosition` | `(pos, ticker, spot) → PositionValue` | Mark, value, unrealized, margin |
+| `valuePosition` | `(pos, ticker, spot) → PositionValue` | P&L at the exit price, margin at the mark |
 | `summarizeAccount` | `(cash, positions, tickerFor, spot) → AccountSummary` | Balance/equity/available |
 | `previewOrder` | `(intent, ticker, spot, existing, available) → OrderPreview` | `error` blocks; `warning` informs |
 | `crossesNow` | `(side, limitPrice, ticker) → number \| null` | Fill price at the touch, or `null` |
@@ -759,6 +759,14 @@ called out when it chose an unlogged `delta_chain` over a temp one.
 The illiquid case is worth calling out: a deep-ITM put quoted with a lowball bid
 and no ask will show a large unrealized loss. That is the honest consequence of
 exit-price marking, not a defect — but it surprises people.
+
+Two prices, not one, and they answer different questions. P&L is struck at the
+exit price, because that is the money the position is worth if it leaves now;
+margin is struck at Delta's mark, because that is what the venue blocks and what
+the server-side margin guard measures against. So a row's UPNL will not tie out
+against the Mark Price column by the width of the spread, which is why the UPNL
+cell names the price it used in its hover. Each price falls back to the other when
+its own source is missing.
 
 ---
 

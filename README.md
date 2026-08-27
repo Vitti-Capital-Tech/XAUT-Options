@@ -732,6 +732,17 @@ delta engine but fired by `apply_tpsl_triggers`, the bracket sweep shared with t
 other two books, so without that a leg would leave the book with nothing to say
 why.
 
+Both engine books, as of
+[`0047`](supabase/migrations/0047_futures_exit_reason.sql). That sweep wrote the
+sentence only for `kind = 'delta'`, which was the only engine book when `0034`
+was written — so on the **futures** account the brackets closed the leg, booked
+the P&L and left Exit Reason blank, on exactly the rows that book leaves through
+most often: a hedged strangle is held to its two marks rather than rolled. The
+test is now `kind in ('delta', 'futures')` and nothing else about the path
+changed. Rows that already closed keep their dash — the Δp either side of a close
+from last week is not recoverable, and a sentence built from today's book would
+be a fabrication on a real trade.
+
 > **Cycles that trade nothing write nothing.** An entry held back by margin, a Δp
 > that cannot be trusted because a greek has not arrived, a breach worth less than
 > one contract — there is no row to hang those on, and they are already on screen:
