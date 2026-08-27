@@ -2,11 +2,17 @@
  * The auto-strategy's pure logic, with no React and no I/O, so the strike maths
  * and the time window can be reasoned about on their own.
  *
- * The rule is fixed: read the last closed 1h candle of the spot index and sell
- * an option — a red bar sells a call, a green bar sells a put — one order,
- * market, of the strike picked by moneyness off the current spot, fired only
- * inside a time-of-day window, with a stop at twice the entry premium. Everything
- * here computes that; the hook does the fetching, the clock and the placing.
+ * The rule is fixed: read the last closed 1h candle of the spot index and buy
+ * an option — a red bar buys a call, a green bar buys a put — one order, market,
+ * of the strike picked by moneyness off the current spot, fired only inside a
+ * time-of-day window, with a bracket set as a share of the premium paid.
+ * Everything here computes that; the hook does the fetching, the clock and the
+ * placing.
+ *
+ * It buys, as of [`0046`](../../supabase/migrations/0046_auto_strategy_buys.sql).
+ * Every level below therefore points the way a long reads it — the stop under the
+ * entry, the target above it — which is the mirror of what these three functions
+ * returned when the book was sold.
  */
 
 import type { Candle, Expiry, Product } from './delta'
@@ -17,46 +23,53 @@ export type OptionKind = 'call' | 'put'
  * The multiple of the entry premium a stop percentage lands on, which is the
  * form the level is easiest to sanity-check in:
  *
- *     100% → 2.00x entry — a $4 short stops at $8, the whole premium given back
- *      50% → 1.50x entry — a $4 short stops at $6
+ *      50% → 0.50x entry — a $4 long stops at $2, half the premium lost
+ *      25% → 0.75x entry — a $4 long stops at $3
  *
  * The engine arms `avg_entry_price × stopMultiple(pct)` on the mark. Zero means
  * no stop at all, so this returns null rather than 1x — a stop *at* the entry.
+ *
+ * **100 or more also returns null**, and that is arithmetic rather than
+ * validation: the level would land at zero or below, which is not a price an
+ * option ever marks at. A long cannot lose more than the premium it paid, so
+ * there is nothing for a stop beyond 100% to protect.
  */
 export function stopMultiple(stopLossPct: number): number | null {
-  if (!(stopLossPct > 0)) return null
-  return 1 + stopLossPct / 100
+  if (!(stopLossPct > 0) || stopLossPct >= 100) return null
+  return 1 - stopLossPct / 100
 }
 
 /**
  * The trailing stop's level for a given premium — the same multiple, applied to
  * the last closed minute's close instead of to the entry:
  *
- *     100% → 2.00x that close — a premium trading at $2 stops at $4
- *      50% → 1.50x that close — the same premium stops at $3
+ *      50% → 0.50x that close — a premium trading at $8 stops at $4
+ *      25% → 0.75x that close — the same premium stops at $6
  *
- * Null at zero, meaning no trailing half. The engine takes the lesser of this and
- * the entry stop, so this is only ever the level that *tightens* the bracket.
+ * Null at zero, meaning no trailing half. The engine takes the **greater** of this
+ * and the entry stop, which on a long is the tighter of the two — so this is the
+ * level that ratchets up behind a winning position.
  */
 export function trailStopLevel(trailStopPct: number, premium: number): number | null {
-  if (!(trailStopPct > 0) || !(premium > 0)) return null
-  return premium * (1 + trailStopPct / 100)
+  if (!(trailStopPct > 0) || trailStopPct >= 100 || !(premium > 0)) return null
+  return premium * (1 - trailStopPct / 100)
 }
 
 /**
- * The same, for the take-profit — a percent of the premium *kept* rather than
- * given back, so the multiple sits below 1x:
+ * The same, for the take-profit — a percent of the premium *made* rather than
+ * lost, so the multiple sits above 1x:
  *
- *      70% → 0.30x entry — a $4 short is bought back at $1.20
- *      50% → 0.50x entry — a $4 short is bought back at $2.00
+ *      70% → 1.70x entry — a $4 long is sold at $6.80
+ *     150% → 2.50x entry — the same long is sold at $10.00
  *
- * Null at zero: no take-profit armed. The column is capped below 100 because a
- * level of zero is a price no option ever marks at, so the bracket would sit
- * there and never fire.
+ * Null at zero: no take-profit armed. There is no ceiling any more — a long can
+ * make several times what it paid, where the short this replaced could never make
+ * more than the premium it collected
+ * ([`0046`](../../supabase/migrations/0046_auto_strategy_buys.sql)).
  */
 export function takeProfitMultiple(takeProfitPct: number): number | null {
   if (!(takeProfitPct > 0)) return null
-  return 1 - takeProfitPct / 100
+  return 1 + takeProfitPct / 100
 }
 
 /**
@@ -77,12 +90,12 @@ export const MONEYNESS_ORDER: Moneyness[] = [
   'OTM5',
 ]
 
-/** Which expiry an entry is sold in: the same IST day only, or the nearest live one. */
+/** Which expiry an entry is bought in: the same IST day only, or the nearest live one. */
 export type ExpiryRule = 'today' | 'nearest'
 
 export interface StrategyConfig {
   moneyness: Moneyness
-  /** Underlying units sold per fire (XAUT). Converted to lots at placement. */
+  /** Underlying units bought per fire (XAUT). Converted to lots at placement. */
   qty: number
   /** Trading window, inclusive, as `HH:MM` in IST. A window that wraps past
    *  midnight (start > end) is honoured. */
@@ -97,13 +110,18 @@ export interface StrategyConfig {
    */
   tradeDays: number[]
   /**
-   * Premium floor, in dollars on the bid. A bar whose strike is bid below this is
-   * skipped rather than sold — the strike is fixed by `moneyness`, so the floor
-   * vetoes the trade instead of hunting for a richer strike. Zero disables it.
+   * Premium ceiling, in dollars on the ask. A bar whose strike is offered above
+   * this is skipped rather than bought — the strike is fixed by `moneyness`, so
+   * the cap vetoes the trade instead of hunting for a cheaper strike. Zero
+   * disables it.
+   *
+   * It was a floor on the bid while the strategy sold: a seller's version of "this
+   * trade does not pay" is too little collected, a buyer's is too much paid
+   * ([`0046`](../../supabase/migrations/0046_auto_strategy_buys.sql)).
    */
-  minPremium: number
+  maxPremium: number
   /**
-   * Which expiry to sell. `today` takes only the same-day contract on the IST
+   * Which expiry to buy. `today` takes only the same-day contract on the IST
    * clock and skips the bar when there is none — XAUT does not list one every
    * calendar day, and the same-day contract settles at 21:30 IST, so expect no
    * trades on either. `nearest` takes the nearest unsettled expiry, whatever its
@@ -114,15 +132,16 @@ export interface StrategyConfig {
   /**
    * The chosen expiry as `ddmmyy`, picked from the live chain the way the option
    * chain's tabs are. A date does not roll: once it settles the strategy skips its
-   * bars until a new one is chosen, rather than selling a contract nobody chose.
+   * bars until a new one is chosen, rather than buying a contract nobody chose.
    * Null falls back to `expiryRule`.
    */
   expiryLabel: string | null
   /**
-   * Stop-loss as a percent of the premium collected, watched on the option's own
-   * mark — see `stopLevel`. 100 stops a $4 short at $8, which is the whole premium
-   * given back. Zero arms no stop at all, leaving only the window flatten and
-   * expiry settlement to close the position.
+   * Stop-loss as a percent of the premium **paid**, watched on the option's own
+   * mark — see `stopMultiple`. 50 stops a $4 long at $2, half the premium lost.
+   * Zero arms no stop at all, leaving only the window flatten and expiry
+   * settlement to close the position, and so does 100 or more: that level lands at
+   * or below zero, and a long's loss is already bounded by what it paid.
    */
   stopLossPct: number
   /**
@@ -131,22 +150,24 @@ export interface StrategyConfig {
    * against the entry, and re-read every minute
    * ([`0037`](../../supabase/migrations/0037_auto_trailing_stop.sql)):
    *
-   *     trail = close × (1 + trailStopPct / 100)
+   *     trail = close × (1 − trailStopPct / 100)
    *
-   * The armed stop is the lesser of this and the entry stop, so as a short goes
-   * your way the level follows the premium down and locks the gain in. It follows
-   * the premium back *up* too — `least` is taken of the two as they stand this
-   * minute, not against where the stop has already been — so the level can loosen
-   * again, though never past the entry stop.
+   * The armed stop is the **greater** of this and the entry stop, which on a long
+   * is the tighter of the two — so as the option gains the level follows the
+   * premium up and locks the gain in. It follows the premium back *down* too —
+   * `greatest` is taken of the two as they stand this minute, not against where the
+   * stop has already been — so the level can loosen again, though never past the
+   * entry stop.
    *
    * Zero switches trailing off, leaving the fixed entry stop alone.
    */
   trailStopPct: number
   /**
-   * Take-profit as a percent of the premium collected that you keep, watched on
-   * the option's own mark — see `takeProfitMultiple`. 70 buys a $4 short back at
-   * $1.20. Zero arms no take-profit; it must stay under 100, since a level of zero
-   * is a price no option marks at.
+   * Take-profit as a percent of the premium **paid** that you make, watched on the
+   * option's own mark — see `takeProfitMultiple`. 70 sells a $4 long at $6.80.
+   * Zero arms no take-profit. There is no ceiling: a long can make several times
+   * what it paid, so 150 and 300 are ordinary targets where the short this
+   * replaced could never clear 100.
    */
   takeProfitPct: number
 }
@@ -158,8 +179,8 @@ export const DEFAULT_CONFIG: StrategyConfig = {
   windowStart: '00:00',
   windowEnd: '23:59',
   tradeDays: [1, 2, 3, 4, 5, 6, 7],
-  // No floor by default: the strategy sells whatever the moneyness resolves to.
-  minPremium: 0,
+  // No cap by default: the strategy buys whatever the moneyness resolves to.
+  maxPremium: 0,
   // Same-day only. Selling a multi-day option because today's is unlisted was the
   // behaviour this rule was added to stop, so it is not the default.
   expiryRule: 'today',
@@ -175,7 +196,7 @@ export const DEFAULT_CONFIG: StrategyConfig = {
 }
 
 // ---------------------------------------------------------------------------
-// Candle → which option to sell
+// Candle → which option to buy
 // ---------------------------------------------------------------------------
 
 export type CandleColor = 'green' | 'red' | 'flat'
@@ -188,9 +209,15 @@ export function candleColor(c: Candle): CandleColor {
 }
 
 /**
- * The option a bar tells us to sell: a red (bearish) hour sells the call, a green
- * (bullish) hour sells the put — fading the move's opposite wing. Flat is no
- * signal. The side is always a sell.
+ * The option a bar tells us to buy: a red (bearish) hour buys the call, a green
+ * (bullish) hour buys the put. Flat is no signal, and the side is always a buy
+ * ([`0046`](../../supabase/migrations/0046_auto_strategy_buys.sql)).
+ *
+ * The pairing is the one the strategy has always used; buying rather than selling
+ * it inverts what it means. Selling a call into a red hour was a bet the fall
+ * would hold — the wing was being faded. Buying one is a bet on the bounce. Same
+ * bars, opposite view, and worth being clear-eyed about before reading a run of
+ * results.
  */
 export function kindForColor(color: CandleColor): OptionKind | null {
   if (color === 'red') return 'call'

@@ -16,7 +16,7 @@ const SYNC_MS = 15_000
 /**
  * The auto-strategy's settings for one auto account, backed by the database.
  *
- * The engine that acts on these — reading the 1h candle, selling the option,
+ * The engine that acts on these — reading the 1h candle, buying the option,
  * arming the stop — now runs server-side on pg_cron (see 0008_strategy_engine),
  * so it works with the tab closed. This hook only reads and writes the row that
  * engine watches: whether it is armed, the strike, the size and the window.
@@ -28,7 +28,7 @@ export interface StrategyApi {
   setArmed: (on: boolean) => void
   hasAccount: boolean
   loading: boolean
-  /** Write every staged filter change and arm the open shorts — the Apply button.
+  /** Write every staged filter change and arm the open legs — the Apply button.
    *  Resolves once the write has landed; the draft is kept if it was refused. */
   apply: () => Promise<void>
   /** Drop the staged edits and snap back to the saved config — the Cancel button. */
@@ -45,7 +45,7 @@ interface Row {
   window_start: string
   window_end: string
   trade_days: number[] | null
-  min_premium: string | number
+  max_premium: string | number
   expiry_rule: string
   expiry_label: string | null
   stop_loss_pct: string | number
@@ -54,7 +54,7 @@ interface Row {
 }
 
 const COLS =
-  'account_id, armed, moneyness, qty, window_start, window_end, trade_days, min_premium, expiry_rule, expiry_label, stop_loss_pct, trail_stop_pct, take_profit_pct'
+  'account_id, armed, moneyness, qty, window_start, window_end, trade_days, max_premium, expiry_rule, expiry_label, stop_loss_pct, trail_stop_pct, take_profit_pct'
 
 export function useAutoStrategy(
   accountId: string | null,
@@ -97,7 +97,7 @@ export function useAutoStrategy(
       // rather than an empty selection, which would read as "never".
       tradeDays: row.trade_days === null ? [...DEFAULT_CONFIG.tradeDays] : row.trade_days.map(Number),
       // Postgres numerics come back as strings over PostgREST.
-      minPremium: Number(row.min_premium),
+      maxPremium: Number(row.max_premium),
       expiryRule: row.expiry_rule as ExpiryRule,
       expiryLabel: row.expiry_label,
       stopLossPct: Number(row.stop_loss_pct),
@@ -142,7 +142,7 @@ export function useAutoStrategy(
           window_start: DEFAULT_CONFIG.windowStart,
           window_end: DEFAULT_CONFIG.windowEnd,
           trade_days: DEFAULT_CONFIG.tradeDays,
-          min_premium: DEFAULT_CONFIG.minPremium,
+          max_premium: DEFAULT_CONFIG.maxPremium,
           expiry_rule: DEFAULT_CONFIG.expiryRule,
           expiry_label: DEFAULT_CONFIG.expiryLabel,
           stop_loss_pct: DEFAULT_CONFIG.stopLossPct,
@@ -249,7 +249,7 @@ export function useAutoStrategy(
     [persist],
   )
 
-  // Apply: write every staged field, and push the bracket onto the open shorts,
+  // Apply: write every staged field, and push the bracket onto the open legs,
   // which the engine only ever arms at fill time. `savedConfig` catches up to the
   // draft, so the button goes dark until the next edit.
   //
@@ -265,7 +265,7 @@ export function useAutoStrategy(
       window_start: config.windowStart,
       window_end: config.windowEnd,
       trade_days: config.tradeDays,
-      min_premium: config.minPremium,
+      max_premium: config.maxPremium,
       expiry_rule: config.expiryRule,
       expiry_label: config.expiryLabel,
       stop_loss_pct: config.stopLossPct,
@@ -314,7 +314,7 @@ function sameConfig(a: StrategyConfig, b: StrategyConfig): boolean {
 }
 
 /**
- * Re-arm every open short's bracket to the current TP/SL, mirroring what the
+ * Re-arm every open leg's bracket to the current TP/SL, mirroring what the
  * engine writes at fill time: stop and take-profit as avg_entry × the multiple,
  * on the mark, with a zero percent clearing that side (null, never a level at 0).
  * Then reload the book so the change shows at once rather than on the next poll.
@@ -365,7 +365,8 @@ async function rearmOpenPositions(
  */
 function settingsError(message: string): string {
   if (message.includes('strategy_take_profit_pct_chk'))
-    return 'Take profit must be between 0 and 100 percent.'
+    return 'Take profit cannot be negative.'
+  if (message.includes('strategy_max_premium_chk')) return 'Max premium cannot be negative.'
   if (message.includes('strategy_stop_loss_pct_chk')) return 'Entry stop cannot be negative.'
   if (message.includes('strategy_trail_stop_pct_chk')) return 'Trailing stop cannot be negative.'
   if (message.includes('strategy_expiry_rule_chk'))

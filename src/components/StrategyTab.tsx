@@ -15,16 +15,16 @@ import {
 
 /**
  * The auto-strategy's controls — a compact bar above its trades table. The signal
- * is fixed (sell a call on a red 1h candle, a put on a green), so there is nothing
- * to toggle there; what is here is when it may trade, what it sells, and where the
+ * is fixed (buy a call on a red 1h candle, a put on a green), so there is nothing
+ * to toggle there; what is here is when it may trade, what it buys, and where the
  * bracket sits. The positions and trade history it produces are in the panel below,
  * on the strategy's own account.
  *
- * Trading hours are both ends of the day: it sells only inside them, and buys back
+ * Trading hours are both ends of the day: it buys only inside them, and sells
  * whatever it holds once past them, so nothing is carried overnight.
  *
  * The bar is grouped the way the delta strategy's is, and in the same order — when it
- * may trade, what it sells, then the bracket — so moving between the two tabs does
+ * may trade, what it buys, then the bracket — so moving between the two tabs does
  * not mean relearning where anything is.
  *
  * Where a label needed explaining it says what the setting does; where the trading
@@ -70,7 +70,7 @@ export function StrategyTab({
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-6 gap-y-4">
         <Field
           label="Session · IST"
-          help="When it trades, on the IST clock. Inside these hours it sells; past the end it stops and buys back whatever it holds, so nothing is held overnight."
+          help="When it trades, on the IST clock. Inside these hours it buys; past the end it stops and sells whatever it holds, so nothing is held overnight."
         >
           <div className="flex items-center gap-2">
             <TimePicker value={config.windowStart} onChange={(v) => setConfig({ windowStart: v })} />
@@ -90,10 +90,10 @@ export function StrategyTab({
 
         {/* The listed expiries by date, as the chain's tabs show them. A date does not
             roll: once the chosen one settles the strategy skips its bars rather than
-            selling a contract nobody picked, so the stale case is called out. */}
+            buying a contract nobody picked, so the stale case is called out. */}
         <Field
           label="Expiry"
-          help="Which expiry to sell, by date. The date does not move on its own — once that expiry is gone, trading stops until you pick a new one. It will never quietly sell a different one. Today's expiry finishes at 21:30 IST."
+          help="Which expiry to buy, by date. The date does not move on its own — once that expiry is gone, trading stops until you pick a new one. It will never quietly buy a different one. Today's expiry finishes at 21:30 IST."
         >
           <div className="flex items-center gap-2">
             <Select
@@ -110,7 +110,7 @@ export function StrategyTab({
 
         <Field
           label="Strike"
-          help="How far from gold's price to sell. ATM is the listed strike nearest spot; OTM 2 is two strikes further out, ITM 1 one strike closer in. If it runs out of listed strikes it takes the furthest one rather than skipping the trade."
+          help="How far from gold's price to buy. ATM is the listed strike nearest spot; OTM 2 is two strikes further out, ITM 1 one strike closer in. If it runs out of listed strikes it takes the furthest one rather than skipping the trade."
         >
           <Select
             value={config.moneyness}
@@ -119,25 +119,26 @@ export function StrategyTab({
           />
         </Field>
 
-        {/* The premium floor: a bar whose strike is bid under this is skipped
-            rather than sold. Zero turns the filter off. */}
+        {/* The budget: a bar whose strike is offered above this is skipped rather
+            than bought. Zero turns the filter off. It was a floor on the bid while
+            the strategy sold — same job, opposite end. */}
         <Field
-          label="Min premium"
-          help="A price floor. If the strike it would sell is bid under this, that hour is skipped rather than sold. It will not go looking for a better-paying strike — which strike to sell is the Strike setting's to decide."
+          label="Max premium"
+          help="A price ceiling. If the strike it would buy is offered above this, that hour is skipped rather than bought. It will not go looking for a cheaper strike — which strike to buy is the Strike setting's to decide."
         >
           <NumInput
-            value={config.minPremium}
+            value={config.maxPremium}
             min={0}
             step={0.5}
             unit="$"
             width="w-16"
-            onChange={(minPremium) => setConfig({ minPremium })}
+            onChange={(maxPremium) => setConfig({ maxPremium })}
           />
         </Field>
 
         <Field
           label="Quantity"
-          help="How much to sell each time it fires, in XAUT. It is turned into lots when the order is placed."
+          help="How much to buy each time it fires, in XAUT. It is turned into lots when the order is placed."
         >
           <NumInput
             value={config.qty}
@@ -151,17 +152,19 @@ export function StrategyTab({
 
         <GroupRule />
 
-        {/* The fixed half of the stop, as a share of the premium collected. The
+        {/* The fixed half of the stop, as a share of the premium paid. The
             multiple it works out to sits beside the box, since that is the form it
-            is easiest to check — and it keeps the old hardcoded 2× recognisable. */}
+            is easiest to check. Capped at 99: at 100 the level lands on zero, which
+            no option marks at. */}
         <Field
           label="Entry stop"
-          help="How much of the premium you are willing to give back before it closes the position, measured from what you sold at and watched on the option's own price. 100% closes a $4 sale at $8 — the whole premium given back. 50% closes it at $6. At 0 there is no fixed stop, leaving only the trailing stop, the end of the trading hours, or the expiry to close it."
+          help="How much of the premium you are willing to lose before it closes the position, measured from what you paid and watched on the option's own price. 50% closes a $4 buy at $2. 25% closes it at $3. At 0 there is no fixed stop, leaving only the trailing stop, the end of the trading hours, or the expiry to close it — and since the most a bought option can lose is what it cost, that is a bounded risk rather than an open one."
         >
           <div className="flex items-center gap-2">
             <NumInput
               value={config.stopLossPct}
               min={0}
+              max={99}
               step={25}
               unit="%"
               width="w-16"
@@ -174,18 +177,19 @@ export function StrategyTab({
         </Field>
 
         {/* The moving half: the same share of the premium, but measured against
-            what the option is trading at now rather than what it was sold at, and
+            what the option is trading at now rather than what it was bought at, and
             re-read off each closed 1-minute candle. The tighter of the two is the
             one that is live, which is what makes this lock a gain in as the
             premium falls. */}
         <Field
           label="Trailing stop"
-          help="A stop that follows the option's own price down. Each minute it takes that minute's closing premium and sets the stop that percent above it — at 100%, a premium trading at $2 stops at $4. Whichever is tighter, this or the entry stop, is the one that is armed, so this is what locks in a gain as the sale becomes profitable. It follows the premium back up too, so the level can loosen again — never past the entry stop. At 0 there is no trailing stop."
+          help="A stop that follows the option's own price up. Each minute it takes that minute's closing premium and sets the stop that percent below it — at 50%, a premium trading at $8 stops at $4. Whichever is tighter, this or the entry stop, is the one that is armed, so this is what locks in a gain as the position moves your way. It follows the premium back down too, so the level can loosen again — never past the entry stop. At 0 there is no trailing stop."
         >
           <div className="flex items-center gap-2">
             <NumInput
               value={config.trailStopPct}
               min={0}
+              max={99}
               step={25}
               unit="%"
               width="w-16"
@@ -197,17 +201,17 @@ export function StrategyTab({
           </div>
         </Field>
 
-        {/* The other half of the bracket: the stop is the premium given back, this is
-            the premium kept. Same shape, same mark, opposite direction. */}
+        {/* The other half of the bracket: the stop is the premium lost, this is the
+            premium made. Same shape, same mark, opposite direction — and no ceiling
+            any more, since a bought option can make several times what it cost. */}
         <Field
           label="Take profit"
-          help="How much of the premium you want to keep before it closes the position, watched on the option's own price. 70% buys a $4 sale back at $1.20, keeping 70% of it. 50% buys it back at $2.00. At 0 there is no take-profit."
+          help="How much you want to make on the premium before it closes the position, watched on the option's own price. 70% sells a $4 buy at $6.80. 150% sells it at $10.00. At 0 there is no take-profit."
         >
           <div className="flex items-center gap-2">
             <NumInput
               value={config.takeProfitPct}
               min={0}
-              max={95}
               step={10}
               unit="%"
               width="w-16"

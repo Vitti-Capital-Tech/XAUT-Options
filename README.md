@@ -11,7 +11,7 @@ Four pages, each trading its own book:
 | Page | Account kind | What it does |
 | --- | --- | --- |
 | **Option Chain** | `manual` | Click-to-trade the live chain by hand |
-| **Auto Strategy** | `auto` | Sells one option per closed 1h candle — a call on a red bar, a put on a green |
+| **Auto Strategy** | `auto` | Buys one option per closed 1h candle — a call on a red bar, a put on a green |
 | **Delta Strategy** | `delta` | The delta-band strategy from `Gold_Options_Delta_Strategy.docx`, correcting Δp with **options** |
 | **Futures Strategy** | `futures` | The same strategy, correcting Δp by buying and selling the **XAUTUSD perpetual** instead |
 
@@ -138,41 +138,55 @@ row locked, so a fill can't half-apply and two tabs can't fill one order twice.
 ### Auto Strategy
 
 One fixed rule, no discretion: read the last **closed 1h candle** of the spot
-index and sell an option — a red bar sells a call, a green bar sells a put — at
-the chosen moneyness off the nearest expiry, inside a time-of-day window (IST),
-with a stop read off `stop_loss_pct` on the mark.
+index and buy an option — a red bar buys a call, a green bar buys a put — at the
+chosen moneyness off the nearest expiry, inside a time-of-day window (IST), with a
+stop read off `stop_loss_pct` on the mark.
+
+> **It buys, as of [`0046`](supabase/migrations/0046_auto_strategy_buys.sql).** The
+> signal and every control are unchanged; the side of every trade is not. Read as
+> a strategy it is now the mirror of what it was: selling a call into a red hour
+> was a bet the fall would hold, buying one is a bet on the bounce. Same bars,
+> opposite view — worth knowing before comparing a run of results to an older one.
 
 The stop has two halves, and the **tighter one is armed**
 ([`0020`](supabase/migrations/0020_auto_strategy_stop_pct.sql),
 [`0037`](supabase/migrations/0037_auto_trailing_stop.sql)). Both are a percent of
-the premium — the number a premium seller actually thinks in — and both are
-watched on the option's own mark. They differ only in what they measure from:
+the premium — the number an option buyer actually thinks in — and both are watched
+on the option's own mark. They differ only in what they measure from:
 
 ```
-entry stop = avg_entry_price      × (1 + stop_loss_pct  / 100)     fixed
-trail stop = last 1m candle close × (1 + trail_stop_pct / 100)     re-read every minute
+entry stop = avg_entry_price      × (1 − stop_loss_pct  / 100)     fixed
+trail stop = last 1m candle close × (1 − trail_stop_pct / 100)     re-read every minute
 
-stop_loss  = least(entry stop, trail stop)
+stop_loss  = greatest(entry stop, trail stop)
 ```
 
-At `stop_loss_pct = 100` a $4 short stops at $8, giving back exactly the premium —
-the 2× the strategy was hardcoded to before this was a setting. `50` stops it at
-$6; `0` arms no fixed stop.
+At `stop_loss_pct = 50` a $4 long stops at $2 — half the premium lost. `25` stops
+it at $3; `0` arms no fixed stop. **`100` and above arm none either**, and that is
+arithmetic rather than a rule: the level would land at or below zero, which is not
+a price an option marks at. A long cannot lose more than it paid, so there is
+nothing beyond 100% for a stop to protect.
+
+> The column's default is `100`, which used to mean "stop at twice the premium"
+> and now means **no fixed stop**. Any auto account that has never touched the
+> field is on it. Set it to what you actually want — the loss is bounded by the
+> premium either way, which is what makes running without a stop survivable here
+> in a way it never was on a short.
 
 The trailing half measures the same share against what the option is *trading at
-now*, so as a short goes your way the stop follows the premium down and locks the
-gain in. On that same $4 short with both set to 100:
+now*, so as the position gains the stop follows the premium up and locks the gain
+in. On a $4 long with both set to 50:
 
 | Premium now | Entry stop | Trail stop | Armed |
 | --- | --- | --- | --- |
-| 4.00 | 8.00 | 8.00 | 8.00 |
-| 2.00 | 8.00 | 4.00 | **4.00** |
-| 1.00 | 8.00 | 2.00 | **2.00** |
-| 3.00 | 8.00 | 6.00 | **6.00** |
+| 4.00 | 2.00 | 2.00 | 2.00 |
+| 8.00 | 2.00 | 4.00 | **4.00** |
+| 12.00 | 2.00 | 6.00 | **6.00** |
+| 6.00 | 2.00 | 3.00 | **3.00** |
 
-> Read that last row before switching it on. `least` is taken of the two levels
-> **as they stand this minute**, so the trail follows the premium back up as well
-> as down and the stop can loosen again — never past the entry stop, which is what
+> Read that last row before switching it on. `greatest` is taken of the two levels
+> **as they stand this minute**, so the trail follows the premium back down as well
+> as up and the stop can loosen again — never past the entry stop, which is what
 > bounds the worst case. Keep an entry stop set as the outer limit even when the
 > trail is doing the work.
 
@@ -182,19 +196,20 @@ and moves the level only when it actually changes. `trail_stop_pct = 0` switches
 the trailing half off, which is the default, so nothing changes for an existing
 account until the number is moved.
 
-`take_profit_pct` is the mirror — a percent of the premium **kept**
+`take_profit_pct` is the mirror — a percent of the premium **made**
 ([`0021`](supabase/migrations/0021_qty_and_take_profit.sql)):
 
 ```
-take_profit = avg_entry_price × (1 − take_profit_pct / 100)
+take_profit = avg_entry_price × (1 + take_profit_pct / 100)
 ```
 
-`70` buys a $4 short back at $1.20. Default `0`, so no take-profit is armed until
-you set one. Both levels are read off `avg_entry_price`, so adding to a symbol
-re-bases them onto the blended entry rather than leaving them pinned to the first
-fill.
+`70` sells a $4 long at $6.80. There is no ceiling on it any more: a long can make
+several times what it paid, where the short this replaced could never clear 100%
+of the premium it collected. Default `0`, so no take-profit is armed until you set
+one. Both levels are read off `avg_entry_price`, so adding to a symbol re-bases
+them onto the blended entry rather than leaving them pinned to the first fill.
 
-The window is both ends of the day. Inside it the strategy sells; once past
+The window is both ends of the day. Inside it the strategy buys; once past
 `window_end` it stops **and flattens** — `apply_auto_exit()` closes every open
 leg at the exit side of the book and books the fill as `window_close`
 ([`0015`](supabase/migrations/0015_auto_strategy_exit.sql)), so nothing is
@@ -212,28 +227,31 @@ wraps past midnight belongs to the day it started.
 The **expiry is picked by date**, from the live chain, the way the option chain's
 own tabs list them ([`0023`](supabase/migrations/0023_explicit_expiry.sql)). A date
 does not roll: once the chosen expiry settles the strategy skips its bars until a
-new one is picked, rather than selling a contract nobody chose. The tab marks a
+new one is picked, rather than buying a contract nobody chose. The tab marks a
 settled selection so the reason it stopped is on screen.
 
 With no date chosen, `expiry_rule` still applies
 ([`0018`](supabase/migrations/0018_auto_strategy_expiry_rule.sql)). Its default,
-**`today`**, sells only the same-day contract on the IST clock and **skips the bar
+**`today`**, buys only the same-day contract on the IST clock and **skips the bar
 when there is none**. Two consequences worth knowing:
 
 - XAUT does not list a contract every calendar day (a live set of Mon 10 / Tue 11
   / Fri 14 Aug leaves Wednesday and Thursday with no same-day expiry at all).
 - The same-day contract settles at **16:00 UTC = 21:30 IST**, so from 21:30 there
-  is nothing same-day left to sell.
+  is nothing same-day left to buy.
 
 On either, an account on `today` stands down and logs why. `nearest` restores the
 old behaviour of taking the nearest unsettled expiry whatever its date.
 
-`min_premium` puts a floor under the entry
-([`0017`](supabase/migrations/0017_auto_strategy_min_premium.sql)): a bar whose
-strike is bid below it is **skipped, not sold**. It vetoes rather than hunting for
-a richer strike — the strike is `moneyness`'s to choose, and searching for
-whatever clears the floor would quietly override that and could walk the position
-deep into the money on a thin day. `0` disables it.
+`max_premium` puts a ceiling on the entry
+([`0017`](supabase/migrations/0017_auto_strategy_min_premium.sql),
+[`0046`](supabase/migrations/0046_auto_strategy_buys.sql)): a bar whose strike is
+**offered above it is skipped, not bought**. It was a floor on the bid while the
+strategy sold — a seller's version of "this trade does not pay" is too little
+collected, a buyer's is too much paid — and the column was renamed rather than
+quietly reinterpreted. It still vetoes rather than hunting for a cheaper strike:
+the strike is `moneyness`'s to choose, and searching for whatever fits the budget
+would quietly override that. `0` disables it.
 
 The controls are only *whether* it runs, the strike, the size and the window.
 The engine itself is `apply_strategy()` on `pg_cron`
@@ -964,6 +982,11 @@ Confirmed working:
 - **The build.** `tsc -b` and the production bundle are clean with the futures page
   removed, the `variant` prop gone from `BottomPanel`, and the two liquidation
   helpers deleted from `engine/paper.ts`.
+- **The auto strategy's flip to buying**, in `lib/strategy.ts` — 20 assertions: the
+  stop landing below the entry and reading null at 0 and at 100 or more, the trail
+  landing below the last close and the greater of the two being what is armed, the
+  target landing above the entry with no ceiling, and the signal itself unchanged
+  (red → call, green → put, flat → nothing). Fixtures are synthetic.
 
 Not yet exercised:
 
@@ -985,6 +1008,14 @@ Not yet exercised:
   order from the engine, so the first one is what proves the nullable
   `strike_price`, the `'PERP'` expiry label and the leverage column all land as
   intended — the same three things `0038` was waiting on a manual trade to prove.
+- **Everything in [`0046`](supabase/migrations/0046_auto_strategy_buys.sql)**, on
+  the same terms: not run against a live Postgres. That covers the buy side of
+  `apply_strategy`, the renamed `max_premium` column and its two swapped
+  percentage bounds, the inverted brackets, and the long-side filters in
+  `apply_trail_stops` and `queue_trail_checks`. The last of those is the one worth
+  watching: it queues the 1-minute candles the trail moves on, and had it been
+  left filtered to shorts the trailing stop would simply never have moved, with
+  nothing in the logs to say so.
 - **The gamma band in the database.** [`0039`](supabase/migrations/0039_delta_gamma_band.sql)
   has not been run against a live Postgres, for the same reason `0038` has not:
   migrations are applied by hand in the Supabase SQL editor. The TypeScript copy

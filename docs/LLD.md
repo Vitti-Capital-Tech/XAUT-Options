@@ -94,7 +94,7 @@ erDiagram
         text window_start "HH:MM IST"
         text window_end
         smallint_array trade_days "ISO weekdays, IST"
-        numeric min_premium "floor on the bid; 0 off"
+        numeric max_premium "ceiling on the ask; 0 off"
         text expiry_rule "today | nearest"
         text expiry_label "ddmmyy, or null"
         numeric stop_loss_pct "% of premium off entry; 0 = none"
@@ -683,14 +683,18 @@ it does not trade. An empty array is a valid off state and reads as "never". Bot
 overloaded: two candidates that each default their tail would make the old
 two-argument call ambiguous.
 
-**The auto strategy's premium floor vetoes, the delta strategy's narrows.**
-`strategy_settings.min_premium` skips a bar whose resolved strike is bid under it
-([`0017`](../supabase/migrations/0017_auto_strategy_min_premium.sql)) rather than
-looking for a strike that clears it — `moneyness` is the strategy's one rule about
-*what* to sell, and a search would override it and could walk the position deep
-into the money on a thin day. `delta_strategy_settings.min_premium` reads the same
-(Section 6: nothing is sold below the floor), but it is already picking a strike
-by premium, so there the floor narrows a search rather than blocking one. A
+**The auto strategy's premium cap vetoes, the delta strategy's floor narrowed.**
+`strategy_settings.max_premium` skips a bar whose resolved strike is offered above
+it ([`0017`](../supabase/migrations/0017_auto_strategy_min_premium.sql),
+[`0046`](../supabase/migrations/0046_auto_strategy_buys.sql)) rather than looking
+for a strike that fits — `moneyness` is the strategy's one rule about *what* to
+buy, and a search would override it and could walk the position deep into the
+money on a thin day. It was a floor on the bid until the strategy started buying;
+the column was renamed rather than reinterpreted, because a seller's "too little
+collected" and a buyer's "too much paid" are opposite tests.
+`delta_strategy_settings.min_premium` read the same the other way (Section 6:
+nothing is sold below the floor), and being a strike search there the floor
+narrowed rather than blocked. A
 skipped bar consumes `last_acted`, like every other skip path: the poll only
 fetches in the first minutes of an hour, so the bar cannot be retried, and leaving
 it unconsumed would re-log the same decision every minute for the rest of it.
