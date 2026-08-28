@@ -99,6 +99,11 @@ interface Row {
   max_rolls: number
   roll_counts: string
   entry_premium: string | number
+  entry_premium_min: string | number | null
+  entry_premium_max: string | number | null
+  pairs_count: number | null
+  shift_pct: string | number | null
+  max_shifts: number | null
   qty: string | number
   max_notional_per_strike: string | number
   tie_break: string
@@ -114,12 +119,14 @@ interface Row {
   session_day: string | null
   rolls_used_call: number
   rolls_used_put: number
+  shifts_used_call: number | null
+  shifts_used_put: number | null
   entered_day: string | null
   flattened_day: string | null
 }
 
 const COLS =
-  'account_id, armed, session_open, session_close, band_low, band_high, gamma_multiplier, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, qty, max_notional_per_strike, tie_break, expiry_pick, expiry_label, cycle_seconds, take_profit_mark, stop_loss_mark, margin_cap_pct, margin_target_pct, hedge_leverage, trade_days, session_day, rolls_used_call, rolls_used_put, entered_day, flattened_day'
+  'account_id, armed, session_open, session_close, band_low, band_high, gamma_multiplier, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, entry_premium_min, entry_premium_max, pairs_count, shift_pct, max_shifts, qty, max_notional_per_strike, tie_break, expiry_pick, expiry_label, cycle_seconds, take_profit_mark, stop_loss_mark, margin_cap_pct, margin_target_pct, hedge_leverage, trade_days, session_day, rolls_used_call, rolls_used_put, shifts_used_call, shifts_used_put, entered_day, flattened_day'
 
 // Postgres numerics come back as strings over PostgREST.
 const n = (v: string | number) => Number(v)
@@ -137,6 +144,11 @@ function rowToConfig(row: Row): DeltaConfig {
     maxRolls: row.max_rolls,
     rollCounts: row.roll_counts as RollCounts,
     entryPremium: n(row.entry_premium),
+    entryPremiumMin: row.entry_premium_min === null ? 0 : n(row.entry_premium_min),
+    entryPremiumMax: row.entry_premium_max === null ? 0 : n(row.entry_premium_max),
+    pairsCount: row.pairs_count === null ? 1 : Number(row.pairs_count),
+    shiftPct: row.shift_pct === null ? 50 : n(row.shift_pct),
+    maxShifts: row.max_shifts === null ? 1 : Number(row.max_shifts),
     qty: n(row.qty),
     maxNotionalPerStrike: n(row.max_notional_per_strike),
     tieBreak: row.tie_break as TieBreak,
@@ -169,6 +181,11 @@ function configToRow(cfg: DeltaConfig) {
     max_rolls: cfg.maxRolls,
     roll_counts: cfg.rollCounts,
     entry_premium: cfg.entryPremium,
+    entry_premium_min: cfg.entryPremiumMin,
+    entry_premium_max: cfg.entryPremiumMax,
+    pairs_count: cfg.pairsCount,
+    shift_pct: cfg.shiftPct,
+    max_shifts: cfg.maxShifts,
     qty: cfg.qty,
     max_notional_per_strike: cfg.maxNotionalPerStrike,
     tie_break: cfg.tieBreak,
@@ -194,6 +211,9 @@ function configToRow(cfg: DeltaConfig) {
  */
 function settingsError(message: string): string {
   if (message.includes('delta_qty_chk')) return 'Qty must be more than zero.'
+  if (message.includes('delta_pairs_count_chk')) return 'Pairs count must be at least 1.'
+  if (message.includes('delta_shift_pct_chk')) return 'Shift % must be greater than zero.'
+  if (message.includes('delta_max_shifts_chk')) return 'Shift limit must be at least 0.'
   if (message.includes('delta_stop_loss_mark_chk')) return 'SL mark cannot be negative.'
   if (message.includes('delta_band_chk'))
     return 'Target delta band needs the left number below the right one.'
@@ -215,6 +235,8 @@ function rowToSession(row: Row): SessionState {
     sessionDay: row.session_day,
     rollsUsedCall: row.rolls_used_call,
     rollsUsedPut: row.rolls_used_put,
+    shiftsUsedCall: row.shifts_used_call ?? 0,
+    shiftsUsedPut: row.shifts_used_put ?? 0,
     enteredDay: row.entered_day,
     flattenedDay: row.flattened_day,
   }

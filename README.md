@@ -269,27 +269,32 @@ The delta-band strategy specified in `Gold_Options_Delta_Strategy.docx`. In
 short: sell a symmetric call/put pair at the session open, keep net portfolio
 delta **Δp** inside a band, and flatten at the close.
 
-It drives **two books**, and everything below is shared by both except the one
-row marked *Breach*:
+It drives **two books**, and everything below is shared by both except the rows
+marked *Breach*, *ATM Exit & Shift*, and *Empty Wing*:
 
 | | Delta Strategy (`delta`) | Futures Strategy (`futures`) |
 | --- | --- | --- |
 | Breach | Roll an ITM short further out; fresh OTM sell when nothing is left to roll | Buy or sell the XAUTUSD perpetual |
+| ATM Exit & Shift | Rolls triggered on band breach | **Exit immediately at ATM** (`itmDistance >= 0`), sell replacement on same side at 50% (`shift_pct`), limit `max_shifts` per side |
+| Empty Wing | Retains remaining side | **Auto-flatten all remaining positions** (options & futures hedge) if either wing is empty |
+| Entry Pairs | 1 symmetric pair at `entry_premium` | Configurable `pairs_count` and `[entry_premium_min, entry_premium_max]` range |
 | Band | Derived from Γp × `gamma_multiplier` by default | **As typed.** Gamma is not read at all |
-| Book grows? | Yes — a correction is more premium sold | No — the option book is only what the entry sold |
+| Book grows? | Yes — a correction is more premium sold | No — the option book is only what the entry and shifts sell |
 | Long exposure? | Never. **No leg is ever bought as a hedge** | The hedge is bought or sold outright |
 
 On the delta book the strategy is **sell-only**: every correction is more premium
 sold, or an exit — never a long option. The futures book keeps that rule for
 *options* and answers the band with a linear hedge instead; see
-[The futures hedge](#the-futures-hedge).
+[The futures hedge](#the-futures-hedge) and [Futures Strategy mechanics](#futures-strategy-mechanics).
 
 | Phase | Rule |
 | --- | --- |
-| Open (06:00 IST) | Sell one symmetric pair at the strikes nearest `entry_premium`, sized by `qty` in XAUT — the spec's `N`, in XAUT rather than lots ([`0024`](supabase/migrations/0024_drop_pairs_and_fix_reentry.sql)). Both legs fill or neither does; a failed open is retried on the next refresh rather than written off for the day |
+| Open (06:00 IST) | Sell `pairs_count` (1 on `delta`, configurable on `futures`) symmetric pair(s) at strikes nearest `entry_premium` (optionally filtered within `[entry_premium_min, entry_premium_max]`), sized by `qty` in XAUT — the spec's `N`, in XAUT rather than lots ([`0024`](supabase/migrations/0024_drop_pairs_and_fix_reentry.sql), [`0048`](supabase/migrations/0048_futures_strategy_atm_shift_and_pairs.sql)). Both legs fill or neither does; a failed open is retried on the next refresh rather than written off for the day |
 | Intraday · `delta` | Rebuild the ITM queue each cycle, most-ITM first; resolve breaches by partial exit-and-replace |
 | Roll budget · `delta` | Each side gets `max_rolls`; once spent that side is **exit-only** — further triggers close in full, loss booked |
 | No ITM legs left · `delta` | Band-correct with fresh OTM sells at the entry premium |
+| ATM Exit & Shift · `futures` | When spot touches/crosses strike (`itmDistance >= 0`), close leg immediately and sell replacement on same side at 50% of exit price (up to `max_shifts` times per side, then exit-only) |
+| Empty Wing · `futures` | If either Call or Put side has 0 open positions, auto-flatten all remaining options and the perpetual futures hedge |
 | Intraday · `futures` | One trade in the perpetual per breach, `(target − Δp) ÷ contract_value` lots, bought when Δp is short of the target and sold when it is past it |
 | Close (22:00 IST) | Flatten everything, stand flat overnight, reset counters |
 | Off day | A weekday outside `trade_days` reports the session **closed**, so the same flatten covers it and nothing is opened |
@@ -457,6 +462,18 @@ and the row it writes says exactly that:
 ```
 Bought futures — band breach (target -0.60) · spot $4622.13 · Δp -1.35 → -0.60
 ```
+
+#### Futures Strategy mechanics
+
+The **Futures Strategy** (`accounts.kind = 'futures'`) introduces specific position lifecycle rules tailored for hybrid option-writing + futures hedging ([`0048`](supabase/migrations/0048_futures_strategy_atm_shift_and_pairs.sql)):
+
+1. **Exit at the ATM**: When gold price reaches or breaches an open short option's strike (`spot >= strike` for Calls, `spot <= strike` for Puts, i.e., `itmDistance >= 0`), that leg is exited immediately at market price ($P_{\text{exit}}$).
+2. **ATM Shift at 50%**: At the ATM exit price, the strategy sells a replacement position on the same side at a configurable percentage (`shift_pct`, default **50%**) of $P_{\text{exit}}$.
+   - **Shift limit**: Configured via `max_shifts` (default **1** per side per session). Counters `shifts_used_call` and `shifts_used_put` track shift executions. Once the shift budget is exhausted on a side, subsequent ATM triggers on that side close the position in full with no replacement (*exit-only*).
+3. **Empty Wing Auto-Flatten**: If there are no open short positions remaining on either side (e.g. all Calls were exited or all Puts were exited), the strategy automatically flattens all remaining positions (remaining options and any open perpetual futures hedge).
+4. **Number of Pairs & Premium Range Filters**:
+   - **`pairs_count`** (default **1**): The number of symmetric Call/Put pairs shorted at the session open.
+   - **`entry_premium_min`** & **`entry_premium_max`** (default **0**, unconstrained): Optional price bounds filtering candidate strikes at session open.
 
 #### The per-strike notional cap
 

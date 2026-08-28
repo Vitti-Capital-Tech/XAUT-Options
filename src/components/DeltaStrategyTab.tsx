@@ -127,6 +127,8 @@ export function DeltaStrategyTab({
       : null
   const callsLeft = Math.max(0, config.maxRolls - session.rollsUsedCall)
   const putsLeft = Math.max(0, config.maxRolls - session.rollsUsedPut)
+  const shiftsCallsLeft = Math.max(0, (config.maxShifts ?? 1) - (session.shiftsUsedCall ?? 0))
+  const shiftsPutsLeft = Math.max(0, (config.maxShifts ?? 1) - (session.shiftsUsedPut ?? 0))
   // The hedge, on the books that have one. Size is read in the underlying, the
   // same unit Δp and the positions table are read in, so the two can be compared
   // by eye: a hedge of +1.50 is what answers a Δp of −1.50.
@@ -228,6 +230,48 @@ export function DeltaStrategyTab({
               onChange={(v) => setConfig({ entryPremium: v })}
             />
           </Field>
+
+          {futures && (
+            <>
+              <Field
+                label="Premium range"
+                help="Optional price range for opening pairs. Strikes are chosen with premiums between these two values. Set 0 for no limit."
+              >
+                <div className="flex items-center gap-1.5">
+                  <NumInput
+                    value={config.entryPremiumMin}
+                    step={0.5}
+                    min={0}
+                    unit="$"
+                    width="w-16"
+                    onChange={(v) => setConfig({ entryPremiumMin: v })}
+                  />
+                  <span className="text-ink-4">–</span>
+                  <NumInput
+                    value={config.entryPremiumMax}
+                    step={0.5}
+                    min={0}
+                    unit="$"
+                    width="w-16"
+                    onChange={(v) => setConfig({ entryPremiumMax: v })}
+                  />
+                </div>
+              </Field>
+
+              <Field
+                label="Pairs"
+                help="Number of symmetric Call/Put pairs to short at the session open."
+              >
+                <NumInput
+                  value={config.pairsCount}
+                  step={1}
+                  min={1}
+                  width="w-16"
+                  onChange={(v) => setConfig({ pairsCount: Math.max(1, Math.round(v)) })}
+                />
+              </Field>
+            </>
+          )}
 
           <Field
             label="Tie goes to"
@@ -411,20 +455,50 @@ export function DeltaStrategyTab({
               there is one price rule on screen rather than two that have to be
               kept in step. */}
           {futures ? (
-            <Field
-              label="Hedge leverage"
-              help={`What the futures hedge is margined at: margin is its notional over this, so ${leverageCap}x — the most the venue offers — blocks the least. It changes what the hedge ties up, never what it risks: the position is the same size either way, and the same size is what the strategy needs it to be.`}
-            >
-              <NumInput
-                value={config.hedgeLeverage}
-                step={5}
-                min={1}
-                max={leverageCap}
-                unit="x"
-                width="w-16"
-                onChange={(v) => setConfig({ hedgeLeverage: Math.round(v) })}
-              />
-            </Field>
+            <>
+              <Field
+                label="Hedge leverage"
+                help={`What the futures hedge is margined at: margin is its notional over this, so ${leverageCap}x — the most the venue offers — blocks the least. It changes what the hedge ties up, never what it risks: the position is the same size either way, and the same size is what the strategy needs it to be.`}
+              >
+                <NumInput
+                  value={config.hedgeLeverage}
+                  step={5}
+                  min={1}
+                  max={leverageCap}
+                  unit="x"
+                  width="w-16"
+                  onChange={(v) => setConfig({ hedgeLeverage: Math.round(v) })}
+                />
+              </Field>
+
+              <Field
+                label="ATM shift %"
+                help="When an open position touches ATM, it is exited and a new strike on the same side is sold at this percentage of the ATM exit price (e.g. 50%)."
+              >
+                <NumInput
+                  value={config.shiftPct}
+                  step={5}
+                  min={1}
+                  max={100}
+                  unit="%"
+                  width="w-16"
+                  onChange={(v) => setConfig({ shiftPct: v })}
+                />
+              </Field>
+
+              <Field
+                label="Shift limit"
+                help="Maximum number of ATM shifts allowed per side (Calls / Puts) per session. Default is 1."
+              >
+                <NumInput
+                  value={config.maxShifts}
+                  step={1}
+                  min={0}
+                  width="w-16"
+                  onChange={(v) => setConfig({ maxShifts: Math.max(0, Math.round(v)) })}
+                />
+              </Field>
+            </>
           ) : (
             <>
               <Field
@@ -711,6 +785,9 @@ export function DeltaStrategyTab({
                   {fundingAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 </span>
               )}
+            </Readout>
+            <Readout label="Shifts left C / P" tone={shiftsCallsLeft === 0 || shiftsPutsLeft === 0 ? 'warn' : 'ok'}>
+              {shiftsCallsLeft} / {shiftsPutsLeft}
             </Readout>
           </>
         ) : (

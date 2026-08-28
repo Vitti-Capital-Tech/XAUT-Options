@@ -168,6 +168,16 @@ export interface DeltaConfig {
    * closest to a price already says what to sell.
    */
   entryPremium: number
+  /** Minimum premium floor for entry pairs; 0 means no floor. */
+  entryPremiumMin: number
+  /** Maximum premium ceiling for entry pairs; 0 means no ceiling. */
+  entryPremiumMax: number
+  /** Number of symmetric pairs to short at the session open (default 1). */
+  pairsCount: number
+  /** Shift percentage of ATM exit price to sell the replacement position at (default 50%). */
+  shiftPct: number
+  /** Maximum ATM shifts allowed per side per session (default 1). */
+  maxShifts: number
   /**
    * XAUT sold per leg at the open, converted to lots by the contract's own value
    * the way the auto strategy's `qty` is: `lots = round(qty / contractValue)`.
@@ -273,6 +283,11 @@ export const DEFAULT_DELTA_CONFIG: DeltaConfig = {
   maxRolls: 3,
   rollCounts: 'pass',
   entryPremium: 4,
+  entryPremiumMin: 0,
+  entryPremiumMax: 0,
+  pairsCount: 1,
+  shiftPct: 50,
+  maxShifts: 1,
   // One lot at the venue's 0.001 contract value.
   qty: 0.001,
   maxNotionalPerStrike: 95_000,
@@ -301,6 +316,8 @@ export interface SessionState {
   sessionDay: string | null
   rollsUsedCall: number
   rollsUsedPut: number
+  shiftsUsedCall: number
+  shiftsUsedPut: number
   enteredDay: string | null
   flattenedDay: string | null
 }
@@ -309,6 +326,8 @@ export const EMPTY_SESSION: SessionState = {
   sessionDay: null,
   rollsUsedCall: 0,
   rollsUsedPut: 0,
+  shiftsUsedCall: 0,
+  shiftsUsedPut: 0,
   enteredDay: null,
   flattenedDay: null,
 }
@@ -1001,7 +1020,9 @@ export function pickByPremium(
   beyond?: number,
   /** Lots a contract can still take; null means uncapped. Omit for no cap. */
   roomFor?: (product: Product) => number | null,
+  targetPremium?: number,
 ): StrikePick | null {
+  const target = targetPremium ?? cfg.entryPremium
   const candidates: StrikePick[] = []
 
   for (const [strike, product] of book(expiry, kind)) {
@@ -1022,19 +1043,81 @@ export function pickByPremium(
 
   const closest = () =>
     candidates.reduce((best, c) =>
-      Math.abs(c.premium - cfg.entryPremium) < Math.abs(best.premium - cfg.entryPremium) ? c : best,
+      Math.abs(c.premium - target) < Math.abs(best.premium - target) ? c : best,
     )
 
   if (cfg.tieBreak === 'above') {
-    const above = candidates.filter((c) => c.premium >= cfg.entryPremium)
+    const above = candidates.filter((c) => c.premium >= target)
     // Nearest from above: the cheapest of those still at or over the target.
     return above.length ? above.reduce((b, c) => (c.premium < b.premium ? c : b)) : closest()
   }
   if (cfg.tieBreak === 'below') {
-    const below = candidates.filter((c) => c.premium <= cfg.entryPremium)
+    const below = candidates.filter((c) => c.premium <= target)
     return below.length ? below.reduce((b, c) => (c.premium > b.premium ? c : b)) : closest()
   }
   return closest()
+}
+
+/**
+ * Pick multiple strikes for an entry pair, respecting premium bounds [entryPremiumMin, entryPremiumMax]
+ * and sorted according to the entry premium and tie-break rule.
+ */
+export function pickMultipleByPremium(
+  expiry: Expiry,
+  kind: OptionKind,
+  cfg: Pick<DeltaConfig, 'entryPremium' | 'tieBreak' | 'entryPremiumMin' | 'entryPremiumMax'>,
+  tickerFor: (symbol: string) => Ticker | undefined,
+  count: number,
+  roomFor?: (product: Product) => number | null,
+): StrikePick[] {
+  if (count <= 0) return []
+  const allCandidates: StrikePick[] = []
+
+  for (const [strike, product] of book(expiry, kind)) {
+    const ticker = tickerFor(product.symbol)
+    const premium = salePremium(ticker)
+    const optionDelta = tickerDelta(ticker)
+    if (premium === null || optionDelta === null) continue
+    const roomLots = roomFor ? roomFor(product) : null
+    if (roomLots !== null && roomLots <= 0) continue
+    allCandidates.push({ product, strike, premium, optionDelta, roomLots })
+  }
+
+  if (allCandidates.length === 0) return []
+
+  const hasMin = (cfg.entryPremiumMin ?? 0) > 0
+  const hasMax = (cfg.entryPremiumMax ?? 0) > 0
+  let eligible = allCandidates
+  if (hasMin || hasMax) {
+    const inRange = allCandidates.filter((c) => {
+      if (hasMin && c.premium < cfg.entryPremiumMin) return false
+      if (hasMax && c.premium > cfg.entryPremiumMax) return false
+      return true
+    })
+    if (inRange.length > 0) {
+      eligible = inRange
+    }
+  }
+
+  const target = cfg.entryPremium
+  const sorted = [...eligible].sort((a, b) => {
+    if (cfg.tieBreak === 'above') {
+      const aAbove = a.premium >= target
+      const bAbove = b.premium >= target
+      if (aAbove && !bAbove) return -1
+      if (!aAbove && bAbove) return 1
+      if (aAbove && bAbove) return a.premium - b.premium
+    } else if (cfg.tieBreak === 'below') {
+      const aBelow = a.premium <= target
+      const bBelow = b.premium <= target
+      if (aBelow && !bBelow) return -1
+      if (!aBelow && bBelow) return 1
+      if (aBelow && bBelow) return b.premium - a.premium
+    }
+    return Math.abs(a.premium - target) - Math.abs(b.premium - target)
+  })
+
+  return sorted.slice(0, count)
 }
 
 // ---------------------------------------------------------------------------
@@ -1258,38 +1341,138 @@ export function planCycle(input: CycleInput): CyclePlan {
     // flattened at the previous close, so blocked margin is at or near zero when
     // it fires; a gate on it was guarding a state the session clock already makes
     // unreachable. Above the cap the cut branch has returned long before this.
-    const call = pickByPremium(expiry, 'call', cfg, tickerFor, undefined, roomFor)
-    const put = pickByPremium(expiry, 'put', cfg, tickerFor, undefined, roomFor)
-    if (!call || !put) {
+    const pairsCount = mode === 'futures' && (cfg.pairsCount ?? 1) > 0 ? (cfg.pairsCount ?? 1) : 1
+    const calls = pickMultipleByPremium(expiry, 'call', cfg, tickerFor, pairsCount, roomFor)
+    const puts = pickMultipleByPremium(expiry, 'put', cfg, tickerFor, pairsCount, roomFor)
+    if (calls.length === 0 || puts.length === 0) {
       return {
         ...base,
         action: null,
-        reason: `No ${!call ? 'call' : 'put'} strike quoted yet`,
+        reason: `No ${calls.length === 0 ? 'call' : 'put'} strike quoted yet`,
       }
     }
-    // The tighter of the two rooms, applied to both. Selling a full leg against a
-    // trimmed one would open exactly the directional position the symmetric entry
-    // exists to avoid, so a cap shortens the pair rather than skewing it.
-    const room = Math.min(call.roomLots ?? Infinity, put.roomLots ?? Infinity)
-    const callLots = Math.min(entryLots(call.product, cfg), room)
-    const putLots = Math.min(entryLots(put.product, cfg), room)
-    if (callLots <= 0 || putLots <= 0) {
+    const count = Math.min(calls.length, puts.length)
+    const legsToEnter: { product: Product; qty: number }[] = []
+
+    for (let i = 0; i < count; i++) {
+      const c = calls[i]
+      const p = puts[i]
+      const room = Math.min(c.roomLots ?? Infinity, p.roomLots ?? Infinity)
+      const callLots = Math.min(entryLots(c.product, cfg), room)
+      const putLots = Math.min(entryLots(p.product, cfg), room)
+      if (callLots > 0 && putLots > 0) {
+        legsToEnter.push({ product: c.product, qty: callLots })
+        legsToEnter.push({ product: p.product, qty: putLots })
+      }
+    }
+
+    if (legsToEnter.length === 0) {
       return {
         ...base,
         action: null,
         reason: `No strike under the ${usd0(cfg.maxNotionalPerStrike)} cap has room for an entry`,
       }
     }
+
+    const desc =
+      count === 1
+        ? `Selling ${legsToEnter[0].qty} × ${calls[0].strike}C / ${legsToEnter[1].qty} × ${puts[0].strike}P`
+        : `Selling ${count} pairs (${legsToEnter.map((l) => `${l.qty} × ${l.product.symbol}`).join(', ')})`
+
     return {
       ...base,
       action: {
         type: 'entry',
-        legs: [
-          { product: call.product, qty: callLots },
-          { product: put.product, qty: putLots },
-        ],
+        legs: legsToEnter,
       },
-      reason: `Selling ${callLots} × ${call.strike}C / ${putLots} × ${put.strike}P`,
+      reason: desc,
+    }
+  }
+
+  // ---- Empty side check (Futures strategy) ---------------------------------
+  // If there is no position on either side (Call or Put), close all remaining positions.
+  if (mode === 'futures' && session.enteredDay === day && live.length > 0) {
+    const callShorts = live.filter((p) => p.contract_type === 'call_options' && p.net_qty < 0)
+    const putShorts = live.filter((p) => p.contract_type === 'put_options' && p.net_qty < 0)
+    if (callShorts.length === 0 || putShorts.length === 0) {
+      return {
+        ...base,
+        action: { type: 'flatten', positions: live },
+        reason: `No ${callShorts.length === 0 ? 'call' : 'put'} positions remaining — closing all positions`,
+      }
+    }
+  }
+
+  // ---- ATM Exit & Shift (Futures strategy) ---------------------------------
+  // Exit at ATM (spot >= strike for Call, spot <= strike for Put).
+  // At the exit price, sell another position on the same side at shiftPct (default 50%).
+  // Limit maxShifts (default 1) per side.
+  if (mode === 'futures') {
+    const atmLeg = legs.find(
+      (leg) =>
+        leg.kind !== 'perp' &&
+        leg.position.net_qty < 0 &&
+        leg.itmDistance >= 0 &&
+        !touched.has(leg.position.symbol),
+    )
+    if (atmLeg) {
+      const open = Math.abs(atmLeg.position.net_qty)
+      const ticker = tickerFor(atmLeg.position.symbol)
+      const pExit = Number(
+        ticker?.quotes?.best_ask ??
+          ticker?.mark_price ??
+          ticker?.quotes?.best_bid ??
+          atmLeg.position.avg_entry_price ??
+          0,
+      )
+      const used =
+        atmLeg.kind === 'call' ? (session.shiftsUsedCall ?? 0) : (session.shiftsUsedPut ?? 0)
+      const maxShifts = cfg.maxShifts ?? 1
+      const shiftAllowed = used < maxShifts
+
+      if (shiftAllowed && expiry) {
+        const shiftPct = cfg.shiftPct > 0 ? cfg.shiftPct : 50
+        const targetShiftPrice = pExit * (shiftPct / 100)
+        const replacement = pickByPremium(
+          expiry,
+          atmLeg.kind as OptionKind,
+          cfg,
+          tickerFor,
+          atmLeg.strike,
+          roomFor,
+          targetShiftPrice,
+        )
+        if (replacement) {
+          const q = Math.min(open, replacement.roomLots ?? Infinity)
+          if (q > 0) {
+            return {
+              ...base,
+              action: {
+                type: 'roll',
+                side: atmLeg.kind as OptionKind,
+                leg: atmLeg,
+                exitQty: q,
+                replace: { product: replacement.product, qty: q },
+              },
+              reason: `ATM reached on ${atmLeg.strike}${atmLeg.kind === 'call' ? 'C' : 'P'} (exit $${pExit.toFixed(2)}) — shifted to ${replacement.strike} at ${shiftPct}% ($${targetShiftPrice.toFixed(2)})`,
+            }
+          }
+        }
+      }
+
+      return {
+        ...base,
+        action: {
+          type: 'roll',
+          side: atmLeg.kind as OptionKind,
+          leg: atmLeg,
+          exitQty: open,
+          replace: null,
+        },
+        reason: shiftAllowed
+          ? `ATM reached on ${atmLeg.strike}${atmLeg.kind === 'call' ? 'C' : 'P'} — exiting at $${pExit.toFixed(2)}`
+          : `ATM reached on ${atmLeg.strike}${atmLeg.kind === 'call' ? 'C' : 'P'} — shift limit (${maxShifts}) reached, closing in full`,
+      }
     }
   }
 

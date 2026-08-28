@@ -70,7 +70,7 @@ erDiagram
     ACCOUNTS ||--o{ FILLS : records
     ORDERS ||--o{ FILLS : produces
     ACCOUNTS ||--o| STRATEGY_SETTINGS : "if kind=auto"
-    ACCOUNTS ||--o| DELTA_STRATEGY_SETTINGS : "if kind=delta"
+    ACCOUNTS ||--o| DELTA_STRATEGY_SETTINGS : "if kind in (delta, futures)"
     ACCOUNTS ||--o{ FUNDING_PAYMENTS : "if it holds a perpetual"
 
     AUTH_USERS {
@@ -81,22 +81,22 @@ erDiagram
         uuid id PK
         uuid user_id FK
         text name
+        text kind "manual | auto | delta | futures"
         numeric starting_balance
-        numeric cash_balance "start + realized - fees"
-        boolean is_archived
-        text kind "manual | auto | delta | futures; the last two are one strategy, hedged with options or with futures"
+        numeric balance
     }
     STRATEGY_SETTINGS {
         uuid account_id PK
         boolean armed
-        text moneyness
-        numeric qty "XAUT per fire"
+        text moneyness "ATM | OTM_1 | OTM_2"
+        numeric qty "XAUT per entry -> lots"
+        numeric min_premium "bid floor; 0 = none"
+        numeric max_premium "offer ceiling; 0 = none"
+        text expiry_rule "today | nearest"
+        text expiry_label "ddmmyy, or null"
         text window_start "HH:MM IST"
         text window_end
         smallint_array trade_days "ISO weekdays, IST"
-        numeric max_premium "ceiling on the ask; 0 off"
-        text expiry_rule "today | nearest"
-        text expiry_label "ddmmyy, or null"
         numeric stop_loss_pct "% of premium off entry; 0 = none"
         numeric trail_stop_pct "% of premium off the 1m close; 0 = none"
         numeric take_profit_pct "% of premium kept; 0 = none"
@@ -116,9 +116,11 @@ erDiagram
         numeric itm_trigger "points"
         integer max_rolls "per side per session"
         numeric entry_premium
-        numeric min_premium "hard floor"
-        numeric band_delta_low
-        numeric band_delta_high
+        numeric entry_premium_min "floor for opening pairs"
+        numeric entry_premium_max "ceiling for opening pairs"
+        integer pairs_count "opening pairs count"
+        numeric shift_pct "% of ATM exit price to sell replacement"
+        integer max_shifts "shift limit per side"
         numeric qty "XAUT per leg -> lots"
         numeric max_notional_per_strike "USD ceiling per contract; 0 = off"
         numeric hedge_leverage "futures books only; margin is notional / this"
@@ -126,6 +128,8 @@ erDiagram
         text session_day "IST YYYY-MM-DD"
         integer rolls_used_call
         integer rolls_used_put
+        integer shifts_used_call "used ATM shifts today"
+        integer shifts_used_put
         text entered_day
         text flattened_day
         text_array touched_symbols "once per pass"
