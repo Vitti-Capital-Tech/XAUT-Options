@@ -582,6 +582,9 @@ export function portfolioGamma(legs: LegDelta[]): number {
 /** `95000` -> `$95,000`, for the one reason line that names the cap. */
 const usd0 = (v: number) => `$${Math.round(v).toLocaleString('en-US')}`
 
+/** `12.5` -> `$12.50`. Premiums are small enough that the cents matter. */
+const usd2 = (v: number) => `$${v.toFixed(2)}`
+
 export type Breach = 'low' | 'high' | null
 
 /** The band actually in force this cycle, and whether gamma is what set it. */
@@ -1085,19 +1088,22 @@ export function pickMultipleByPremium(
 
   if (allCandidates.length === 0) return []
 
+  // The bounds are a filter, not a preference. This used to fall back to the
+  // unfiltered list when nothing was in range, which made the readout promise an
+  // entry the engine will not open: delta_pick_premium_ranked drops an
+  // out-of-bounds strike in SQL with no fallback, so a range nothing satisfies
+  // means no entry. Saying so is the readout's job.
   const hasMin = (cfg.entryPremiumMin ?? 0) > 0
   const hasMax = (cfg.entryPremiumMax ?? 0) > 0
-  let eligible = allCandidates
-  if (hasMin || hasMax) {
-    const inRange = allCandidates.filter((c) => {
-      if (hasMin && c.premium < cfg.entryPremiumMin) return false
-      if (hasMax && c.premium > cfg.entryPremiumMax) return false
-      return true
-    })
-    if (inRange.length > 0) {
-      eligible = inRange
-    }
-  }
+  const eligible =
+    hasMin || hasMax
+      ? allCandidates.filter((c) => {
+          if (hasMin && c.premium < cfg.entryPremiumMin) return false
+          if (hasMax && c.premium > cfg.entryPremiumMax) return false
+          return true
+        })
+      : allCandidates
+  if (eligible.length === 0) return []
 
   const target = cfg.entryPremium
   const sorted = [...eligible].sort((a, b) => {
@@ -1345,10 +1351,24 @@ export function planCycle(input: CycleInput): CyclePlan {
     const calls = pickMultipleByPremium(expiry, 'call', cfg, tickerFor, pairsCount, roomFor)
     const puts = pickMultipleByPremium(expiry, 'put', cfg, tickerFor, pairsCount, roomFor)
     if (calls.length === 0 || puts.length === 0) {
+      // Which side came back empty, and whether the premium range is what emptied
+      // it. "No call strike quoted yet" reads as a venue problem and sends you
+      // looking at the chain; a range nothing satisfies is a setting on this very
+      // panel, and the engine will keep declining the entry until it moves.
+      const side = calls.length === 0 ? 'call' : 'put'
+      const bounded = cfg.entryPremiumMin > 0 || cfg.entryPremiumMax > 0
+      const range =
+        cfg.entryPremiumMin > 0 && cfg.entryPremiumMax > 0
+          ? `${usd2(cfg.entryPremiumMin)}–${usd2(cfg.entryPremiumMax)}`
+          : cfg.entryPremiumMin > 0
+            ? `at or above ${usd2(cfg.entryPremiumMin)}`
+            : `at or below ${usd2(cfg.entryPremiumMax)}`
       return {
         ...base,
         action: null,
-        reason: `No ${calls.length === 0 ? 'call' : 'put'} strike quoted yet`,
+        reason: bounded
+          ? `No ${side} strike quoted ${range}`
+          : `No ${side} strike quoted yet`,
       }
     }
     const count = Math.min(calls.length, puts.length)

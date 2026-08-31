@@ -835,6 +835,30 @@ the readout predicting one thing and the engine doing another.
 > sit inside one block whose implicit savepoint unwinds the first if the second
 > does not fill, so a retry starts from flat having paid no spread.
 
+> And then [`0048`](../supabase/migrations/0048_futures_strategy_atm_shift_and_pairs.sql)
+> reintroduced it. Rewriting `delta_sell_entry` for pairs dropped the before/after
+> `net_qty` comparison, and since `delta_sell` swallows a failed fill and returns
+> void, the entry went back to reporting success on a book it had not opened. The
+> same rewrite called `delta_qty_to_lots`, a helper it never created — plpgsql
+> resolves calls at run time, so the migration applied clean and the engine died
+> at the open — and widened two signatures with `create or replace`, which adds an
+> overload rather than replacing, leaving three call sites ambiguous. Fixed in
+> [`0049`](../supabase/migrations/0049_futures_strategy_unbreak_the_cycle.sql).
+>
+> The lesson is narrower than "test the engine". Each of these is invisible to
+> anything that only reads the migration: `check_function_bodies` does not resolve
+> a plpgsql call, and an ambiguous overload is a resolution-time error on a branch
+> that may not run for hours. 0049 ends with a `do` block that resolves every
+> function the engine names and counts its definitions, which is the cheapest
+> thing that would have caught all three at apply time rather than at 06:00.
+>
+> The band-management symptoms were downstream of all of it: an entry that raises
+> takes the whole cycle with it, and an entry that merely fails used to `continue`
+> past the ATM check, the hedge and the band correction. Opening the book by hand
+> did not help either, because `entered_day` is only stamped by the engine's own
+> entry — so the engine sat in the entry branch all day. Hence adoption: a
+> two-sided short book the engine did not open is taken over rather than ignored.
+
 **`0008` is a standing lesson in silent failure.** It read `settlement_time` from
 `/v2/tickers`, which has never carried that field; the comparison against `now()`
 was `NULL`, the expiry lookup matched nothing, and it returned `0` one line

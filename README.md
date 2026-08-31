@@ -289,7 +289,8 @@ sold, or an exit — never a long option. The futures book keeps that rule for
 
 | Phase | Rule |
 | --- | --- |
-| Open (06:00 IST) | Sell `pairs_count` (1 on `delta`, configurable on `futures`) symmetric pair(s) at strikes nearest `entry_premium` (optionally filtered within `[entry_premium_min, entry_premium_max]`), sized by `qty` in XAUT — the spec's `N`, in XAUT rather than lots ([`0024`](supabase/migrations/0024_drop_pairs_and_fix_reentry.sql), [`0048`](supabase/migrations/0048_futures_strategy_atm_shift_and_pairs.sql)). Both legs fill or neither does; a failed open is retried on the next refresh rather than written off for the day |
+| Open (06:00 IST) | Sell `pairs_count` (1 on `delta`, configurable on `futures`) symmetric pair(s) — pair *i* is the *i*-th ranked strike on each side, so the pairs land on distinct strikes nearest `entry_premium` (optionally filtered within `[entry_premium_min, entry_premium_max]`), sized by `qty` in XAUT — the spec's `N`, in XAUT rather than lots ([`0024`](supabase/migrations/0024_drop_pairs_and_fix_reentry.sql), [`0048`](supabase/migrations/0048_futures_strategy_atm_shift_and_pairs.sql), [`0049`](supabase/migrations/0049_futures_strategy_unbreak_the_cycle.sql)). Each pair fills whole or not at all; a failed open is retried on the next refresh rather than written off for the day |
+| Book already open | A two-sided short book the engine did not itself open — one placed by hand — is **adopted**: the day is stamped and the cycle carries straight on into management, rather than retrying the entry forever and never defending the band ([`0049`](supabase/migrations/0049_futures_strategy_unbreak_the_cycle.sql)) |
 | Intraday · `delta` | Rebuild the ITM queue each cycle, most-ITM first; resolve breaches by partial exit-and-replace |
 | Roll budget · `delta` | Each side gets `max_rolls`; once spent that side is **exit-only** — further triggers close in full, loss booked |
 | No ITM legs left · `delta` | Band-correct with fresh OTM sells at the entry premium |
@@ -472,8 +473,33 @@ The **Futures Strategy** (`accounts.kind = 'futures'`) introduces specific posit
    - **Shift limit**: Configured via `max_shifts` (default **1** per side per session). Counters `shifts_used_call` and `shifts_used_put` track shift executions. Once the shift budget is exhausted on a side, subsequent ATM triggers on that side close the position in full with no replacement (*exit-only*).
 3. **Empty Wing Auto-Flatten**: If there are no open short positions remaining on either side (e.g. all Calls were exited or all Puts were exited), the strategy automatically flattens all remaining positions (remaining options and any open perpetual futures hedge).
 4. **Number of Pairs & Premium Range Filters**:
-   - **`pairs_count`** (default **1**): The number of symmetric Call/Put pairs shorted at the session open.
-   - **`entry_premium_min`** & **`entry_premium_max`** (default **0**, unconstrained): Optional price bounds filtering candidate strikes at session open.
+   - **`pairs_count`** (default **1**): The number of symmetric Call/Put pairs shorted at the session open. Both sides are ranked by the usual premium rule and joined on rank, so pair *i* is the *i*-th best call against the *i*-th best put — distinct strikes, in the same order the tab's readout lists them.
+   - **`entry_premium_min`** & **`entry_premium_max`** (default **0**, unconstrained): Optional price bounds filtering candidate strikes at session open. A hard filter, not a preference: if no strike is quoted inside the range, the entry does not open and the readout says which side and which range.
+
+#### What 0048 broke, and what 0049 fixed
+
+0048 shipped with four faults that stopped the engine outright, so it is worth
+knowing what they looked like from the tab
+([`0049`](supabase/migrations/0049_futures_strategy_unbreak_the_cycle.sql)):
+
+Every one of them raised inside `apply_delta_strategy()`, and because pg_cron
+runs that function as the whole statement, the exception rolled the transaction
+back — including the `last_cycle = now()` stamp. The engine therefore retried
+every couple of seconds, threw again, and never reached a second armed account.
+Armed, and doing nothing, for no visible reason.
+
+| Fault | What it looked like |
+| --- | --- |
+| `delta_sell_entry` called `delta_qty_to_lots`, a helper that was never created | Switched on, no position ever opened — and nothing below the entry branch ran either: no ATM exit, no empty-wing flatten, no hedge, no band correction, no close-flatten |
+| `delta_pick_premium` and `delta_sell_entry` gained parameters via `create or replace`, which adds an overload instead of replacing | 0042's older signatures stayed live beside them, so the ATM shift, the roll and the band correction each matched two candidates and raised `function ... is not unique` |
+| The entry lost [`0019`](supabase/migrations/0019_delta_entry_all_or_nothing.sql)'s all-or-nothing fill check | `delta_sell` swallows a failed fill, so the entry reported success either way: the day got stamped on an empty book, or on one leg of a pair — a naked directional short |
+| A failed entry did `continue`, skipping the rest of the cycle | Open a book by hand and it was still never managed: `entered_day` stayed null, so the engine went back to the entry branch every cycle and left the band alone all day |
+
+The last one is why the engine now **adopts** a two-sided short book it did not
+open, and why a failed entry no longer takes the rest of the cycle with it. Both
+sides are required before adopting: a one-sided book is not this strategy's
+position, and adopting one would hand it straight to the empty-wing rule, which
+would close a leg put on for someone else's reasons.
 
 #### The per-strike notional cap
 
