@@ -113,9 +113,28 @@ more conservatively here than there.
 
 ### Fees
 
-Taken from the product itself rather than hardcoded: a rate on underlying
-notional (0.01%), capped at a percentage of premium (3.5%) — the cap binds on
-cheap far-out strikes, the notional leg binds otherwise.
+A rate on underlying notional — **0.01%**, taken from the product's own
+`taker_commission_rate` rather than hardcoded, so it tracks the venue. Notional
+is `spot × contract_value × lots` on an option and `price × contract_value ×
+lots` on the perpetual.
+
+> **There is no premium cap any more.** Earlier builds took
+> `min(0.01% of notional, 3.5% of premium)`, which mattered on cheap far-out
+> strikes where the cap bound. Both the browser (`computeFee`) and the server
+> (`execute_fill`) now charge the notional leg alone.
+
+Fees are charged on **every** fill, including the ones the strategy engines
+place. Until [`0052`](supabase/migrations/0052_futures_fees.sql) they were not:
+every engine called `execute_fill(..., 0, ...)`, and a zero fee was taken at face
+value, so engine fills were free and their P&L flattered. `execute_fill` now
+computes `0.0001 × notional` itself whenever the caller passes nothing, and
+deducts it from `cash_balance` alongside realized P&L — so realized P&L, balance
+and total P&L all include fees for engine and manual fills alike.
+
+This matters more than it sounds on a strategy that re-hedges often: a book that
+corrects its delta every twenty seconds pays the spread and this fee each time,
+and that churn can dominate the position P&L. The trade history's daily header
+totals fees separately for exactly that reason.
 
 ### Order fills
 
@@ -475,6 +494,47 @@ The **Futures Strategy** (`accounts.kind = 'futures'`) introduces specific posit
 4. **Number of Pairs & Premium Range Filters**:
    - **`pairs_count`** (default **1**): The number of symmetric Call/Put pairs shorted at the session open. Both sides are ranked by the usual premium rule and joined on rank, so pair *i* is the *i*-th best call against the *i*-th best put — distinct strikes, in the same order the tab's readout lists them.
    - **`entry_premium_min`** & **`entry_premium_max`** (default **0**, unconstrained): Optional price bounds filtering candidate strikes at session open. A hard filter, not a preference: if no strike is quoted inside the range, the entry does not open and the readout says which side and which range.
+5. **Delta management, in two tiers** ([`0055`](supabase/migrations/0055_futures_delta_management_fallback.sql)). A band breach is answered by the perpetual first and the option book only as a last resort:
+   - **Margin available → hedge.** Buy or sell XAUTUSD to bring Δp back to the target. This is the cheap correction: it moves Δp without touching the option legs and books no loss. Affordability is `equity − blocked margin` from `delta_account_margin`, capped by `margin_cap_pct` when one is set, against the hedge's own initial margin (`lots × mark × cv ÷ hedge_leverage`). A hedge that *reduces* an existing perpetual is always affordable — it returns margin rather than taking it.
+   - **No margin → close the offending leg, in full.** Which leg is *measured*, not guessed: each leg's signed contribution is `net_qty × delta`, and the one closed is the largest contribution pointing the same way as the breach. Above the band that is the short put (`net_qty < 0`, `delta < 0`, so the product is positive); below it, the short call. Ordering by contribution rather than by moneyness gets both sides right with no special-casing. The fill is stamped `No margin to hedge — closed the leg driving Δp, loss booked`.
+
+#### Schedule windows
+
+A futures book can run several trading windows in a day rather than one session
+([`0051`](supabase/migrations/0051_futures_schedule_windows.sql)). `schedule_windows`
+is a JSONB array; each entry carries its own `startTime`/`endTime` plus optional
+overrides for `entryPremium`, `entryPremiumMin`/`Max`, `pairsCount`, `qty`,
+`maxNotionalPerStrike`, `tieBreak`, `bandLow`/`bandHigh`, `targetLanding`,
+`bandBuffer`, `hedgeLeverage`, `shiftPct` and `maxShifts`. Anything a window
+leaves out falls back to the column of the same name on the settings row, so a
+window is a diff against the account's defaults, not a replacement for them.
+
+`delta_session_window` walks the array in order and returns the first window the
+clock is inside; outside every window the phase is `closed`, which is the same
+flatten-and-stand-down path a session close takes. Windows may wrap midnight
+(`startTime > endTime`), in which case the session day is the day the window
+*opened*, not the calendar day.
+
+Entry is gated per window, not per day: `entered_window_ids` records which
+windows have already opened a book today, and the daily `entered_day` stamp is
+kept alongside it. The empty-wing flatten deliberately clears **neither** — a
+book that was closed inside a window stays closed for the rest of it.
+
+#### Expiry rules
+
+`expiry_rule` replaces picking a fixed date by hand
+([`0050`](supabase/migrations/0050_futures_min_days_to_expiry.sql)):
+
+| Rule | Picks |
+| --- | --- |
+| `today` | The expiry settling today; falls back to the nearest live one if there is none |
+| `tomorrow` | The nearest expiry settling tomorrow or later |
+| `friday` | The nearest Friday expiry; falls back to the nearest live one |
+| `nearest` | The nearest live expiry, `+1` when `expiry_pick = 'next'` |
+| a `ddmmyy` label | That exact expiry, and nothing if it is no longer listed |
+
+Every rule also requires the expiry to be more than sixteen hours from its
+settlement, so the strategy never opens into a contract about to expire.
 
 #### What 0048 broke, and what 0049 fixed
 
@@ -500,6 +560,95 @@ open, and why a failed entry no longer takes the rest of the cycle with it. Both
 sides are required before adopting: a one-sided book is not this strategy's
 position, and adopting one would hand it straight to the empty-wing rule, which
 would close a leg put on for someone else's reasons.
+
+#### What 0050 broke, and what 0054–0058 fixed
+
+0050 rewrote the top of the engine — the ticker fetch, the chain refresh and the
+margin guard — and shipped four faults doing it. Three are the same shape as
+0048's, and the fourth cost a book.
+
+| Fault | Fixed in | What it looked like |
+| --- | --- | --- |
+| `delta_buy_back(...)` called in three places, never created | [`0055`](supabase/migrations/0055_futures_delta_management_fallback.sql) | Every buy-to-close path raised `undefined_function` and took the whole cycle with it |
+| `max(a.balance)` — `accounts` has `cash_balance`, not `balance` | [`0055`](supabase/migrations/0055_futures_delta_management_fallback.sql) | The margin guard raised for any account with `margin_cap_pct > 0` and an open option leg, which is all of them |
+| `delta_chain.updated_at` written by both upserts; the column has never existed | [`0056`](supabase/migrations/0056_delta_gate_stops_blocking_the_hedge.sql) | The *first* data statement in the function raised, so nothing ran at all — no entry, no ATM shift, no hedge, no close-flatten |
+| Chain refresh dropped its XAUT filter, its `greeks` guard **and** the per-cycle `delete` | [`0057`](supabase/migrations/0057_chain_is_xaut_only.sql), [`0058`](supabase/migrations/0058_read_our_own_reply.sql) | A Bitcoin spot price entered the chain and liquidated a book — see below |
+
+[`0051`](supabase/migrations/0051_futures_schedule_windows.sql) added a fifth:
+`delta_session_window` was declared `immutable` while reading `now()`. That is a
+promise the planner is entitled to act on — evaluate once, reuse forever — so the
+window the engine believed it was in could freeze for the life of a pg_cron
+backend. `delta_session`, the single-window function it was modelled on, has been
+`stable` since [`0022`](supabase/migrations/0022_delta_session_ist.sql) for
+exactly this reason. Fixed in
+[`0054`](supabase/migrations/0054_session_window_is_not_immutable.sql).
+
+##### The Bitcoin spot incident
+
+A flatten went out reading:
+
+```
+Wing empty — closed all positions · spot $78741.10 · Δp 9.11 → 0.00
+```
+
+Gold was 4,430 — the XAUTUSD fill on the same row says so. 78,741 is Bitcoin.
+Nothing malfunctioned *after* that number; every rule that reads spot did exactly
+what it was told:
+
+```
+spot 78,741 against a 4,520 call  →  spot − strike = +74,221
+the ATM rule fires at itmDistance >= 0, so every call is "at the money"
+  → the whole call side is closed
+  → the empty-wing rule sees one side gone and flattens the book
+```
+
+Four things had to line up, and 0050 supplied three of them:
+
+1. **`net._http_response` is shared.** Every `pg_net` caller in the database
+   writes to one table. The delta engine never knew which reply was its own — it
+   *described* one (200, recent, body has `"result":[`, body mentions XAUT, first
+   element has greeks) and took the newest match.
+2. **`queue_strategy_checks`** — the auto strategy's poller, unchanged since
+   [`0008`](supabase/migrations/0008_strategy_engine.sql) — fetches
+   `/v2/tickers?contract_types=call_options,put_options` with **no**
+   `underlying_asset_symbols` filter. That is every option on the exchange: 1043
+   tickers, Bitcoin among them, once a minute on the minute. Its first element is
+   an XAUT put, and options carry greeks, so it passes all five tests. The delta
+   poller's own reply is 107 tickers; the only thing separating them is size, and
+   nothing was looking at size.
+3. **The chain refresh lost its symbol filter**, so those 1043 rows were all
+   inserted, not just the XAUT ones.
+4. **The per-cycle `delete from delta_chain` was replaced by an upsert**, so the
+   contamination was permanent rather than lasting one cycle.
+
+And spot was `max(spot_price)` over the whole table, unscoped — so the first
+Bitcoin row to land became spot for every account, for good.
+
+The fix is layered, because any one layer failing should not be enough:
+
+- **0057** purges non-XAUT rows, restores the symbol filter on both upserts,
+  scopes spot to XAUT symbols, and cross-checks it against the XAUTUSD mark — a
+  disagreement wider than 20% stands the cycle down instead of trading on it.
+  `delta_hedge` is also pinned to `symbol = 'XAUTUSD'`; it was taking whichever
+  perpetual `limit 1` returned, which is an order in the wrong instrument waiting
+  to happen.
+- **0058** stops describing the reply altogether. `queue_delta_checks` records
+  the request id `net.http_get` returns — 0050 discarded it with `perform` — into
+  `delta_ticker_requests`, and the engine reads the reply to *that id*. A reply
+  nobody here asked for cannot be picked, whatever it contains and whoever adds
+  the next poller.
+
+> Still outstanding: `queue_strategy_checks` pulls the whole exchange once a
+> minute and the auto strategy's engine reads replies the same loose way. It
+> deserves the same request-id treatment.
+
+**The habit worth naming.** Every one of these applied cleanly and failed hours
+later, because plpgsql resolves function and column names when a statement first
+*executes*, not when the function is created. `check_function_bodies` will not
+catch a missing table column, a missing function, or an ambiguous overload. So
+0056 onwards each end with a `do` block that resolves every name the engine uses
+— columns, functions, signatures — at apply time, which is the only cheap place
+to find out.
 
 #### The per-strike notional cap
 

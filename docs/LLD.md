@@ -220,6 +220,7 @@ erDiagram
 | `positions_account_idx` | `(account_id)` | Positions table and P&L totals |
 | `funding_account_idx` | `(account_id, funding_time desc)` | The perpetual's funding ledger |
 | `trail_candle_requests_created_idx` | `(created_at)` | Trimming the pg_net request-id → symbol map the trailing stop matches its candle replies by |
+| `delta_ticker_requests_requested_at_idx` | `(requested_at desc)` | Trimming the same map for the delta engine's ticker replies ([`0058`](../supabase/migrations/0058_read_our_own_reply.sql)) |
 
 ---
 
@@ -282,18 +283,32 @@ Two consequences follow, both intended:
 ### Fees
 
 ```
-fee = min( taker_rate × spot × cv × lots ,   ← 0.01% of notional
-           premium_cap × price × cv × lots )  ← 3.5% of premium
+option:     fee = taker_rate × spot  × cv × lots     ← 0.01% of notional
+perpetual:  fee = taker_rate × price × cv × lots
 ```
 
-Both rates come from the product payload rather than constants, so the app tracks
-venue changes. The notional leg binds at normal premiums; the premium cap binds on
-cheap far-out strikes.
+`taker_rate` comes from the product payload (`taker_commission_rate`, default
+`0.0001`) rather than a constant, so the app tracks venue changes.
 
-| Case | Price | Notional leg | Premium cap | Charged |
-| --- | --- | --- | --- | --- |
-| Near the money | 24.90 | $0.4039 | $0.8715 | **$0.4039** |
-| Deep out of the money | 0.05 | $0.4039 | $0.00175 | **$0.00175** |
+| Case | Price | Charged (1000 lots, spot 4038.77, cv 0.001) |
+| --- | --- | --- |
+| Near the money | 24.90 | **$0.4039** |
+| Deep out of the money | 0.05 | **$0.4039** |
+
+> **The 3.5% premium cap is gone.** The rule used to be
+> `min(0.01% of notional, 3.5% of premium)`, and the cap bound on cheap far-out
+> strikes — the deep-OTM row above used to be charged $0.00175, not $0.4039.
+> Neither `computeFee` nor `execute_fill` applies a cap now. The consequence is
+> that a far-out strike costs proportionally far more to trade than it did, which
+> is worth knowing before reading a strategy's P&L across builds.
+
+**Both sides charge, and they agree.** `computeFee` prices the browser's own
+fills; `execute_fill` prices everything written server-side. Before
+[`0052`](../supabase/migrations/0052_futures_fees.sql) the strategy engines all
+called `execute_fill(..., 0, ...)` and the zero was taken literally, so **engine
+fills were free** — their realized P&L was overstated by the whole fee line.
+`execute_fill` now falls back to `0.0001 × notional` when the caller passes
+nothing, and debits `cash_balance` by realized P&L *minus* fees.
 
 ### Margin
 
@@ -519,6 +534,53 @@ stateDiagram-v2
 
 Subscribed set = visible expiry ∪ held symbols ∪ resting-order symbols. Roughly 40
 symbols instead of 150, without breaking P&L on other expiries.
+
+### Server-side polling: correlate, do not describe
+
+The engines do not use the WebSocket. Each pairs a `queue_*` job that fires a
+`pg_net` request with an `apply_*` job that reads the reply a moment later, and
+**every one of them writes into the same `net._http_response` table**. There are
+eight callers.
+
+So an engine has to answer "which of these rows is mine?", and there are only two
+ways to do it:
+
+| | How | Holds up? |
+| --- | --- | --- |
+| Describe the reply | Filter on status, age and body shape | No |
+| Correlate the request | Keep the id `net.http_get` returns, join on `_http_response.id` | Yes |
+
+`apply_trail_stops` has correlated since
+[`0037`](../supabase/migrations/0037_auto_trailing_stop.sql) — `trail_candle_requests`
+maps request id to symbol and the reply is fetched by `join ... on resp.id =
+q.request_id`. The delta engine described instead, and it cost a book: see
+[Bitcoin spot, and why "describe the reply" cannot work](#bitcoin-spot-and-why-describe-the-reply-cannot-work).
+It now correlates too, through `delta_ticker_requests`
+([`0058`](../supabase/migrations/0058_read_our_own_reply.sql)).
+
+**Rule for any new poller: keep the request id.** A description that is accurate
+today is only accurate until somebody adds a ninth caller.
+
+### The chain table
+
+`delta_chain` is the server's own quote cache — unlogged, keyed by symbol, and
+the only market data the SQL engines read. It carries `best_bid`, `best_ask`,
+`mark_price`, `spot_price`, `delta`, `gamma`, `contract_value`, `product_id` and,
+since [`0056`](../supabase/migrations/0056_delta_gate_stops_blocking_the_hedge.sql),
+`updated_at`.
+
+Two properties matter more than they look:
+
+- **It is XAUT-only, and enforced as such.** Both upserts filter on
+  `C-XAUT-%` / `P-XAUT-%` / `XAUTUSD`
+  ([`0057`](../supabase/migrations/0057_chain_is_xaut_only.sql)). Spot is derived
+  from those symbols only and cross-checked against the XAUTUSD mark; more than
+  20% apart and the cycle stands down rather than trading on it.
+- **It is refreshed by upsert, not by `delete` + `insert`.** That was a
+  performance change in [`0050`](../supabase/migrations/0050_futures_min_days_to_expiry.sql),
+  and it also removed the property that a bad ingest lasted exactly one cycle.
+  A row that gets in now stays until something takes it out. The filters above
+  are what replaced that safety.
 
 ---
 
@@ -861,6 +923,67 @@ the readout predicting one thing and the engine doing another.
 > did not help either, because `entered_day` is only stamped by the engine's own
 > entry — so the engine sat in the entry branch all day. Hence adoption: a
 > two-sided short book the engine did not open is taken over rather than ignored.
+
+> And then [`0050`](../supabase/migrations/0050_futures_min_days_to_expiry.sql)
+> did it a third time, in one rewrite of the engine's opening statements. It
+> called `delta_buy_back`, which had never been created, from three places. It
+> read `max(a.balance)` from a table whose column is `cash_balance`. It wrote
+> `delta_chain.updated_at`, a column that has never existed — in the *first* data
+> statement of the function, so the whole strategy stopped, not just one branch.
+> And [`0051`](../supabase/migrations/0051_futures_schedule_windows.sql) added
+> `delta_session_window` as `immutable` while reading `now()`, which lets the
+> planner freeze the answer for the life of a backend.
+>
+> Same root habit as 0048, and it is worth naming precisely: **plpgsql resolves
+> names when a statement first executes, not when the function is created.**
+> `check_function_bodies` parses the body; it does not resolve a called function,
+> a table column, or an overload. So every one of these applied cleanly, and then
+> failed hours later on a branch nobody had exercised — which reads as "it worked
+> this morning" rather than as a deployment error. Fixed in
+> [`0054`](../supabase/migrations/0054_session_window_is_not_immutable.sql)–[`0056`](../supabase/migrations/0056_delta_gate_stops_blocking_the_hedge.sql),
+> and from 0056 onward each migration ends with a `do` block that resolves every
+> column, function and signature the engine names, at apply time.
+
+<a id="bitcoin-spot-and-why-describe-the-reply-cannot-work"></a>
+
+**Bitcoin spot, and why "describe the reply" cannot work.** The most expensive
+bug in this codebase so far was not in the strategy logic at all. A flatten went
+out reading `Wing empty — closed all positions · spot $78741.10 · Δp 9.11 → 0.00`
+while gold was 4,430. Nothing malfunctioned after that number:
+
+```
+spot 78,741 vs a 4,520 call → spot − strike = +74,221
+ATM rule fires at itmDistance >= 0 → every call is "at the money"
+  → the whole call side closes
+  → the empty-wing rule sees one side gone and flattens the book
+```
+
+`v_spot` was `max(spot_price)` over the whole of `delta_chain`, and a Bitcoin row
+was in it. It got there because the engine picked a reply that was never meant
+for it: `queue_strategy_checks` ([`0008`](../supabase/migrations/0008_strategy_engine.sql))
+fetches `/v2/tickers?contract_types=call_options,put_options` with no
+`underlying_asset_symbols` filter — 1043 tickers, once a minute — and that body
+satisfies every test the delta engine used to identify its own reply, because its
+first element is an XAUT put and options carry greeks. The delta poller's own
+reply is 107 tickers. **The two bodies are the same shape; only the request that
+asked for them differs.** No content predicate can separate them, which is why
+0057's restored `greeks` guard does not stop this and
+[`0058`](../supabase/migrations/0058_read_our_own_reply.sql) switches to request-id
+correlation — the pattern `apply_trail_stops` has used since 0037.
+
+Three defences now have to fail together, not one:
+
+| Layer | Migration | Stops |
+| --- | --- | --- |
+| Read the reply to our own request id | [`0058`](../supabase/migrations/0058_read_our_own_reply.sql) | Any foreign reply, whatever it contains |
+| XAUT-only filter on both chain upserts | [`0057`](../supabase/migrations/0057_chain_is_xaut_only.sql) | Non-XAUT rows reaching the chain |
+| Spot scoped to XAUT, cross-checked against the XAUTUSD mark (20%) | [`0057`](../supabase/migrations/0057_chain_is_xaut_only.sql) | Trading on an implausible spot at all |
+
+The generalisable part: **a number every rule reads is a single point of failure,
+and it deserves a plausibility check of its own.** Δp, the ATM test, the roll
+trigger, the margin guard and the flatten all consume `v_spot`, and none of them
+could tell that it was wrong. The 20% cross-check costs one comparison per cycle
+and would have turned a liquidated book into a log line.
 
 **`0008` is a standing lesson in silent failure.** It read `settlement_time` from
 `/v2/tickers`, which has never carried that field; the comparison against `now()`

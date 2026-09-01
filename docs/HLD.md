@@ -248,13 +248,28 @@ graph LR
 
 The poll and the apply are separate jobs because `pg_net` is **asynchronous**:
 the request is only sent after its transaction commits, and the reply lands in
-`net._http_response` some time later. `apply` therefore reads whatever reply is
-freshest rather than the one its own poll fired — matching them by shape, within
-a freshness window.
+`net._http_response` some time later. `apply` therefore reads a reply that landed
+recently rather than the one its own invocation triggered.
+
+`net._http_response` is **shared by every `pg_net` caller in the database** —
+eight of them — so "recently" is not enough on its own; the reply has to be
+identified. Two engines match it by the request id `net.http_get` returns, kept
+in a small side table: `apply_trail_stops` since
+[`0037`](../supabase/migrations/0037_auto_trailing_stop.sql), and
+`apply_delta_strategy` since
+[`0058`](../supabase/migrations/0058_read_our_own_reply.sql).
+
+`apply_strategy` still matches by shape — status, freshness and body structure.
+That is a known weakness rather than a design: shape does not distinguish two
+callers requesting the same endpoint, and when the delta engine matched that way
+it eventually picked up the auto strategy's whole-exchange ticker reply and
+priced a gold book off a Bitcoin spot. See
+[LLD §10](LLD.md#bitcoin-spot-and-why-describe-the-reply-cannot-work).
+**New pollers should correlate by request id.**
 
 | | Auto strategy | Delta strategy |
 | --- | --- | --- |
-| Migration | [`0008`](../supabase/migrations/0008_strategy_engine.sql), fixed by [`0011`](../supabase/migrations/0011_strategy_expiry_fix.sql) | [`0012`](../supabase/migrations/0012_delta_strategy_engine.sql), latterly [`0044`](../supabase/migrations/0044_futures_delta_hedge.sql), [`0048`](../supabase/migrations/0048_futures_strategy_atm_shift_and_pairs.sql), [`0049`](../supabase/migrations/0049_futures_strategy_unbreak_the_cycle.sql) |
+| Migration | [`0008`](../supabase/migrations/0008_strategy_engine.sql), fixed by [`0011`](../supabase/migrations/0011_strategy_expiry_fix.sql) | [`0012`](../supabase/migrations/0012_delta_strategy_engine.sql), latterly [`0044`](../supabase/migrations/0044_futures_delta_hedge.sql), [`0048`](../supabase/migrations/0048_futures_strategy_atm_shift_and_pairs.sql), [`0049`](../supabase/migrations/0049_futures_strategy_unbreak_the_cycle.sql); schedule windows and expiry rules in [`0050`](../supabase/migrations/0050_futures_min_days_to_expiry.sql)–[`0053`](../supabase/migrations/0053_futures_delta_management.sql), their regressions fixed by [`0054`](../supabase/migrations/0054_session_window_is_not_immutable.sql)–[`0058`](../supabase/migrations/0058_read_our_own_reply.sql) |
 | Cadence | Top of the hour only — 1h bars close there | Every minute, spaced by `cycle_seconds` |
 | Feed | Candles + full option chain (~964 KB) | XAUT tickers only (~143 KB), options **and** the perpetual in one request |
 | Needs | Last closed candle, strike ladder | Per-strike `greeks.delta`, both sides of the touch, plus `gamma` on the options book (the band is derived from it) and the perpetual's touch on the futures one |
@@ -286,7 +301,7 @@ Two consequences worth stating plainly:
 | 5 | Per-expiry WS subscription | Subscribe to all strikes | One expiry is ~40 symbols instead of ~150. Held and resting symbols are pinned in so P&L and fills keep working elsewhere. |
 | 6 | Throttle repaints to 4/sec | Render every tick | Ticks arrive far faster than perception. Writes land synchronously in a Map; only notification is throttled, so no data is dropped. |
 | 7 | Balance excludes open positions | Debit premium on entry | `balance = start + realized − fees`, `equity = balance + unrealized`. Matches how Delta presents it and keeps realized and unrealized separable. |
-| 8 | Fee rates read from the product | Hardcode 0.01% / 3.5% | The venue owns those numbers; reading them means the app tracks changes for free. |
+| 8 | Fee rate read from the product | Hardcode 0.01% | The venue owns that number; reading `taker_commission_rate` means the app tracks changes for free. (The 3.5%-of-premium cap this pair once also carried no longer exists — see [LLD §4](LLD.md#fees).) |
 | 9 | Strategy engines in PL/pgSQL on `pg_cron` | Edge Function; external worker | No new deployment target, and `pg_net` + `pg_cron` were already in use for settlement and TP/SL. Cost: HTTP orchestration inside Postgres is awkward — async replies matched by sniffing JSON shape, inside a freshness race, with no logging unless asked for. |
 | 10 | One account `kind` per page | Separate tables per strategy | Orders, fills and positions are already scoped to an account, so a `kind` column partitions the three books with no schema duplication and no change to `execute_fill`. |
 | 11 | Delta strategy acts once per cycle | Walk the whole ITM queue in one pass | Δp is re-read from fresh marks before each step, so a correction can never be sized against a book it has already changed. Slower to converge; cannot compound its own error. |

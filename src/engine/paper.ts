@@ -180,10 +180,19 @@ export function exitPrice(t: Ticker | undefined, netQty: number): number | null 
 // ---------------------------------------------------------------------------
 
 /**
- * Delta's option fee: a rate on the underlying notional, capped at a
- * percentage of the premium. Both inputs come off the product itself
- * (0.01% of notional, capped at 3.5% of premium for XAUT) rather than
- * being hardcoded, so the numbers track the venue.
+ * Delta's fee: a rate on the underlying notional. The rate comes off the product
+ * itself (`taker_commission_rate`, 0.01% for XAUT) rather than being hardcoded,
+ * so it tracks the venue.
+ *
+ * There is no premium cap. The rule used to be `min(0.01% of notional, 3.5% of
+ * premium)` and the cap bound on cheap far-out strikes — a 0.05 option paid
+ * $0.00175 where it now pays the full notional leg. Dropping it made a far-out
+ * strike proportionally much more expensive to trade, which is worth knowing when
+ * comparing a strategy's P&L against a run from before the change.
+ *
+ * `execute_fill` charges the same rate server-side, so an engine fill and a
+ * hand-placed one cost the same (0052_futures_fees.sql). Before that migration
+ * the engines passed a literal zero and their fills were free.
  */
 export function computeFee(product: Product, price: number, qty: number, spot: number): number {
   const cv = Number(product.contract_value) || 0.001
