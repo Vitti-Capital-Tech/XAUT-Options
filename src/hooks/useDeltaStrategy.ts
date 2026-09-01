@@ -124,10 +124,11 @@ interface Row {
   shifts_used_put: number | null
   entered_day: string | null
   flattened_day: string | null
+  schedule_windows?: any[] | null
 }
 
 const COLS =
-  'account_id, armed, session_open, session_close, band_low, band_high, gamma_multiplier, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, entry_premium_min, entry_premium_max, pairs_count, shift_pct, max_shifts, qty, max_notional_per_strike, tie_break, expiry_pick, expiry_rule, expiry_label, cycle_seconds, take_profit_mark, stop_loss_mark, margin_cap_pct, margin_target_pct, hedge_leverage, trade_days, session_day, rolls_used_call, rolls_used_put, shifts_used_call, shifts_used_put, entered_day, flattened_day'
+  'account_id, armed, session_open, session_close, band_low, band_high, gamma_multiplier, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, entry_premium_min, entry_premium_max, pairs_count, shift_pct, max_shifts, qty, max_notional_per_strike, tie_break, expiry_pick, expiry_rule, expiry_label, cycle_seconds, take_profit_mark, stop_loss_mark, margin_cap_pct, margin_target_pct, hedge_leverage, trade_days, session_day, rolls_used_call, rolls_used_put, shifts_used_call, shifts_used_put, entered_day, flattened_day, schedule_windows'
 
 // Postgres numerics come back as strings over PostgREST.
 const n = (v: string | number) => Number(v)
@@ -167,6 +168,32 @@ function rowToConfig(row: Row): DeltaConfig {
     // rather than an empty selection, which would read as "never".
     tradeDays:
       row.trade_days === null ? [...DEFAULT_DELTA_CONFIG.tradeDays] : row.trade_days.map(Number),
+    scheduleWindows: Array.isArray(row.schedule_windows)
+      ? row.schedule_windows.map((w: any, idx: number) => ({
+          id: String(w.id || `win_${idx + 1}`),
+          name: w.name || `Window ${idx + 1}`,
+          startTime: w.startTime || w.start_time || '01:30',
+          endTime: w.endTime || w.end_time || '17:00',
+          entryPremium: n(w.entryPremium ?? w.entry_premium ?? 4),
+          entryPremiumMin: n(w.entryPremiumMin ?? w.entry_premium_min ?? 0),
+          entryPremiumMax: n(w.entryPremiumMax ?? w.entry_premium_max ?? 0),
+          pairsCount: Number(w.pairsCount ?? w.pairs_count ?? 1),
+          qty: n(w.qty ?? 0.001),
+          maxNotionalPerStrike: n(w.maxNotionalPerStrike ?? w.max_notional_per_strike ?? 95000),
+          tieBreak: (w.tieBreak || w.tie_break || 'closest') as TieBreak,
+          bandLow: n(w.bandLow ?? w.band_low ?? -1.5),
+          bandHigh: n(w.bandHigh ?? w.band_high ?? 1.5),
+          targetLanding: (w.targetLanding || w.target_landing || 'edge') as TargetLanding,
+          bandBuffer: n(w.bandBuffer ?? w.band_buffer ?? 0.2),
+          hedgeLeverage: n(w.hedgeLeverage ?? w.hedge_leverage ?? 100),
+          shiftPct: n(w.shiftPct ?? w.shift_pct ?? 50),
+          maxShifts: Number(w.maxShifts ?? w.max_shifts ?? 1),
+          takeProfitMark: n(w.takeProfitMark ?? w.take_profit_mark ?? 0.7),
+          stopLossMark: n(w.stopLossMark ?? w.stop_loss_mark ?? 0),
+          marginCapPct: n(w.marginCapPct ?? w.margin_cap_pct ?? 100),
+          marginTargetPct: n(w.marginTargetPct ?? w.margin_target_pct ?? 90),
+        }))
+      : [],
   }
 }
 
@@ -201,6 +228,7 @@ function configToRow(cfg: DeltaConfig) {
     margin_target_pct: cfg.marginTargetPct,
     hedge_leverage: cfg.hedgeLeverage,
     trade_days: cfg.tradeDays,
+    schedule_windows: cfg.scheduleWindows ?? [],
   }
 }
 

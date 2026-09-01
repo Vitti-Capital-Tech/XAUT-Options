@@ -284,6 +284,115 @@ export interface DeltaConfig {
    * below the cap.
    */
   marginTargetPct: number
+  /** Multi-window schedule configurations for Futures Strategy */
+  scheduleWindows?: ScheduleWindow[]
+}
+
+/** A single schedule window with window-specific parameters in Futures Strategy. */
+export interface ScheduleWindow {
+  id: string
+  name?: string
+  startTime: string // "HH:MM" (IST)
+  endTime: string // "HH:MM" (IST)
+  entryPremium: number
+  entryPremiumMin: number
+  entryPremiumMax: number
+  pairsCount: number
+  qty: number
+  maxNotionalPerStrike: number
+  tieBreak: TieBreak
+  bandLow: number
+  bandHigh: number
+  targetLanding: TargetLanding
+  bandBuffer: number
+  hedgeLeverage: number
+  shiftPct: number
+  maxShifts: number
+  takeProfitMark: number
+  stopLossMark: number
+  marginCapPct: number
+  marginTargetPct: number
+}
+
+export function defaultScheduleWindow(id = 'win_1', cfg?: Partial<DeltaConfig>): ScheduleWindow {
+  return {
+    id,
+    name: 'Window 1',
+    startTime: cfg?.sessionOpen ?? '01:30',
+    endTime: cfg?.sessionClose ?? '17:00',
+    entryPremium: cfg?.entryPremium ?? 4,
+    entryPremiumMin: cfg?.entryPremiumMin ?? 2,
+    entryPremiumMax: cfg?.entryPremiumMax ?? 4,
+    pairsCount: cfg?.pairsCount ?? 3,
+    qty: cfg?.qty ?? 0.001,
+    maxNotionalPerStrike: cfg?.maxNotionalPerStrike ?? 95000,
+    tieBreak: cfg?.tieBreak ?? 'closest',
+    bandLow: cfg?.bandLow ?? -1.5,
+    bandHigh: cfg?.bandHigh ?? 1.5,
+    targetLanding: cfg?.targetLanding ?? 'edge',
+    bandBuffer: cfg?.bandBuffer ?? 0.2,
+    hedgeLeverage: cfg?.hedgeLeverage ?? 100,
+    shiftPct: cfg?.shiftPct ?? 50,
+    maxShifts: cfg?.maxShifts ?? 1,
+    takeProfitMark: cfg?.takeProfitMark ?? 0.7,
+    stopLossMark: cfg?.stopLossMark ?? 0,
+    marginCapPct: cfg?.marginCapPct ?? 100,
+    marginTargetPct: cfg?.marginTargetPct ?? 90,
+  }
+}
+
+/**
+ * Finds the currently active schedule window given the current IST timestamp.
+ */
+export function findActiveScheduleWindow(
+  windows: ScheduleWindow[],
+  now: Date = new Date(),
+  tradeDays: number[] = [1, 2, 3, 4, 5, 6, 7],
+): { activeWindow: ScheduleWindow | null; phase: 'open' | 'closed'; sessionDay: string } {
+  const istDate = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
+  const istMinutes = istDate.getHours() * 60 + istDate.getMinutes()
+  const istDay = istDate.getDay() // 0=Sun, 1=Mon, ..., 6=Sat
+  const isoDay = istDay === 0 ? 7 : istDay
+  const todayStr = istDate.toISOString().slice(0, 10)
+
+  if (!tradeDays.includes(isoDay)) {
+    return { activeWindow: null, phase: 'closed', sessionDay: todayStr }
+  }
+
+  if (!windows || windows.length === 0) {
+    return { activeWindow: null, phase: 'closed', sessionDay: todayStr }
+  }
+
+  for (const win of windows) {
+    const [oH, oM] = win.startTime.split(':').map(Number)
+    const [cH, cM] = win.endTime.split(':').map(Number)
+    const oMin = (oH || 0) * 60 + (oM || 0)
+    const cMin = (cH || 0) * 60 + (cM || 0)
+
+    let isOpen = false
+    let sessionDay = todayStr
+
+    if (oMin <= cMin) {
+      isOpen = istMinutes >= oMin && istMinutes <= cMin
+      sessionDay = todayStr
+    } else {
+      // Midnight wrap
+      if (istMinutes >= oMin) {
+        isOpen = true
+        sessionDay = todayStr
+      } else if (istMinutes <= cMin) {
+        isOpen = true
+        const prevDay = new Date(istDate.getTime() - 24 * 60 * 60 * 1000)
+        sessionDay = prevDay.toISOString().slice(0, 10)
+      }
+    }
+
+    if (isOpen) {
+      return { activeWindow: win, phase: 'open', sessionDay }
+    }
+  }
+
+  return { activeWindow: null, phase: 'closed', sessionDay: todayStr }
 }
 
 export const DEFAULT_DELTA_CONFIG: DeltaConfig = {
@@ -327,6 +436,7 @@ export const DEFAULT_DELTA_CONFIG: DeltaConfig = {
   // blocks the least margin for the same position, and the position's risk is
   // its size either way.
   hedgeLeverage: 100,
+  scheduleWindows: [],
 }
 
 /** State that lives for one session and resets at the next open. */
@@ -1242,9 +1352,53 @@ export interface CyclePlan {
  * the roll budget is consulted. Every other rule above is shared verbatim.
  */
 export function planCycle(input: CycleInput): CyclePlan {
-  const { now, cfg, session, positions, expiry, spot, tickerFor, touched } = input
+  const { now, cfg: rawCfg, session, positions, expiry, spot, tickerFor, touched } = input
   const mode = input.mode ?? 'options'
-  const { phase, day, tradingDay } = sessionPhase(now, cfg)
+  const rawSession = sessionPhase(now, rawCfg)
+
+  let cfg = rawCfg
+  let phase = rawSession.phase
+  let day = rawSession.day
+  let tradingDay = rawSession.tradingDay
+
+  if (mode === 'futures' && rawCfg.scheduleWindows && rawCfg.scheduleWindows.length > 0) {
+    const { activeWindow, phase: winPhase, sessionDay: winDay } = findActiveScheduleWindow(
+      rawCfg.scheduleWindows,
+      now,
+      rawCfg.tradeDays,
+    )
+    phase = winPhase
+    day = winDay
+    const istDate = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
+    const istDay = istDate.getDay()
+    tradingDay = rawCfg.tradeDays.includes(istDay === 0 ? 7 : istDay)
+
+    if (activeWindow) {
+      cfg = {
+        ...rawCfg,
+        sessionOpen: activeWindow.startTime,
+        sessionClose: activeWindow.endTime,
+        entryPremium: activeWindow.entryPremium,
+        entryPremiumMin: activeWindow.entryPremiumMin,
+        entryPremiumMax: activeWindow.entryPremiumMax,
+        pairsCount: activeWindow.pairsCount,
+        qty: activeWindow.qty,
+        maxNotionalPerStrike: activeWindow.maxNotionalPerStrike,
+        tieBreak: activeWindow.tieBreak,
+        bandLow: activeWindow.bandLow,
+        bandHigh: activeWindow.bandHigh,
+        targetLanding: activeWindow.targetLanding,
+        bandBuffer: activeWindow.bandBuffer,
+        hedgeLeverage: activeWindow.hedgeLeverage,
+        shiftPct: activeWindow.shiftPct,
+        maxShifts: activeWindow.maxShifts,
+        takeProfitMark: activeWindow.takeProfitMark,
+        stopLossMark: activeWindow.stopLossMark,
+        marginCapPct: activeWindow.marginCapPct,
+        marginTargetPct: activeWindow.marginTargetPct,
+      }
+    }
+  }
 
   // Gamma is read for one purpose only — deriving the band — and a futures-hedged
   // book does not derive it. So that book neither computes Γp nor waits for one:
@@ -1295,7 +1449,7 @@ export function planCycle(input: CycleInput): CyclePlan {
       return {
         ...base,
         action: { type: 'flatten', positions: live },
-        reason: tradingDay ? 'Session closed — flattening' : 'Not a trading day — flattening',
+        reason: tradingDay ? 'Schedule window closed — flattening' : 'Not a trading day — flattening',
       }
     }
     return {
@@ -1304,8 +1458,8 @@ export function planCycle(input: CycleInput): CyclePlan {
       reason: !tradingDay
         ? 'Not a trading day — flat'
         : phase === 'before'
-          ? 'Before the session open'
-          : 'Session closed — flat overnight',
+          ? 'Before schedule window open'
+          : 'Schedule window closed — flat',
     }
   }
 

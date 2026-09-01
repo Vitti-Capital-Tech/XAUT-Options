@@ -139,6 +139,8 @@ erDiagram
         numeric stop_loss_mark "a price on the mark; 0 = none"
         numeric margin_cap_pct "cut at this % of equity; 0 = off"
         numeric margin_target_pct "cut depth, not a gate; cap - this = hysteresis"
+        jsonb schedule_windows "multi-window schedule configurations for Futures strategy"
+        text_array entered_window_ids "entered window IDs today"
     }
     ORDERS {
         uuid id PK

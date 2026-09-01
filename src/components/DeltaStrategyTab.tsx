@@ -11,7 +11,12 @@ import {
   type Product,
 } from '../lib/delta'
 import type { DeltaStrategyApi } from '../hooks/useDeltaStrategy'
-import type { HedgeMode } from '../lib/deltaStrategy'
+import {
+  defaultScheduleWindow,
+  findActiveScheduleWindow,
+  type HedgeMode,
+  type ScheduleWindow,
+} from '../lib/deltaStrategy'
 import { fundingPayment, markPrice, maxLeverage, type PositionRow } from '../engine/paper'
 import { greek, price } from '../lib/format'
 import {
@@ -26,37 +31,6 @@ import {
   useSticky,
 } from './controls'
 
-/**
- * The Delta Management Strategy's controls — the same shape of bar the auto
- * strategy wears, with the parameters the rules spec actually names: the trading
- * session, the delta band and where a correction lands in it, the entry premium,
- * and how a breach of the band is answered.
- *
- * One bar, two books, told apart by `mode`:
- *
- *   options   the delta account. A breach is answered by rolling an in-the-money
- *             short further out, so the ITM trigger and the roll budget are
- *             controls and the queue and budget are readouts
- *   futures    the futures account. A breach is answered by buying or selling the
- *             XAUT perpetual, so those four disappear and the hedge's leverage,
- *             size and funding take their place
- *
- * Everything else on the bar means the same thing to both, and is the same
- * column of the same row underneath — which is the point of one component: the
- * two strategies cannot drift apart in what they offer.
- *
- * Below the controls sits the readout — net portfolio delta against the band,
- * what the book has spent, and the one line saying what the engine is about to do
- * next. The positions and trade history it produces are in the panel under this,
- * on the strategy's own account.
- *
- * The engine runs server-side on pg_cron, so the switch here arms it and it
- * trades with the tab closed. Every default is the spec's own figure; the items
- * the spec leaves OPEN are the controls with no number in the document —
- * target_landing, what counts as a roll, N, the strike tie-break, expiry
- * selection and the cycle frequency — so the choice is on screen rather than
- * buried in an engine.
- */
 export function DeltaStrategyTab({
   strategy,
   expiries,
@@ -80,6 +54,80 @@ export function DeltaStrategyTab({
   // Open by default: a bar that starts folded hides the settings from someone who
   // has never seen them. Each tab remembers its own.
   const [collapsed, setCollapsed] = useSticky('delta-paper.delta.collapsed', false)
+
+  const futures = mode === 'futures'
+
+  // Schedule Windows for Futures Strategy
+  const rawWindows: ScheduleWindow[] =
+    config.scheduleWindows && config.scheduleWindows.length > 0
+      ? config.scheduleWindows
+      : [defaultScheduleWindow('win_1', config)]
+
+  const activeSchedule = findActiveScheduleWindow(rawWindows, new Date(), config.tradeDays)
+  const activeWinId = activeSchedule.activeWindow?.id ?? rawWindows[0]?.id ?? 'win_1'
+
+  const [selectedWinId, setSelectedWinId] = useState<string>(rawWindows[0]?.id ?? 'win_1')
+
+  const currentWin =
+    rawWindows.find((w) => w.id === selectedWinId) ??
+    rawWindows[0] ??
+    defaultScheduleWindow('win_1', config)
+
+  const updateWindow = (patch: Partial<ScheduleWindow>) => {
+    const updated = rawWindows.map((w) => (w.id === currentWin.id ? { ...w, ...patch } : w))
+    setConfig({
+      scheduleWindows: updated,
+      // If we're updating the currently active window or only 1 window exists, update top-level fields too
+      ...(currentWin.id === activeWinId || updated.length === 1
+        ? {
+            sessionOpen: patch.startTime ?? currentWin.startTime,
+            sessionClose: patch.endTime ?? currentWin.endTime,
+            entryPremium: patch.entryPremium ?? currentWin.entryPremium,
+            entryPremiumMin: patch.entryPremiumMin ?? currentWin.entryPremiumMin,
+            entryPremiumMax: patch.entryPremiumMax ?? currentWin.entryPremiumMax,
+            pairsCount: patch.pairsCount ?? currentWin.pairsCount,
+            qty: patch.qty ?? currentWin.qty,
+            maxNotionalPerStrike: patch.maxNotionalPerStrike ?? currentWin.maxNotionalPerStrike,
+            tieBreak: patch.tieBreak ?? currentWin.tieBreak,
+            bandLow: patch.bandLow ?? currentWin.bandLow,
+            bandHigh: patch.bandHigh ?? currentWin.bandHigh,
+            targetLanding: patch.targetLanding ?? currentWin.targetLanding,
+            bandBuffer: patch.bandBuffer ?? currentWin.bandBuffer,
+            hedgeLeverage: patch.hedgeLeverage ?? currentWin.hedgeLeverage,
+            shiftPct: patch.shiftPct ?? currentWin.shiftPct,
+            maxShifts: patch.maxShifts ?? currentWin.maxShifts,
+            takeProfitMark: patch.takeProfitMark ?? currentWin.takeProfitMark,
+            stopLossMark: patch.stopLossMark ?? currentWin.stopLossMark,
+            marginCapPct: patch.marginCapPct ?? currentWin.marginCapPct,
+            marginTargetPct: patch.marginTargetPct ?? currentWin.marginTargetPct,
+          }
+        : {}),
+    })
+  }
+
+  const addWindow = () => {
+    const nextIdx = rawWindows.length + 1
+    const newId = `win_${Date.now()}`
+    const lastEnd = rawWindows[rawWindows.length - 1]?.endTime ?? '17:00'
+    const newWin: ScheduleWindow = {
+      ...defaultScheduleWindow(newId, config),
+      name: `Window ${nextIdx}`,
+      startTime: lastEnd,
+      endTime: '23:30',
+    }
+    const updated = [...rawWindows, newWin]
+    setConfig({ scheduleWindows: updated })
+    setSelectedWinId(newId)
+  }
+
+  const removeWindow = (idToRemove: string) => {
+    if (rawWindows.length <= 1) return
+    const updated = rawWindows.filter((w) => w.id !== idToRemove)
+    setConfig({ scheduleWindows: updated })
+    if (selectedWinId === idToRemove) {
+      setSelectedWinId(updated[0]?.id ?? 'win_1')
+    }
+  }
 
   const expiryChoices =
     mode === 'futures'
@@ -137,7 +185,6 @@ export function DeltaStrategyTab({
   // The hedge, on the books that have one. Size is read in the underlying, the
   // same unit Δp and the positions table are read in, so the two can be compared
   // by eye: a hedge of +1.50 is what answers a Δp of −1.50.
-  const futures = mode === 'futures'
   const hedgeCv = hedgePosition ? Number(hedgePosition.contract_value) : 0
   const hedgeQty = hedgePosition ? hedgePosition.net_qty * hedgeCv : 0
   const perpTicker = market.get(PERP_SYMBOL)
@@ -173,7 +220,423 @@ export function DeltaStrategyTab({
             which is the point: folded, this bar is a monitor rather than a form. */}
         <CollapseToggle collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />
 
-        {!collapsed && (
+        {!collapsed && futures && (
+          <div className="flex min-w-0 flex-1 flex-col gap-4">
+            {/* Top Bar: Global Filters (Trading Days, Expiry, Refresh) */}
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-3 pb-3 border-b border-line/60">
+              <Field
+                label="Trading days"
+                help="Which days it trades globally. A day switched off is treated as closed: everything is bought back and nothing new is opened."
+              >
+                <DayPicker value={config.tradeDays} onChange={(tradeDays) => setConfig({ tradeDays })} />
+              </Field>
+
+              <GroupRule />
+
+              <Field
+                label="Expiry"
+                help="Which expiry to trade. Choose Today (same-day), Tomorrow (1 DTE), Friday (weekly), or a specific date. Rule-based expiries automatically roll every day."
+              >
+                <div className="flex items-center gap-2">
+                  <Select
+                    value={expiryValue}
+                    width="w-48"
+                    onChange={(v) => {
+                      if (v.startsWith('rule:')) {
+                        const rule = v.replace('rule:', '') as any
+                        setConfig({ expiryLabel: v, expiryRule: rule })
+                      } else {
+                        setConfig({ expiryLabel: v, expiryRule: 'fixed' })
+                      }
+                    }}
+                    options={expiryChoices}
+                  />
+                  {!expiryLive && (
+                    <span className="text-[11px] whitespace-nowrap text-warn">Settled — pick a date</span>
+                  )}
+                </div>
+              </Field>
+
+              <GroupRule />
+
+              <Field
+                label="Refresh"
+                help="How often it looks at the position and acts. The button skips the wait so the next check happens within 5 seconds."
+              >
+                <div className="flex items-center gap-2">
+                  <NumInput
+                    value={config.cycleSeconds}
+                    step={5}
+                    min={5}
+                    unit="s"
+                    width="w-16"
+                    onChange={(v) => setConfig({ cycleSeconds: Math.round(v) })}
+                  />
+                  <button
+                    type="button"
+                    disabled={!hasAccount || refreshing}
+                    title={
+                      hasAccount
+                        ? 'Run a cycle now — clears the wait so the next engine tick acts'
+                        : 'Create a futures account first'
+                    }
+                    onClick={() => {
+                      setRefreshing(true)
+                      void refresh().finally(() => setRefreshing(false))
+                    }}
+                    className="flex h-9 items-center gap-1.5 rounded-md border border-raised-3 bg-surface px-2.5 text-[12px] text-ink-2 transition-colors hover:border-ink-3 hover:text-ink disabled:opacity-40"
+                  >
+                    <RefreshIcon spinning={refreshing} />
+                    {refreshing ? 'Queued' : 'Now'}
+                  </button>
+                </div>
+              </Field>
+            </div>
+
+            {/* Schedule Windows Section */}
+            <div className="flex flex-col gap-3">
+              {/* Window Tabs Bar */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[11px] font-semibold tracking-wider text-ink-3 uppercase mr-1">
+                  Schedule Windows:
+                </span>
+                {rawWindows.map((win, idx) => {
+                  const isSelected = win.id === currentWin.id
+                  const isActive = win.id === activeSchedule.activeWindow?.id
+                  return (
+                    <button
+                      key={win.id}
+                      type="button"
+                      onClick={() => setSelectedWinId(win.id)}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs transition font-medium border ${
+                        isSelected
+                          ? 'bg-brand/15 text-brand border-brand/40 shadow-sm font-semibold'
+                          : 'bg-surface text-ink-2 hover:text-ink hover:bg-raised-2 border-line'
+                      }`}
+                    >
+                      <span>{win.name || `Window ${idx + 1}`} ({win.startTime}–{win.endTime})</span>
+                      {isActive && (
+                        <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-good/20 text-good border border-good/30">
+                          ● Active
+                        </span>
+                      )}
+                    </button>
+                  )
+                })}
+                <button
+                  type="button"
+                  onClick={addWindow}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-md text-xs bg-ink/5 text-ink hover:bg-ink/10 border border-dashed border-ink-3/40 transition font-medium cursor-pointer"
+                >
+                  + Add Window
+                </button>
+              </div>
+
+              {/* Selected Window Parameters Box */}
+              <div className="p-4 rounded-lg bg-surface/50 border border-line flex flex-col gap-4">
+                {/* Window Header Row */}
+                <div className="flex items-center justify-between gap-4 pb-3 border-b border-line/40 flex-wrap">
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <Field
+                      label="Window Time · IST"
+                      help="Start and end time for this schedule window on the IST clock."
+                    >
+                      <div className="flex items-center gap-2">
+                        <TimePicker
+                          value={currentWin.startTime}
+                          onChange={(v) => updateWindow({ startTime: v })}
+                        />
+                        <span className="text-ink-4">–</span>
+                        <TimePicker
+                          value={currentWin.endTime}
+                          onChange={(v) => updateWindow({ endTime: v })}
+                        />
+                      </div>
+                    </Field>
+
+                    {currentWin.id === activeSchedule.activeWindow?.id && (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full bg-good/15 text-good border border-good/30">
+                        <span className="h-1.5 w-1.5 rounded-full bg-good animate-pulse" />
+                        Currently Active Window
+                      </span>
+                    )}
+                  </div>
+
+                  {rawWindows.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removeWindow(currentWin.id)}
+                      className="text-xs text-danger hover:text-danger-light px-2.5 py-1 rounded bg-danger/10 hover:bg-danger/20 transition cursor-pointer"
+                    >
+                      Delete Window
+                    </button>
+                  )}
+                </div>
+
+                {/* Window Controls Grid */}
+                <div className="flex min-w-0 flex-1 flex-wrap items-start gap-x-6 gap-y-4">
+                  <Field
+                    label="Entry premium"
+                    help="The premium to aim for inside this window."
+                  >
+                    <NumInput
+                      value={currentWin.entryPremium}
+                      step={0.5}
+                      min={0}
+                      unit="$"
+                      width="w-20"
+                      onChange={(v) => updateWindow({ entryPremium: v })}
+                    />
+                  </Field>
+
+                  <Field
+                    label="Premium range"
+                    help="Optional price range for opening pairs in this window (Min – Max). Set 0 for no limit."
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <NumInput
+                        value={currentWin.entryPremiumMin}
+                        step={0.5}
+                        min={0}
+                        unit="$"
+                        width="w-16"
+                        onChange={(v) => updateWindow({ entryPremiumMin: v })}
+                      />
+                      <span className="text-ink-4">–</span>
+                      <NumInput
+                        value={currentWin.entryPremiumMax}
+                        step={0.5}
+                        min={0}
+                        unit="$"
+                        width="w-16"
+                        onChange={(v) => updateWindow({ entryPremiumMax: v })}
+                      />
+                    </div>
+                  </Field>
+
+                  <Field
+                    label="Pairs"
+                    help="Number of symmetric Call/Put pairs to short when this window opens."
+                  >
+                    <NumInput
+                      value={currentWin.pairsCount}
+                      step={1}
+                      min={1}
+                      width="w-16"
+                      onChange={(v) => updateWindow({ pairsCount: Math.max(1, Math.round(v)) })}
+                    />
+                  </Field>
+
+                  <Field
+                    label="Tie goes to"
+                    help="When two strikes are priced equally close to the target, this decides which one wins."
+                  >
+                    <Select
+                      value={currentWin.tieBreak}
+                      width="w-32"
+                      onChange={(v) => updateWindow({ tieBreak: v as any })}
+                      options={[
+                        { value: 'closest', label: 'Absolute closest' },
+                        { value: 'above', label: 'Nearest above' },
+                        { value: 'below', label: 'Nearest below' },
+                      ]}
+                    />
+                  </Field>
+
+                  <Field
+                    label="Qty · XAUT"
+                    help="How much to sell of each option in XAUT."
+                  >
+                    <div className="flex items-center gap-2">
+                      <NumInput
+                        value={currentWin.qty}
+                        step={0.001}
+                        min={0.001}
+                        width="w-20"
+                        onChange={(v) => updateWindow({ qty: v })}
+                      />
+                      <span className="text-[11px] whitespace-nowrap text-ink-3">
+                        {entryLots === null ? '—' : `${entryLots} lot${entryLots === 1 ? '' : 's'} / leg`}
+                      </span>
+                    </div>
+                  </Field>
+
+                  <GroupRule />
+
+                  <Field
+                    label="Target delta band"
+                    help="The delta band this window defends. −1.5 to 1.5 is a standard range."
+                  >
+                    <div className="flex items-center gap-2">
+                      <NumInput
+                        value={currentWin.bandLow}
+                        step={0.1}
+                        width="w-16"
+                        onChange={(v) => updateWindow({ bandLow: keepBelow(v, currentWin.bandHigh) })}
+                      />
+                      <span className="text-ink-4">–</span>
+                      <NumInput
+                        value={currentWin.bandHigh}
+                        step={0.1}
+                        width="w-16"
+                        onChange={(v) => updateWindow({ bandHigh: keepAbove(v, currentWin.bandLow) })}
+                      />
+                    </div>
+                  </Field>
+
+                  <Field
+                    label="Max notional / strike"
+                    help="The most it will hold in any one contract in dollars. 0 turns the limit off."
+                  >
+                    <NumInput
+                      value={currentWin.maxNotionalPerStrike}
+                      step={5000}
+                      min={0}
+                      width="w-24"
+                      unit="$"
+                      onChange={(v) => updateWindow({ maxNotionalPerStrike: v })}
+                    />
+                  </Field>
+
+                  <Field
+                    label="Target landing"
+                    help="Where the delta correction lands — breached edge or band midpoint."
+                  >
+                    <Select
+                      value={currentWin.targetLanding}
+                      width="w-32"
+                      onChange={(v) => updateWindow({ targetLanding: v as any })}
+                      options={[
+                        { value: 'edge', label: 'Breached edge' },
+                        { value: 'mid', label: 'Band midpoint' },
+                      ]}
+                    />
+                  </Field>
+
+                  <Field
+                    label="B (buffer)"
+                    help="How far back inside the range to come when correcting."
+                  >
+                    <NumInput
+                      value={currentWin.bandBuffer}
+                      step={0.05}
+                      min={0}
+                      width="w-16"
+                      onChange={(v) => updateWindow({ bandBuffer: v })}
+                    />
+                  </Field>
+
+                  <GroupRule />
+
+                  <Field
+                    label="Hedge leverage"
+                    help="What the futures hedge is margined at."
+                  >
+                    <NumInput
+                      value={currentWin.hedgeLeverage}
+                      step={5}
+                      min={1}
+                      max={leverageCap}
+                      unit="x"
+                      width="w-16"
+                      onChange={(v) => updateWindow({ hedgeLeverage: Math.round(v) })}
+                    />
+                  </Field>
+
+                  <Field
+                    label="ATM shift %"
+                    help="Percentage of ATM exit price to sell replacement."
+                  >
+                    <NumInput
+                      value={currentWin.shiftPct}
+                      step={5}
+                      min={1}
+                      max={100}
+                      unit="%"
+                      width="w-16"
+                      onChange={(v) => updateWindow({ shiftPct: v })}
+                    />
+                  </Field>
+
+                  <Field
+                    label="Shift limit"
+                    help="Max ATM shifts allowed per side in this window."
+                  >
+                    <NumInput
+                      value={currentWin.maxShifts}
+                      step={1}
+                      min={0}
+                      width="w-16"
+                      onChange={(v) => updateWindow({ maxShifts: Math.max(0, Math.round(v)) })}
+                    />
+                  </Field>
+
+                  <GroupRule />
+
+                  <Field
+                    label="TP mark"
+                    help="Option mark take-profit price. Zero arms no TP."
+                  >
+                    <NumInput
+                      value={currentWin.takeProfitMark}
+                      step={0.05}
+                      min={0}
+                      unit="$"
+                      width="w-16"
+                      onChange={(v) => updateWindow({ takeProfitMark: v })}
+                    />
+                  </Field>
+
+                  <Field
+                    label="SL mark"
+                    help="Option mark stop-loss price. Zero arms no SL."
+                  >
+                    <NumInput
+                      value={currentWin.stopLossMark}
+                      step={0.5}
+                      min={0}
+                      unit="$"
+                      width="w-16"
+                      onChange={(v) => updateWindow({ stopLossMark: v })}
+                    />
+                  </Field>
+
+                  <GroupRule />
+
+                  <Field
+                    label="Cut at"
+                    help="Margin percentage of equity to trigger cut."
+                  >
+                    <NumInput
+                      value={currentWin.marginCapPct}
+                      step={5}
+                      min={0}
+                      unit="%"
+                      width="w-16"
+                      onChange={(v) => updateWindow({ marginCapPct: v })}
+                    />
+                  </Field>
+
+                  <Field
+                    label="Cut to"
+                    help="Target margin percentage after cut."
+                  >
+                    <NumInput
+                      value={currentWin.marginTargetPct}
+                      step={5}
+                      min={0}
+                      unit="%"
+                      width="w-16"
+                      onChange={(v) => updateWindow({ marginTargetPct: v })}
+                    />
+                  </Field>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {!collapsed && !futures && (
         <div className="flex min-w-0 flex-1 flex-wrap items-start gap-x-6 gap-y-4">
           <Field
             label="Session · IST"
@@ -201,16 +664,12 @@ export function DeltaStrategyTab({
           {/* The listed expiries by date or dynamic rule (Today, Tomorrow, Friday). */}
           <Field
             label="Expiry"
-            help={
-              mode === 'futures'
-                ? 'Which expiry to trade. Choose Today (same-day), Tomorrow (1 DTE), Friday (weekly), or a specific date. Rule-based expiries automatically roll every day.'
-                : 'Which expiry to trade, by date. The date does not move on its own — once that expiry is gone, trading stops until you pick a new one. It will never quietly switch to a different one.'
-            }
+            help="Which expiry to trade, by date. The date does not move on its own — once that expiry is gone, trading stops until you pick a new one. It will never quietly switch to a different one."
           >
             <div className="flex items-center gap-2">
               <Select
                 value={expiryValue}
-                width={mode === 'futures' ? 'w-48' : 'w-32'}
+                width="w-32"
                 onChange={(v) => {
                   if (v.startsWith('rule:')) {
                     const rule = v.replace('rule:', '') as any
@@ -244,48 +703,6 @@ export function DeltaStrategyTab({
               onChange={(v) => setConfig({ entryPremium: v })}
             />
           </Field>
-
-          {futures && (
-            <>
-              <Field
-                label="Premium range"
-                help="Optional price range for opening pairs. Strikes are chosen with premiums between these two values. Set 0 for no limit."
-              >
-                <div className="flex items-center gap-1.5">
-                  <NumInput
-                    value={config.entryPremiumMin}
-                    step={0.5}
-                    min={0}
-                    unit="$"
-                    width="w-16"
-                    onChange={(v) => setConfig({ entryPremiumMin: v })}
-                  />
-                  <span className="text-ink-4">–</span>
-                  <NumInput
-                    value={config.entryPremiumMax}
-                    step={0.5}
-                    min={0}
-                    unit="$"
-                    width="w-16"
-                    onChange={(v) => setConfig({ entryPremiumMax: v })}
-                  />
-                </div>
-              </Field>
-
-              <Field
-                label="Pairs"
-                help="Number of symmetric Call/Put pairs to short at the session open."
-              >
-                <NumInput
-                  value={config.pairsCount}
-                  step={1}
-                  min={1}
-                  width="w-16"
-                  onChange={(v) => setConfig({ pairsCount: Math.max(1, Math.round(v)) })}
-                />
-              </Field>
-            </>
-          )}
 
           <Field
             label="Tie goes to"
@@ -328,17 +745,8 @@ export function DeltaStrategyTab({
 
           <Field
             label="Target delta band"
-            help={
-              'The delta of everything you hold, added up. Inside this range it does nothing at all; outside it, it fixes the position. This is the whole position, not one option — so it can be any size, and negatives are fine. −2 to 1 is a valid range.' +
-              (futures
-                ? ' On this book the range is always what you type — nothing derives it.'
-                : ' With a gamma multiplier set, these two are only the fallback — the live band is derived instead.')
-            }
+            help="The delta of everything you hold, added up. Inside this range it does nothing at all; outside it, it fixes the position. With a gamma multiplier set, these two are only the fallback — the live band is derived instead."
           >
-            {/* The same two boxes either way, so the field does not change shape
-                under you when the multiplier is set — only what fills them does.
-                Typed while the numbers are yours; the derived pair, read-only and
-                in brand ink, once gamma is computing them. */}
             {bandUnknown ? (
               <div className="flex items-center gap-2">
                 <DerivedBox value={null} />
@@ -396,35 +804,21 @@ export function DeltaStrategyTab({
             </span>
           </Field>
 
-          {/* Options-hedged books only. Deriving the band from gamma buys
-              something when every correction is a fresh short — correct less
-              often, and the tolerance scales with how fast the book breaches. It
-              buys nothing when the correction is a hedge the next cycle can undo,
-              and a wider band on a fast-moving book is the opposite of what a
-              hedger wants. So the futures book defends the band as typed, and this
-              control is not on its bar at all
-              (0045_futures_band_without_gamma). */}
-          {!futures && (
-            <Field
-              label="Gamma multiplier"
-              help="Ties the range's width to the position's own gamma instead of holding it fixed: the range becomes ± total gamma × this number, recomputed every cycle. At a total gamma of 0.5, a multiplier of 2 gives −1 to 1, and the range widens on its own as gamma grows. 0 switches it off and the two numbers above are used as typed."
-            >
-              <NumInput
-                value={config.gammaMultiplier}
-                step={0.5}
-                min={0}
-                width="w-16"
-                onChange={(v) => setConfig({ gammaMultiplier: v })}
-              />
-              {/* The way out, said where the way in is. The band boxes go read-only
-                  the moment this is above zero, and nothing else on the bar explains
-                  how to get them back. No arithmetic here — the band field beside it
-                  already prints the range this produces. */}
-              <span className="text-[10px] whitespace-nowrap text-ink-3">
-                {config.gammaMultiplier > 0 ? 'set 0 to type the band in yourself' : 'band as typed'}
-              </span>
-            </Field>
-          )}
+          <Field
+            label="Gamma multiplier"
+            help="Ties the range's width to the position's own gamma instead of holding it fixed: the range becomes ± total gamma × this number, recomputed every cycle. At a total gamma of 0.5, a multiplier of 2 gives −1 to 1, and the range widens on its own as gamma grows. 0 switches it off and the two numbers above are used as typed."
+          >
+            <NumInput
+              value={config.gammaMultiplier}
+              step={0.5}
+              min={0}
+              width="w-16"
+              onChange={(v) => setConfig({ gammaMultiplier: v })}
+            />
+            <span className="text-[10px] whitespace-nowrap text-ink-3">
+              {config.gammaMultiplier > 0 ? 'set 0 to type the band in yourself' : 'band as typed'}
+            </span>
+          </Field>
 
           <Field
             label="Target landing"
@@ -456,108 +850,47 @@ export function DeltaStrategyTab({
 
           <GroupRule />
 
-          {/* How a breach is answered — the one place the two books differ.
+          <Field
+            label="ITM trigger"
+            help="How far past its strike gold must be before that sold option can be fixed. On its own this never starts anything — the position delta leaving its range is what does."
+          >
+            <NumInput
+              value={config.itmTrigger}
+              step={1}
+              min={0}
+              unit="pts"
+              width="w-16"
+              onChange={(v) => setConfig({ itmTrigger: v })}
+            />
+          </Field>
 
-              Options: which sold option is eligible to be fixed, and how often a
-              side may be fixed before it is closed instead. Futures: none of that
-              applies, because nothing is rolled and no side has a budget. What is
-              left to choose is what the hedge is margined at.
+          <Field
+            label="Max rolls per side"
+            help="How many times a day the calls (or the puts) can be fixed by moving them further out. Once used up, the next problem on that side is closed in full and the loss taken. This is the risk control — there is no stop-loss."
+          >
+            <NumInput
+              value={config.maxRolls}
+              step={1}
+              min={0}
+              width="w-16"
+              onChange={(v) => setConfig({ maxRolls: Math.round(v) })}
+            />
+          </Field>
 
-              A band-correction delta range used to sit in the options half,
-              picking the fresh sell by delta instead of by price. It is gone:
-              corrections take the same Entry premium every other sale does, so
-              there is one price rule on screen rather than two that have to be
-              kept in step. */}
-          {futures ? (
-            <>
-              <Field
-                label="Hedge leverage"
-                help={`What the futures hedge is margined at: margin is its notional over this, so ${leverageCap}x — the most the venue offers — blocks the least. It changes what the hedge ties up, never what it risks: the position is the same size either way, and the same size is what the strategy needs it to be.`}
-              >
-                <NumInput
-                  value={config.hedgeLeverage}
-                  step={5}
-                  min={1}
-                  max={leverageCap}
-                  unit="x"
-                  width="w-16"
-                  onChange={(v) => setConfig({ hedgeLeverage: Math.round(v) })}
-                />
-              </Field>
-
-              <Field
-                label="ATM shift %"
-                help="When an open position touches ATM, it is exited and a new strike on the same side is sold at this percentage of the ATM exit price (e.g. 50%)."
-              >
-                <NumInput
-                  value={config.shiftPct}
-                  step={5}
-                  min={1}
-                  max={100}
-                  unit="%"
-                  width="w-16"
-                  onChange={(v) => setConfig({ shiftPct: v })}
-                />
-              </Field>
-
-              <Field
-                label="Shift limit"
-                help="Maximum number of ATM shifts allowed per side (Calls / Puts) per session. Default is 1."
-              >
-                <NumInput
-                  value={config.maxShifts}
-                  step={1}
-                  min={0}
-                  width="w-16"
-                  onChange={(v) => setConfig({ maxShifts: Math.max(0, Math.round(v)) })}
-                />
-              </Field>
-            </>
-          ) : (
-            <>
-              <Field
-                label="ITM trigger"
-                help="How far past its strike gold must be before that sold option can be fixed. On its own this never starts anything — the position delta leaving its range is what does."
-              >
-                <NumInput
-                  value={config.itmTrigger}
-                  step={1}
-                  min={0}
-                  unit="pts"
-                  width="w-16"
-                  onChange={(v) => setConfig({ itmTrigger: v })}
-                />
-              </Field>
-
-              <Field
-                label="Max rolls per side"
-                help="How many times a day the calls (or the puts) can be fixed by moving them further out. Once used up, the next problem on that side is closed in full and the loss taken. This is the risk control — there is no stop-loss."
-              >
-                <NumInput
-                  value={config.maxRolls}
-                  step={1}
-                  min={0}
-                  width="w-16"
-                  onChange={(v) => setConfig({ maxRolls: Math.round(v) })}
-                />
-              </Field>
-
-              <Field
-                label="Count rolls by"
-                help="A fix buys back part of the option that is hurting and sells the same type further out. This decides whether one round of fixing counts as one, or every strike it touches counts as one."
-              >
-                <Select
-                  value={config.rollCounts}
-                  width="w-32"
-                  onChange={(v) => setConfig({ rollCounts: v })}
-                  options={[
-                    { value: 'pass', label: 'One pass' },
-                    { value: 'strike', label: 'Per strike' },
-                  ]}
-                />
-              </Field>
-            </>
-          )}
+          <Field
+            label="Count rolls by"
+            help="A fix buys back part of the option that is hurting and sells the same type further out. This decides whether one round of fixing counts as one, or every strike it touches counts as one."
+          >
+            <Select
+              value={config.rollCounts}
+              width="w-32"
+              onChange={(v) => setConfig({ rollCounts: v })}
+              options={[
+                { value: 'pass', label: 'One pass' },
+                { value: 'strike', label: 'Per strike' },
+              ]}
+            />
+          </Field>
 
           <GroupRule />
 
