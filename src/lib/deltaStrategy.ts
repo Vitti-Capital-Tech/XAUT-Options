@@ -1695,22 +1695,6 @@ export function planCycle(input: CycleInput): CyclePlan {
   const targetLots = target / cv
 
   // ---- The breach, answered with futures -----------------------------------
-  //
-  // One trade and no side to pick: the perpetual adds delta when bought and
-  // removes it when sold, so the sign of the gap is the whole decision. Sized
-  // straight off `(target − Δp) / cv`, since a perpetual's delta is 1 — and
-  // rounded down in magnitude, so it lands short of the target rather than past
-  // it.
-  //
-  // Δp already includes the hedge, so this is always the incremental size. An
-  // over-large hedge is not a special case: as the option deltas come back it
-  // pushes Δp through the *other* edge, and this same branch sells it down.
-  //
-  // Nothing here reads the margin cap. The band correction below is trimmed to
-  // what the cap has left, because a fresh short adds the risk the cut then has
-  // to take off again; a hedge does the opposite, and refusing to place one for
-  // being expensive in margin would be refusing to reduce risk. Over the cap the
-  // cut has already returned above, so a hedge waits a cycle at most.
   if (mode === 'futures') {
     const lots = hedgeLots(target, dp, cv)
     if (lots === 0) {
@@ -1725,119 +1709,62 @@ export function planCycle(input: CycleInput): CyclePlan {
     }
   }
 
-  const rollSide = correctiveRollSide(breach)
-  const used = rollSide === 'call' ? session.rollsUsedCall : session.rollsUsedPut
-  const exitOnly = used >= cfg.maxRolls
-
-  // Step 1 — walk the ITM queue on the side whose exit lifts Δp toward target.
-  for (const leg of queue) {
-    if (leg.kind !== rollSide) continue
-    if (touched.has(leg.position.symbol)) continue
-    const open = Math.abs(leg.position.net_qty)
-
-    // Exit-only: the trigger is still resolved, but in full and with no
-    // replacement, so the loss is booked and the side stops growing. Read as
-    // part of the same corrective walk — it is 5.2's step with 5.3's budget
-    // spent, not a separate unconditional rule.
-    if (exitOnly) {
-      return {
-        ...base,
-        breach,
-        action: { type: 'roll', side: rollSide, leg, exitQty: open, replace: null },
-        reason: `${rollSide === 'call' ? 'Calls' : 'Puts'} exit-only — closing ${leg.strike} in full`,
-      }
-    }
-
-    const replacement = pickByPremium(expiry, rollSide, cfg, tickerFor, leg.strike, roomFor)
-    if (!replacement) continue
-    // Never more than the leg being replaced holds, and never more than the
-    // replacement strike has room for under the cap.
-    const q = Math.min(
-      open,
-      rollQty(targetLots, dpl, leg.optionDelta, replacement.optionDelta),
-      replacement.roomLots ?? Infinity,
-    )
-    if (q <= 0) continue
-
-    return {
-      ...base,
-      breach,
-      action: {
-        type: 'roll',
-        side: rollSide,
-        leg,
-        exitQty: q,
-        replace: { product: replacement.product, qty: q },
-      },
-      reason: `Δp ${fmt(dp)} → ${fmt(target)} — rolling ${q} of ${leg.strike} out to ${replacement.strike}`,
-    }
-  }
-
-  // Step 2 — nothing left to roll: correct the band with fresh sells, picked at
-  // the entry premium like every other sale. The spec sized these off a separate
-  // delta range, but a price rule already says which strike that is, and one rule
-  // the trader can see beats two that have to agree.
-  //
-  // This is the one rule here that grows the book with nothing to pair it off,
-  // and it now runs at any margin below the cap. It used to be frozen above
-  // `marginTargetPct`, which meant a breached band went uncorrected through the
-  // whole zone — the strategy's one job, not done, in the state where Δp is most
-  // likely to be running. The cut above is what answers the risk, and it prefers
-  // exactly the side this sell would have corrected, so the two pull the same way
-  // rather than against each other.
   const sellSide = correctiveSellSide(breach)
+  const rollSide = correctiveRollSide(breach)
+
+  // Options mode Step 1: Check if margin is available to sell a fresh position on corrective side
   const pick = pickByPremium(expiry, sellSide, cfg, tickerFor, undefined, roomFor)
-  if (!pick) {
-    return {
-      ...base,
-      breach,
-      action: null,
-      reason: `Δp ${fmt(dp)} outside the band — no ${sellSide} strike with room to correct with`,
-    }
-  }
-  // Sell what fits — under the strike's notional room, and under what is left of
-  // the margin cap.
-  //
-  // The margin half is what stops this rule and the cut trading against each
-  // other. Sized off Δp alone, a correction happily re-blocks the exact margin a
-  // cut just freed, which puts the book back over the cap and fires the next cut:
-  // a loop that converges on nothing and pays the bid-ask spread every lap. A
-  // sale that cannot be margined is not a sale the book can hold.
-  //
-  // Landing exactly on the cap is allowed — `cut` needs `> cap`, so the boundary
-  // is not a breach. What the book cannot do is cross it.
+
   const marginRoomLots = (() => {
     if (!margin || !(cfg.marginCapPct > 0)) return null
+    if (!pick) return 0
     const imRate = input.imRateFor?.(pick.product.symbol) ?? FALLBACK_SHORT_IM_RATE
     const perLot = (imRate * spot + pick.premium) * Number(pick.product.contract_value)
     if (!(perLot > 0)) return null
     return Math.max(0, Math.floor((margin.cap - margin.marginBlocked) / perLot))
   })()
 
-  const q = Math.min(
-    bandQty(targetLots, dpl, pick.optionDelta),
-    pick.roomLots ?? Infinity,
-    marginRoomLots ?? Infinity,
-  )
-  // `margin` is re-tested only to narrow it for `pctOf` — `marginRoomLots` is
-  // non-null exactly when it is set.
-  if (margin && marginRoomLots !== null && marginRoomLots <= 0) {
+  const hasMargin = marginRoomLots === null || marginRoomLots > 0
+
+  if (hasMargin && pick) {
+    const q = Math.min(
+      bandQty(targetLots, dpl, pick.optionDelta),
+      pick.roomLots ?? Infinity,
+      marginRoomLots ?? Infinity,
+    )
+    if (q > 0) {
+      return {
+        ...base,
+        breach,
+        action: { type: 'band', side: sellSide, product: pick.product, qty: q },
+        reason: `Δp ${fmt(dp)} → ${fmt(target)} — selling ${q} × ${pick.strike}${sellSide === 'call' ? 'C' : 'P'}`,
+      }
+    }
+  }
+
+  // Options mode Step 2: No margin available — exit the open position causing delta to breach and book loss
+  const offendingLeg = legs
+    .filter((l) => l.kind === rollSide && l.position.net_qty < 0 && !touched.has(l.position.symbol))
+    .sort((a, b) => b.itmDistance - a.itmDistance)[0]
+
+  if (offendingLeg) {
+    const open = Math.abs(offendingLeg.position.net_qty)
+    const legDelta = Math.abs(offendingLeg.optionDelta || 0.5)
+    const cutQ = Math.max(1, Math.min(open, Math.ceil(Math.abs(target - dp) / (cv * legDelta))))
+
     return {
       ...base,
       breach,
-      action: null,
-      reason: `Δp ${fmt(dp)} outside the band — margin ${pctOf(margin)} of equity, at the cap`,
+      action: { type: 'roll', side: rollSide, leg: offendingLeg, exitQty: cutQ, replace: null },
+      reason: `Δp ${fmt(dp)} out of range (no margin) — exiting ${cutQ} × ${offendingLeg.strike}${rollSide === 'call' ? 'C' : 'P'} (booked loss)`,
     }
-  }
-  if (q <= 0) {
-    return { ...base, breach, action: null, reason: `Δp ${fmt(dp)} — breach is under one contract` }
   }
 
   return {
     ...base,
     breach,
-    action: { type: 'band', side: sellSide, product: pick.product, qty: q },
-    reason: `Δp ${fmt(dp)} → ${fmt(target)} — band correction, selling ${q} × ${pick.strike}${sellSide === 'call' ? 'C' : 'P'}`,
+    action: null,
+    reason: `Δp ${fmt(dp)} outside the band — no position or room to correct with`,
   }
 }
 

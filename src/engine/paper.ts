@@ -186,19 +186,16 @@ export function exitPrice(t: Ticker | undefined, netQty: number): number | null 
  * being hardcoded, so the numbers track the venue.
  */
 export function computeFee(product: Product, price: number, qty: number, spot: number): number {
-  const cv = Number(product.contract_value)
-  const notionalRate = Number(product.taker_commission_rate) || 0
+  const cv = Number(product.contract_value) || 0.001
+  const notionalRate = Number(product.taker_commission_rate) || 0.0001 // 0.01% of notional
 
-  // A perpetual has no premium, so there is no premium cap to take the lesser
-  // of — the fee is the flat rate on the notional it traded at. Its own price is
-  // the notional, which is why this reads `price` where the option arm reads
-  // `spot`; on a perpetual the two are the same number to within the basis.
-  if (isPerp(product.contract_type)) return notionalRate * price * cv * qty
+  // 0.01% of notional: on perpetuals notional is price * cv * qty; on options spot * cv * qty.
+  const notional =
+    (isPerp(product.contract_type)
+      ? (price > 0 ? price : spot)
+      : (spot > 0 ? spot : price)) * cv * qty
 
-  const premiumCapRate = product.product_specs?.premium_commission_rate ?? 0.1
-  const onNotional = notionalRate * spot * cv * qty
-  const cap = premiumCapRate * price * cv * qty
-  return Math.min(onNotional, cap)
+  return notionalRate * notional
 }
 
 // ---------------------------------------------------------------------------

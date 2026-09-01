@@ -530,7 +530,7 @@ symbols instead of 150, without breaking P&L on other expiries.
 | --- | --- | --- |
 | `marketFillPrice` | `(ticker, side) → number \| null` | `null` = that side is empty |
 | `exitPrice` | `(ticker, netQty) → number \| null` | Bid for longs, ask for shorts |
-| `computeFee` | `(product, price, qty, spot) → number` | Rates from the product |
+| `computeFee` | `(product, price, qty, spot) → number` | 0.01% of notional (0.0001 * notional) |
 | `valuePosition` | `(pos, ticker, spot) → PositionValue` | P&L at the exit price, margin at the mark |
 | `summarizeAccount` | `(cash, positions, tickerFor, spot) → AccountSummary` | Balance/equity/available |
 | `previewOrder` | `(intent, ticker, spot, existing, available) → OrderPreview` | `error` blocks; `warning` informs |

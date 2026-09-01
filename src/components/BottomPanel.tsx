@@ -1093,12 +1093,14 @@ function DayHeader({
   iso,
   count,
   realized,
+  fees = 0,
   partial = false,
   onExport,
 }: {
   iso: string
   count: number
   realized: number
+  fees?: number
   /** The fetch cap cut this day off, so the count and the P&L are lower bounds. */
   partial?: boolean
   /** Resolves with how many rows were written. Omit and no button renders. */
@@ -1122,8 +1124,8 @@ function DayHeader({
 
   return (
     <tr className="bg-sub">
-      {/* Spans the whole history row — ten columns since Index Price joined them. */}
-      <td colSpan={10} className="border-y border-line px-3 py-1.5">
+      {/* Spans the whole history row — eleven columns since Fee joined them. */}
+      <td colSpan={11} className="border-y border-line px-3 py-1.5">
         {/* Date, then what the day did, then what you can do with it — the row
             reads left to right and the action sits at its end, where the
             positions table walls its own Action column. It used to sit against
@@ -1135,9 +1137,6 @@ function DayHeader({
           </span>
 
           <span className="flex items-center gap-3">
-            {/* A trailing + on a truncated day, because the bare number reads as
-                the day's total and on a busy book it is only what fit in the
-                fetch. */}
             <span
               className="text-[11px] text-ink-3"
               title={
@@ -1156,17 +1155,16 @@ function DayHeader({
                   </span>
                 </>
               )}
+              {fees > 0 && (
+                <>
+                  {' · '}
+                  <span className="text-ink-3">
+                    Fees: <Money value={fees} />
+                  </span>
+                </>
+              )}
             </span>
 
-            {/* A bordered box in brand ink, which is what an action reads as
-                everywhere else here — the TP/SL pencil, the account reset. The
-                first version was 10px in tertiary ink on a tertiary border, which
-                is the styling this codebase uses for things that are *not*
-                clickable, and it duly went unnoticed.
-
-                Labelled Export rather than Excel: the file is a CSV. It opens in
-                Excel, and the title says so, but the button should not name a
-                format it does not write. */}
             {onExport && (
               <button
                 onClick={run}
@@ -1205,16 +1203,14 @@ function HistoryTable({
   truncated: boolean
   onExportDay?: (day: string) => Promise<number>
 }) {
-  // Per-day counts and realized totals, over the whole ledger rather than the
-  // visible page — a day split across two pages must report the same figures on
-  // both, or the header becomes a per-page artefact.
   const byDay = useMemo(() => {
-    const m = new Map<string, { count: number; realized: number }>()
+    const m = new Map<string, { count: number; realized: number; fees: number }>()
     for (const f of fills) {
       const k = dayKey(f.created_at)
-      const e = m.get(k) ?? { count: 0, realized: 0 }
+      const e = m.get(k) ?? { count: 0, realized: 0, fees: 0 }
       e.count += 1
       e.realized += Number(f.realized_pnl)
+      e.fees += Number(f.fee ?? 0)
       m.set(k, e)
     }
     return m
@@ -1222,59 +1218,36 @@ function HistoryTable({
 
   if (fills.length === 0) return <Empty>No trades yet.</Empty>
 
-  // Only the last day loaded can be cut short by the fetch cap: every day above
-  // it is bounded by the day after it, so its count is the day's own.
   const oldestDay = truncated ? dayKey(fills[fills.length - 1].created_at) : null
 
   return (
     <Paged rows={fills}>
       {(visible) => (
     <table className="w-full min-w-[1140px] text-[13px]">
-      {/* Auto layout gives its slack to whichever cell holds the longest string.
-          That is what took Symbol out to a quarter of the row and opened the void
-          between Side and Execution Price.
-
-          Fixed shares instead, each column's widest content plus an equal cut of
-          what is left over, so the air falls between the columns evenly rather
-          than pooling in whichever one happens to hold a long header. Exit Reason
-          takes the largest share because it is the only column holding a
-          sentence. */}
       <colgroup>
+        <col className="w-[13%]" />
+        <col className="w-[8%]" />
+        <col className="w-[6%]" />
+        <col className="w-[8%]" />
+        <col className="w-[9%]" />
+        <col className="w-[9%]" />
+        <col className="w-[8%]" />
+        <col className="w-[8%]" />
+        <col className="w-[9%]" />
         <col className="w-[14%]" />
         <col className="w-[8%]" />
-        <col className="w-[7%]" />
-        <col className="w-[9%]" />
-        <col className="w-[10%]" />
-        {/* Index Price. Its share comes out of Exit Reason, which had the largest
-            and is the only column that can give any back without wrapping a figure. */}
-        <col className="w-[9%]" />
-        <col className="w-[9%]" />
-        <col className="w-[10%]" />
-        <col className="w-[15%]" />
-        <col className="w-[9%]" />
       </colgroup>
       <thead className="sticky top-0 z-10">
-        {/* Delta's order-history order, less the columns that never vary on a
-            fills ledger. Symbol and Time are walled, as the positions table
-            walls its symbol and action, so the row reads between two edges.
-            Every column centres over its own figures but Symbol, which hangs
-            left the way Delta hangs it — the row reads from a fixed left edge,
-            and a centred symbol wandered with the length of each contract. */}
         <tr>
           <Th align="left" wall="start">Symbol</Th>
           <Th align="center">Qty (XAUT)</Th>
           <Th align="center">Side</Th>
           <Th align="center">Type</Th>
           <Th align="center">Execution Price</Th>
-          {/* Where the underlying was when this filled. Named as the positions
-              table names the same quantity, and it reads well against the column
-              before it: what the contract traded at, and what gold was doing. */}
           <Th align="center">Index Price</Th>
           <Th align="center">Size</Th>
+          <Th align="center">Fee</Th>
           <Th align="center">Realized PnL</Th>
-          {/* Why the leg was closed, in the engine's own words. Left-aligned: it
-              is a sentence, and centring it would make every row start at a
-              different place. */}
           <Th align="left">Exit Reason</Th>
           <Th align="center" wall="end">Time</Th>
         </tr>
@@ -1282,12 +1255,11 @@ function HistoryTable({
       <tbody>
         {visible.map((f, i) => {
           const realized = Number(f.realized_pnl)
+          const fee = Number(f.fee ?? 0)
           const buy = f.side === 'buy'
           const size = f.qty * Number(f.contract_value)
           const kind = fillKind(f)
           const at = dateTimeParts(f.created_at)
-          // A heading whenever the day changes, and on the first row of a page even
-          // mid-day, so a page never opens on rows belonging to no visible date.
           const key = dayKey(f.created_at)
           const newDay = i === 0 || key !== dayKey(visible[i - 1].created_at)
           const day = byDay.get(key)
@@ -1298,6 +1270,7 @@ function HistoryTable({
                   iso={f.created_at}
                   count={day?.count ?? 0}
                   realized={day?.realized ?? 0}
+                  fees={day?.fees ?? 0}
                   partial={key === oldestDay}
                   onExport={onExportDay ? () => onExportDay(key) : undefined}
                 />
@@ -1306,27 +1279,12 @@ function HistoryTable({
               <Td align="left" wall="start">
                 <Instrument symbol={f.symbol} accent={buy ? 'pos' : 'neg'} />
               </Td>
-              {/* Quantity in the underlying now, not the lot count — the size
-                  and the qty are one unit apart no longer. */}
               <Td align="center" className="text-ink">{size.toFixed(3)}</Td>
-              {/* Title case, as Delta writes a side — `Sell`, not a shouted
-                  SELL. The colour already says which way it went. */}
               <Td align="center" className={buy ? 'text-pos' : 'text-neg'}>
                 {buy ? 'Buy' : 'Sell'}
               </Td>
-              {/* Why the fill happened — a plain trade, a bracket exit, or an
-                  expiry settlement. This is the one thing the ledger could not
-                  say before. */}
               <Td align="center" className={kind.cls}>{kind.label}</Td>
               <Td align="center" className="text-ink">{price(f.price)}</Td>
-              {/* Recorded on the fill, not read live: this is where the underlying
-                  was at that moment, and re-reading it now would answer a
-                  different question on every repaint.
-
-                  A dash where the row predates the column being written on that
-                  path, and on a settlement, which is driven by the option's own
-                  settlement price and carries no underlying
-                  ([`0040`](../../supabase/migrations/0040_spot_on_every_fill.sql)). */}
               <Td
                 align="center"
                 className={f.spot_at_fill === null ? 'text-ink-4' : 'text-ink-2'}
@@ -1338,17 +1296,12 @@ function HistoryTable({
                 {buy ? '+' : '-'}
                 {size.toFixed(3)} {UNDERLYING}
               </Td>
+              <Td align="center" className="text-ink-3">
+                {fee > 0 ? <Money value={fee} /> : '—'}
+              </Td>
               <Td align="center" className={realized === 0 ? 'text-ink-4' : pnlClass(realized)}>
                 {realized === 0 ? '—' : <Money value={realized} signed suffix="inherit" />}
               </Td>
-              {/* The delta engine's reason for closing this leg: the rule that
-                  ran, the spot it was priced at, and net delta either side of it.
-                  Blank on an opening fill — that reason belongs to the position it
-                  opened — and on any book whose engine does not write one.
-
-                  The wrap lives on a child rather than the cell, since `Td` sets
-                  `whitespace-nowrap` and two utilities of the same property would
-                  race on stylesheet order rather than class order. */}
               <Td align="left" className="text-ink-2" title={f.reason ?? undefined}>
                 {f.reason ? (
                   <div className="whitespace-normal">{f.reason}</div>
@@ -1356,8 +1309,6 @@ function HistoryTable({
                   <span className="text-ink-4">—</span>
                 )}
               </Td>
-              {/* Time only — the date is the group's now, and repeating it on every
-                  row of the same day was the redundancy grouping removes. */}
               <Td align="center" wall="end" className="text-ink-2">
                 {at.time}
               </Td>
