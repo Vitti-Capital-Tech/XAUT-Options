@@ -1097,20 +1097,13 @@ export function pickMultipleByPremium(
   const rawMax = cfg.entryPremiumMax ?? 0
   const hasMin = rawMin > 0
   const hasMax = rawMax > 0
-  const minVal = hasMin && hasMax ? Math.min(rawMin, rawMax) : rawMin
-  const maxVal = hasMin && hasMax ? Math.max(rawMin, rawMax) : rawMax
+  const minFloor = hasMin && hasMax ? Math.min(rawMin, rawMax) : hasMin ? rawMin : 0
+  const target = cfg.entryPremium > 0 ? cfg.entryPremium : (hasMin && hasMax ? Math.max(rawMin, rawMax) : 0)
 
-  const eligible =
-    hasMin || hasMax
-      ? allCandidates.filter((c) => {
-          if (hasMin && c.premium < minVal) return false
-          if (hasMax && c.premium > maxVal) return false
-          return true
-        })
-      : allCandidates
+  // Hard floor: strictly at or above the min premium (e.g. >= $2)
+  const eligible = minFloor > 0 ? allCandidates.filter((c) => c.premium >= minFloor) : allCandidates
   if (eligible.length === 0) return []
 
-  const target = cfg.entryPremium
   const sorted = [...eligible].sort((a, b) => {
     if (cfg.tieBreak === 'above') {
       const aAbove = a.premium >= target

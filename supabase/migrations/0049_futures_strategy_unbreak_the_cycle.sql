@@ -111,9 +111,9 @@ as $$
     select case when p_floor > 0 and p_ceil > 0 then least(p_floor, p_ceil)
                 when p_floor > 0 then p_floor
                 else 0 end as floor_val,
-           case when p_floor > 0 and p_ceil > 0 then greatest(p_floor, p_ceil)
-                when p_ceil > 0 then p_ceil
-                else 0 end as ceil_val
+           case when p_entry > 0 then p_entry
+                when p_floor > 0 and p_ceil > 0 then greatest(p_floor, p_ceil)
+                else coalesce(nullif(p_ceil, 0), nullif(p_floor, 0), 0) end as target_val
   ),
   priced as (
     select c.symbol, c.strike, c.best_bid as premium, c.delta, c.contract_value,
@@ -126,8 +126,8 @@ as $$
       and c.contract_type = p_kind
       and c.best_bid is not null
       and c.delta is not null
+      -- Hard floor: strictly at or above min premium (e.g. >= $2)
       and (b.floor_val <= 0 or c.best_bid >= b.floor_val)
-      and (b.ceil_val <= 0 or c.best_bid <= b.ceil_val)
       and (p_beyond is null
            or (p_kind = 'call_options' and c.strike > p_beyond)
            or (p_kind = 'put_options'  and c.strike < p_beyond))
@@ -143,13 +143,19 @@ as $$
     select * from candidates c where c.room_lots is null or c.room_lots > 0
   ),
   ranked as (
-    select c.*, 0 as pri, c.premium - p_entry as nearness
-    from open_strikes c where p_tie = 'above' and c.premium >= p_entry
+    select c.*, 0 as pri, c.premium - b.target_val as nearness
+    from open_strikes c
+    cross join bounds b
+    where p_tie = 'above' and c.premium >= b.target_val
     union all
-    select c.*, 0, p_entry - c.premium
-    from open_strikes c where p_tie = 'below' and c.premium <= p_entry
+    select c.*, 0, b.target_val - c.premium
+    from open_strikes c
+    cross join bounds b
+    where p_tie = 'below' and c.premium <= b.target_val
     union all
-    select c.*, 1, abs(c.premium - p_entry) from open_strikes c
+    select c.*, 1, abs(c.premium - b.target_val)
+    from open_strikes c
+    cross join bounds b
   ),
   best as (
     select distinct on (k.symbol) k.*
