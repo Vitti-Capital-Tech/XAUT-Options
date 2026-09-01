@@ -5,6 +5,7 @@ import {
   UNDERLYING,
   expiryIsLive,
   expiryOptions,
+  futuresExpiryOptions,
   nextFundingTime,
   type Expiry,
   type Product,
@@ -80,11 +81,15 @@ export function DeltaStrategyTab({
   // has never seen them. Each tab remembers its own.
   const [collapsed, setCollapsed] = useSticky('delta-paper.delta.collapsed', false)
 
-  const expiryChoices = expiryOptions(expiries, config.expiryLabel)
+  const expiryChoices =
+    mode === 'futures'
+      ? futuresExpiryOptions(expiries, config.expiryLabel)
+      : expiryOptions(expiries, config.expiryLabel)
   const expiryLive = expiryIsLive(expiries, config.expiryLabel)
-  // With nothing chosen the engine trades the nearest, so show that as selected
-  // rather than an empty box — the displayed date is the one it will trade.
-  const expiryValue = config.expiryLabel ?? expiries[0]?.label ?? ''
+  // With nothing chosen the engine trades the nearest (or Today rule in futures mode),
+  // so show that as selected rather than an empty box.
+  const expiryValue =
+    config.expiryLabel ?? (mode === 'futures' ? 'rule:today' : (expiries[0]?.label ?? ''))
   // The plan is rebuilt on the engine's own cycle, but Δp moves with every tick;
   // subscribing keeps the band meter honest between cycles.
   useMarketTick()
@@ -193,18 +198,27 @@ export function DeltaStrategyTab({
 
           <GroupRule />
 
-          {/* The listed expiries by date, as the chain's tabs show them. A date does
-              not roll: once the chosen one settles the cycle stands down rather than
-              moving to a contract nobody picked, so the stale case is called out. */}
+          {/* The listed expiries by date or dynamic rule (Today, Tomorrow, Friday). */}
           <Field
             label="Expiry"
-            help="Which expiry to trade, by date. The date does not move on its own — once that expiry is gone, trading stops until you pick a new one. It will never quietly switch to a different one."
+            help={
+              mode === 'futures'
+                ? 'Which expiry to trade. Choose Today (same-day), Tomorrow (1 DTE), Friday (weekly), or a specific date. Rule-based expiries automatically roll every day.'
+                : 'Which expiry to trade, by date. The date does not move on its own — once that expiry is gone, trading stops until you pick a new one. It will never quietly switch to a different one.'
+            }
           >
             <div className="flex items-center gap-2">
               <Select
                 value={expiryValue}
-                width="w-32"
-                onChange={(v) => setConfig({ expiryLabel: v })}
+                width={mode === 'futures' ? 'w-48' : 'w-32'}
+                onChange={(v) => {
+                  if (v.startsWith('rule:')) {
+                    const rule = v.replace('rule:', '') as any
+                    setConfig({ expiryLabel: v, expiryRule: rule })
+                  } else {
+                    setConfig({ expiryLabel: v, expiryRule: 'fixed' })
+                  }
+                }}
                 options={expiryChoices}
               />
               {!expiryLive && (

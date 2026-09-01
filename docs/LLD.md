@@ -124,6 +124,7 @@ erDiagram
         numeric qty "XAUT per leg -> lots"
         numeric max_notional_per_strike "USD ceiling per contract; 0 = off"
         numeric hedge_leverage "futures books only; margin is notional / this"
+        text expiry_rule "today | tomorrow | friday | nearest | fixed"
         text expiry_label "ddmmyy, or null"
         text session_day "IST YYYY-MM-DD"
         integer rolls_used_call

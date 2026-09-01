@@ -167,6 +167,108 @@ export function formatExpiry(label: string): string {
   return `${String(d.getUTCDate()).padStart(2, '0')} ${MONTHS[d.getUTCMonth()]} ${String(d.getUTCFullYear()).slice(2)}`
 }
 
+export type ExpiryRule = 'today' | 'tomorrow' | 'friday' | 'fixed'
+
+/**
+ * Resolves an expiry from the live chain based on an expiry rule and/or explicit label.
+ */
+export function resolveTargetExpiry(
+  expiries: Expiry[],
+  rule: ExpiryRule = 'today',
+  explicitLabel?: string | null,
+  now: Date = new Date(),
+): Expiry | null {
+  if (expiries.length === 0) return null
+
+  // If an explicit label is chosen and still live in the chain, honour it
+  if (explicitLabel && !explicitLabel.startsWith('rule:')) {
+    const found = expiries.find((e) => e.label === explicitLabel)
+    if (found) return found
+    if (rule === 'fixed') return null // Fixed date has settled
+  }
+
+  const effectiveRule: ExpiryRule =
+    explicitLabel && explicitLabel.startsWith('rule:')
+      ? (explicitLabel.replace('rule:', '') as ExpiryRule)
+      : rule
+
+  const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
+  const todayTime = todayUtc.getTime()
+  const oneDayMs = 24 * 60 * 60 * 1000
+
+  if (effectiveRule === 'today') {
+    const todayExp = expiries.find((e) => expiryToDate(e.label).getTime() === todayTime)
+    if (todayExp) return todayExp
+    return expiries[0] ?? null
+  }
+
+  if (effectiveRule === 'tomorrow') {
+    const tomorrowTime = todayTime + oneDayMs
+    const tomExp = expiries.find((e) => expiryToDate(e.label).getTime() >= tomorrowTime)
+    return tomExp ?? expiries[expiries.length - 1] ?? expiries[0] ?? null
+  }
+
+  if (effectiveRule === 'friday') {
+    const currentDay = now.getUTCDay()
+    const daysToFriday = (5 - currentDay + 7) % 7
+    const targetFridayTime = todayTime + daysToFriday * oneDayMs
+    const fridayExp = expiries.find((e) => expiryToDate(e.label).getTime() === targetFridayTime)
+    if (fridayExp) return fridayExp
+    const afterFriday = expiries.find((e) => expiryToDate(e.label).getTime() >= targetFridayTime)
+    return afterFriday ?? expiries[expiries.length - 1] ?? expiries[0] ?? null
+  }
+
+  return expiries[0] ?? null
+}
+
+/**
+ * Choices for Futures Strategy expiry picker — dynamic Today, Tomorrow, Friday
+ * options alongside every listed explicit expiry date.
+ */
+export function futuresExpiryOptions(
+  expiries: Expiry[],
+  selectedLabel: string | null = null,
+  now: Date = new Date(),
+): { value: string; label: string }[] {
+  const todayExp = resolveTargetExpiry(expiries, 'today', null, now)
+  const tomorrowExp = resolveTargetExpiry(expiries, 'tomorrow', null, now)
+  const fridayExp = resolveTargetExpiry(expiries, 'friday', null, now)
+
+  const dynamicOptions = [
+    {
+      value: 'rule:today',
+      label: todayExp ? `Today (${formatExpiry(todayExp.label)})` : 'Today (0 DTE)',
+    },
+    {
+      value: 'rule:tomorrow',
+      label: tomorrowExp ? `Tomorrow (${formatExpiry(tomorrowExp.label)})` : 'Tomorrow (1 DTE)',
+    },
+    {
+      value: 'rule:friday',
+      label: fridayExp ? `Friday (${formatExpiry(fridayExp.label)})` : 'Friday (Weekly)',
+    },
+  ]
+
+  const listed = expiries.map((e) => ({
+    value: e.label,
+    label: formatExpiry(e.label),
+  }))
+
+  if (
+    selectedLabel &&
+    !selectedLabel.startsWith('rule:') &&
+    !expiries.some((e) => e.label === selectedLabel)
+  ) {
+    return [
+      ...dynamicOptions,
+      { value: selectedLabel, label: `${formatExpiry(selectedLabel)} · settled` },
+      ...listed,
+    ]
+  }
+
+  return [...dynamicOptions, ...listed]
+}
+
 /**
  * Choices for a strategy's expiry picker — every listed expiry, formatted as the
  * chain's tabs are.
@@ -190,6 +292,7 @@ export function expiryOptions(
 /** Whether a stored expiry is still tradeable, i.e. still in the live chain. */
 export function expiryIsLive(expiries: Expiry[], selected: string | null): boolean {
   if (!selected) return true // nothing chosen yet — the engine's rule still applies
+  if (selected.startsWith('rule:')) return true
   return expiries.some((e) => e.label === selected)
 }
 

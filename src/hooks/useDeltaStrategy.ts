@@ -108,6 +108,7 @@ interface Row {
   max_notional_per_strike: string | number
   tie_break: string
   expiry_pick: string
+  expiry_rule?: string | null
   expiry_label: string | null
   cycle_seconds: number
   take_profit_mark: string | number | null
@@ -126,7 +127,7 @@ interface Row {
 }
 
 const COLS =
-  'account_id, armed, session_open, session_close, band_low, band_high, gamma_multiplier, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, entry_premium_min, entry_premium_max, pairs_count, shift_pct, max_shifts, qty, max_notional_per_strike, tie_break, expiry_pick, expiry_label, cycle_seconds, take_profit_mark, stop_loss_mark, margin_cap_pct, margin_target_pct, hedge_leverage, trade_days, session_day, rolls_used_call, rolls_used_put, shifts_used_call, shifts_used_put, entered_day, flattened_day'
+  'account_id, armed, session_open, session_close, band_low, band_high, gamma_multiplier, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, entry_premium_min, entry_premium_max, pairs_count, shift_pct, max_shifts, qty, max_notional_per_strike, tie_break, expiry_pick, expiry_rule, expiry_label, cycle_seconds, take_profit_mark, stop_loss_mark, margin_cap_pct, margin_target_pct, hedge_leverage, trade_days, session_day, rolls_used_call, rolls_used_put, shifts_used_call, shifts_used_put, entered_day, flattened_day'
 
 // Postgres numerics come back as strings over PostgREST.
 const n = (v: string | number) => Number(v)
@@ -153,6 +154,7 @@ function rowToConfig(row: Row): DeltaConfig {
     maxNotionalPerStrike: n(row.max_notional_per_strike),
     tieBreak: row.tie_break as TieBreak,
     expiryPick: row.expiry_pick as ExpiryPick,
+    expiryRule: (row.expiry_rule as any) ?? 'today',
     expiryLabel: row.expiry_label,
     cycleSeconds: row.cycle_seconds,
     // Null is the column's "no take-profit"; the config carries that as 0.
@@ -190,6 +192,7 @@ function configToRow(cfg: DeltaConfig) {
     max_notional_per_strike: cfg.maxNotionalPerStrike,
     tie_break: cfg.tieBreak,
     expiry_pick: cfg.expiryPick,
+    expiry_rule: cfg.expiryRule ?? 'today',
     expiry_label: cfg.expiryLabel,
     cycle_seconds: cfg.cycleSeconds,
     take_profit_mark: cfg.takeProfitMark > 0 ? cfg.takeProfitMark : null,

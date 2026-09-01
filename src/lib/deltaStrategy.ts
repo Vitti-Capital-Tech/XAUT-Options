@@ -31,7 +31,14 @@
  * short put (negative lots, negative delta) pushes it up.
  */
 
-import { isPerp, type Expiry, type Product, type Ticker } from './delta'
+import {
+  isPerp,
+  resolveTargetExpiry,
+  type Expiry,
+  type ExpiryRule,
+  type Product,
+  type Ticker,
+} from './delta'
 import {
   FALLBACK_SHORT_IM_RATE,
   bestBid,
@@ -84,23 +91,32 @@ export type RollCounts = 'pass' | 'strike'
 /** Which strike wins when several sit near the entry premium. */
 export type TieBreak = 'closest' | 'above' | 'below'
 
+/**
+ * An expiry picker fallback when no explicit date is chosen.
+ *
+ *   nearest   take the nearest listed expiry
+ *   next      take the second listed expiry
+ */
 export type ExpiryPick = 'nearest' | 'next'
 
 /**
- * The expiry the strategy trades, given the live list (nearest first). Shared
- * with the app shell, which subscribes that expiry's strikes to the feed —
- * picking a strike by premium or by delta needs quotes across the whole chain,
- * not just the legs already held.
- *
  * An explicit `expiryLabel` wins, and only while that expiry is still listed:
  * null once it settles, which is what stands the strategy down rather than
- * quietly moving it to a contract nobody chose. With no label the `expiryPick`
- * rule applies.
+ * quietly moving it to a contract nobody chose. Dynamic rule labels (rule:today,
+ * rule:tomorrow, rule:friday) or expiryRule dynamically resolve the live date.
  */
 export function pickExpiry(
   expiries: Expiry[],
-  cfg: Pick<DeltaConfig, 'expiryPick'> & { expiryLabel?: string | null },
+  cfg: Pick<DeltaConfig, 'expiryPick'> & { expiryLabel?: string | null; expiryRule?: ExpiryRule },
+  now: Date = new Date(),
 ): Expiry | null {
+  if (cfg.expiryLabel && cfg.expiryLabel.startsWith('rule:')) {
+    const rule = cfg.expiryLabel.replace('rule:', '') as ExpiryRule
+    return resolveTargetExpiry(expiries, rule, null, now)
+  }
+  if (cfg.expiryRule && cfg.expiryRule !== 'fixed') {
+    return resolveTargetExpiry(expiries, cfg.expiryRule, cfg.expiryLabel, now)
+  }
   if (cfg.expiryLabel) return expiries.find((e) => e.label === cfg.expiryLabel) ?? null
   if (cfg.expiryPick === 'next') return expiries[1] ?? expiries[0] ?? null
   return expiries[0] ?? null
@@ -213,11 +229,13 @@ export interface DeltaConfig {
   tieBreak: TieBreak
   /** The rule used only while `expiryLabel` is unset. */
   expiryPick: ExpiryPick
+  /** Dynamic expiry rule filter for Futures strategy: today (0 DTE), tomorrow (1 DTE), friday (weekly), fixed */
+  expiryRule?: ExpiryRule
   /**
    * The chosen expiry as `ddmmyy`, picked from the live chain the way the option
    * chain's tabs are. A date does not roll: once it settles the strategy stands
    * down until a new one is chosen, rather than falling through to another
-   * contract. Null falls back to `expiryPick`.
+   * contract. Null falls back to `expiryPick` / `expiryRule`.
    */
   expiryLabel: string | null
   cycleSeconds: number
@@ -293,6 +311,7 @@ export const DEFAULT_DELTA_CONFIG: DeltaConfig = {
   maxNotionalPerStrike: 95_000,
   tieBreak: 'closest',
   expiryPick: 'nearest',
+  expiryRule: 'today',
   // Unset until the trader picks a date, so a new account trades the nearest.
   expiryLabel: null,
   // The engine's own jobs run every 5s (0029), and this is a floor on top of
