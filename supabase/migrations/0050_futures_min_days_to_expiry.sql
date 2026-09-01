@@ -1,12 +1,13 @@
 -- 0050_futures_min_days_to_expiry.sql
 --
--- Run this whole file in the Supabase SQL Editor after 0049_futures_strategy_unbreak_the_cycle.sql.
+-- Run this whole file in the Supabase SQL Editor.
 --
--- Adds dynamic Days to Expiry (DTE) / Expiry Rule support to the Delta & Futures Strategy:
---   - 'today': same-day expiry (0 DTE)
---   - 'tomorrow': next-day expiry (1 DTE / min 1 day to expiry)
---   - 'friday': upcoming Friday weekly expiry
---   - 'fixed' / specific date: trades explicit expiryLabel until settled
+-- Fixes & Enhancements:
+--   1. Dynamic Days to Expiry (DTE) / Expiry Rule: 'today', 'tomorrow', 'friday', 'nearest', 'fixed'.
+--   2. Ensures Perpetual Futures (XAUTUSD) ticker is always upserted with live best_bid, best_ask, spot and delta = 1.
+--   3. Makes delta_hedge robust with fallbacks to mark/spot so missing quotes never block futures hedging.
+--   4. Updates delta_reason to correctly label 'futures_hedge' and stamps recent fills reliably.
+--   5. Fixes ticker HTTP response parsing so responses with XAUTUSD at index 0 are never dropped.
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -26,7 +27,162 @@ comment on column public.delta_strategy_settings.expiry_rule is
   'Dynamic expiry selection: today (0 DTE), tomorrow (1 DTE), friday (weekly), nearest, or fixed.';
 
 -- ---------------------------------------------------------------------------
--- 2. Engine update with dynamic expiry resolution
+-- 2. queue_delta_checks
+-- ---------------------------------------------------------------------------
+create or replace function public.queue_delta_checks()
+returns integer
+language plpgsql
+security definer
+set search_path = public, net
+as $$
+begin
+  if not exists (select 1 from public.delta_strategy_settings where armed) then
+    return 0;
+  end if;
+
+  perform net.http_get(
+    url := 'https://api.india.delta.exchange/v2/tickers'
+           || '?contract_types=call_options,put_options,perpetual_futures'
+           || '&underlying_asset_symbols=XAUT',
+    timeout_milliseconds := 8000
+  );
+  return 1;
+end;
+$$;
+revoke all on function public.queue_delta_checks() from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------------
+-- 3. delta_hedge: place market orders in XAUTUSD with bulletproof price resolution
+-- ---------------------------------------------------------------------------
+create or replace function public.delta_hedge(
+  p_account  uuid,
+  p_user     uuid,
+  p_side     text,
+  p_lots     int,
+  p_spot     numeric,
+  p_leverage numeric
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  c       record;
+  v_order uuid;
+  v_px    numeric;
+  v_net   int;
+begin
+  select * into c from public.delta_chain where contract_type = 'perpetual_futures' limit 1;
+  if not found then
+    insert into public.delta_chain (symbol, contract_type, strike, expiry_label, contract_value, delta, gamma, spot_price, mark_price)
+    values ('XAUTUSD', 'perpetual_futures', null, 'PERP', 0.001, 1, 0, p_spot, p_spot)
+    on conflict (symbol) do nothing;
+    select * into c from public.delta_chain where contract_type = 'perpetual_futures' limit 1;
+  end if;
+
+  v_px := case when p_side = 'buy'
+               then coalesce(c.best_ask, c.mark_price, c.spot_price, p_spot)
+               else coalesce(c.best_bid, c.mark_price, c.spot_price, p_spot) end;
+  if v_px is null or v_px <= 0 then
+    v_px := p_spot;
+  end if;
+
+  select coalesce(net_qty, 0) into v_net
+  from public.positions where account_id = p_account and symbol = coalesce(c.symbol, 'XAUTUSD');
+  v_net := coalesce(v_net, 0);
+
+  insert into public.orders (
+    account_id, user_id, symbol, product_id, contract_type,
+    strike_price, expiry_label, contract_value, side, order_type,
+    qty, limit_price, reduce_only, leverage
+  )
+  values (
+    p_account, p_user, coalesce(c.symbol, 'XAUTUSD'), c.product_id, 'perpetual_futures', null,
+    'PERP', coalesce(c.contract_value, 0.001), p_side, 'market', p_lots, null,
+    (p_side = 'buy' and v_net < 0 and p_lots <= abs(v_net))
+      or (p_side = 'sell' and v_net > 0 and p_lots <= v_net),
+    coalesce(p_leverage, 100)
+  )
+  returning id into v_order;
+
+  begin
+    perform public.execute_fill(v_order, p_lots, v_px, 0, p_spot);
+  exception when others then
+    raise log 'delta_hedge: fill failed on % — %', coalesce(c.symbol, 'XAUTUSD'), sqlerrm;
+    update public.orders set status = 'cancelled', cancel_reason = 'delta strategy fill failed: ' || sqlerrm
+    where id = v_order;
+  end;
+end;
+$$;
+revoke all on function public.delta_hedge(uuid, uuid, text, int, numeric, numeric) from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------------
+-- 4. delta_reason: action labelling for fills and positions
+-- ---------------------------------------------------------------------------
+create or replace function public.delta_reason(
+  p_account   uuid,
+  p_action    text,
+  p_spot      numeric,
+  p_dp_before numeric,
+  p_dp_target numeric default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_line text;
+begin
+  v_line := case p_action
+    when 'entry'              then 'Opening pair'
+    when 'roll'               then 'Rolled further out — band breach'
+    when 'exit'               then 'Closed in full — roll budget spent'
+    when 'atm_shift'          then 'ATM reached — shifted further out'
+    when 'shift'              then 'ATM reached — shifted further out'
+    when 'atm_exit'           then 'ATM reached — closed position'
+    when 'empty_side_flatten' then 'Wing empty — closed all positions'
+    when 'band'               then 'Fresh sell — band correction'
+    when 'hedge_buy'          then 'Bought futures — band breach'
+    when 'hedge_sell'         then 'Sold futures — band breach'
+    when 'futures_hedge'      then (case when coalesce(p_dp_before, 0) < coalesce(p_dp_target, 0) then 'Bought futures — band breach' else 'Sold futures — band breach' end)
+    when 'hedge'              then (case when coalesce(p_dp_before, 0) < coalesce(p_dp_target, 0) then 'Bought futures — band breach' else 'Sold futures — band breach' end)
+    when 'cut'                then 'Margin cut — loss booked'
+    when 'flatten'            then 'Session close — flattened'
+    when 'take_profit'        then 'Take-profit hit'
+    when 'stop_loss'          then 'Stop-loss hit'
+    else 'Action: ' || coalesce(p_action, '')
+  end;
+
+  v_line := v_line
+    || case when p_dp_target is null then ''
+            else format(' (target %s)', round(p_dp_target, 2)) end
+    || format(' · spot $%s · Δp %s → %s',
+              coalesce(round(p_spot, 2)::text, '—'),
+              coalesce(round(p_dp_before, 2)::text, '—'),
+              coalesce(round(public.delta_book_dp(p_account), 2)::text, '—'));
+
+  update public.fills
+  set reason = v_line
+  where account_id = p_account
+    and reason is null
+    and created_at >= now() - interval '10 seconds'
+    and (case when contract_type = 'perpetual_futures'
+              then true
+              else side = 'buy' or realized_pnl <> 0 end);
+
+  update public.positions
+  set entry_reason = v_line
+  where account_id = p_account
+    and entry_reason is null
+    and opened_at >= now() - interval '10 seconds';
+end;
+$$;
+revoke all on function public.delta_reason(uuid, text, numeric, numeric, numeric) from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------------
+-- 5. apply_delta_strategy engine
 -- ---------------------------------------------------------------------------
 create or replace function public.apply_delta_strategy()
 returns integer
@@ -75,13 +231,13 @@ declare
   v_im_rate   numeric;
   v_adopted   boolean;
 begin
+  -- Fetch most recent 200 OK response containing XAUT tickers
   select (content::jsonb -> 'result') into v_tickers
   from net._http_response
   where status_code = 200
-    and created > now() - interval '30 seconds'
+    and created > now() - interval '60 seconds'
     and content like '%"result":[%'
     and content like '%XAUT%'
-    and (content::jsonb -> 'result' -> 0) ? 'greeks'
   order by created desc limit 1;
 
   if v_tickers is null or jsonb_array_length(v_tickers) = 0 then
@@ -89,6 +245,7 @@ begin
     return 0;
   end if;
 
+  -- Upsert options chain
   insert into public.delta_chain (symbol, contract_type, strike, expiry_label,
                                   contract_value, product_id, best_bid, best_ask,
                                   delta, gamma, spot_price, mark_price)
@@ -116,6 +273,7 @@ begin
     contract_value = excluded.contract_value,
     updated_at     = now();
 
+  -- Upsert perpetual future (XAUTUSD)
   insert into public.delta_chain (symbol, contract_type, strike, expiry_label,
                                   contract_value, product_id, best_bid, best_ask,
                                   delta, gamma, spot_price, mark_price)
@@ -133,7 +291,15 @@ begin
          nullif(t ->> 'mark_price', '')::numeric
   from jsonb_array_elements(v_tickers) t
   where (t ->> 'contract_type') = 'perpetual_futures'
-  on conflict (symbol) do nothing;
+  on conflict (symbol) do update set
+    best_bid       = coalesce(excluded.best_bid, delta_chain.best_bid),
+    best_ask       = coalesce(excluded.best_ask, delta_chain.best_ask),
+    spot_price     = coalesce(excluded.spot_price, delta_chain.spot_price),
+    mark_price     = coalesce(excluded.mark_price, delta_chain.mark_price),
+    contract_value = coalesce(excluded.contract_value, delta_chain.contract_value),
+    delta          = 1,
+    gamma          = 0,
+    updated_at     = now();
 
   select max(spot_price) into v_spot from public.delta_chain where spot_price is not null;
   if v_spot is null or v_spot <= 0 then
@@ -486,7 +652,7 @@ begin
     -- ---- Net portfolio delta -----------------------------------------------
     select count(*) filter (where c.delta is null
                               or (v_mode = 'options' and c.gamma is null)),
-           coalesce(sum(p.net_qty * c.delta), 0),
+           coalesce(sum(p.net_qty * coalesce(c.delta, case when p.contract_type = 'perpetual_futures' then 1 else null end)), 0),
            max(p.contract_value)
       into v_missing, v_dp, v_cv
     from public.positions p
@@ -533,9 +699,14 @@ begin
         continue;
       end if;
 
-      perform public.delta_hedge(r.account_id, r.user_id,
-                                 case when v_need > 0 then 'buy' else 'sell' end,
-                                 v_q, v_spot, s.hedge_leverage);
+      perform public.delta_hedge(
+        r.account_id,
+        r.user_id,
+        case when v_need > 0 then 'buy' else 'sell' end,
+        v_q,
+        v_spot,
+        s.hedge_leverage
+      );
 
       perform public.delta_reason(r.account_id, 'futures_hedge', v_spot, v_dp, v_target);
 
