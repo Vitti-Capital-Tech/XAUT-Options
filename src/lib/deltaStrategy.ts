@@ -1093,13 +1093,18 @@ export function pickMultipleByPremium(
   // entry the engine will not open: delta_pick_premium_ranked drops an
   // out-of-bounds strike in SQL with no fallback, so a range nothing satisfies
   // means no entry. Saying so is the readout's job.
-  const hasMin = (cfg.entryPremiumMin ?? 0) > 0
-  const hasMax = (cfg.entryPremiumMax ?? 0) > 0
+  const rawMin = cfg.entryPremiumMin ?? 0
+  const rawMax = cfg.entryPremiumMax ?? 0
+  const hasMin = rawMin > 0
+  const hasMax = rawMax > 0
+  const minVal = hasMin && hasMax ? Math.min(rawMin, rawMax) : rawMin
+  const maxVal = hasMin && hasMax ? Math.max(rawMin, rawMax) : rawMax
+
   const eligible =
     hasMin || hasMax
       ? allCandidates.filter((c) => {
-          if (hasMin && c.premium < cfg.entryPremiumMin) return false
-          if (hasMax && c.premium > cfg.entryPremiumMax) return false
+          if (hasMin && c.premium < minVal) return false
+          if (hasMax && c.premium > maxVal) return false
           return true
         })
       : allCandidates
@@ -1356,13 +1361,19 @@ export function planCycle(input: CycleInput): CyclePlan {
       // looking at the chain; a range nothing satisfies is a setting on this very
       // panel, and the engine will keep declining the entry until it moves.
       const side = calls.length === 0 ? 'call' : 'put'
-      const bounded = cfg.entryPremiumMin > 0 || cfg.entryPremiumMax > 0
+      const rawMin = cfg.entryPremiumMin ?? 0
+      const rawMax = cfg.entryPremiumMax ?? 0
+      const hasMin = rawMin > 0
+      const hasMax = rawMax > 0
+      const minVal = hasMin && hasMax ? Math.min(rawMin, rawMax) : rawMin
+      const maxVal = hasMin && hasMax ? Math.max(rawMin, rawMax) : rawMax
+      const bounded = hasMin || hasMax
       const range =
-        cfg.entryPremiumMin > 0 && cfg.entryPremiumMax > 0
-          ? `${usd2(cfg.entryPremiumMin)}–${usd2(cfg.entryPremiumMax)}`
-          : cfg.entryPremiumMin > 0
-            ? `at or above ${usd2(cfg.entryPremiumMin)}`
-            : `at or below ${usd2(cfg.entryPremiumMax)}`
+        hasMin && hasMax
+          ? `${usd2(minVal)}–${usd2(maxVal)}`
+          : hasMin
+            ? `at or above ${usd2(minVal)}`
+            : `at or below ${usd2(maxVal)}`
       return {
         ...base,
         action: null,

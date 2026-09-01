@@ -107,18 +107,27 @@ returns table (rank int, symbol text, strike numeric, premium numeric,
 language sql
 stable
 as $$
-  with priced as (
+  with bounds as (
+    select case when p_floor > 0 and p_ceil > 0 then least(p_floor, p_ceil)
+                when p_floor > 0 then p_floor
+                else 0 end as floor_val,
+           case when p_floor > 0 and p_ceil > 0 then greatest(p_floor, p_ceil)
+                when p_ceil > 0 then p_ceil
+                else 0 end as ceil_val
+  ),
+  priced as (
     select c.symbol, c.strike, c.best_bid as premium, c.delta, c.contract_value,
            coalesce(abs(pos.net_qty), 0) as held
     from public.delta_chain c
+    cross join bounds b
     left join public.positions pos
            on pos.account_id = p_account and pos.symbol = c.symbol
     where c.expiry_label = p_exp
       and c.contract_type = p_kind
       and c.best_bid is not null
       and c.delta is not null
-      and (p_floor <= 0 or c.best_bid >= p_floor)
-      and (p_ceil <= 0 or c.best_bid <= p_ceil)
+      and (b.floor_val <= 0 or c.best_bid >= b.floor_val)
+      and (b.ceil_val <= 0 or c.best_bid <= b.ceil_val)
       and (p_beyond is null
            or (p_kind = 'call_options' and c.strike > p_beyond)
            or (p_kind = 'put_options'  and c.strike < p_beyond))
