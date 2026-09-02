@@ -1048,9 +1048,19 @@ the readout predicting one thing and the engine doing another.
 > longer collide on one entry stamp and silently leave every window but the first
 > sitting flat.
 >
-> The diff that found it is worth repeating when either side changes: list the
-> settings columns the engine writes, list the ones `COLS` selects, and read the
-> difference. `touched_symbols` and `pass_open` are on it legitimately — engine
+> A second kind, and the one the first kind hides: the two implementations can
+> also agree on a *wrong* answer. `resolveTargetExpiry` and the engine both read
+> `today` / `tomorrow` / `friday` off the **UTC** date while every session clock
+> in the app runs on IST, so between 00:00 and 05:30 IST `tomorrow` resolved to
+> the day IST already called today — zero days to expiry where one was asked for.
+> The readout confirmed it, because it had made the same mistake.
+> [`0067`](../supabase/migrations/0067_the_expiry_day_is_the_ist_day.sql) moves
+> both to IST. Agreement between the two is necessary and not sufficient; the
+> clock each of them reads is its own question.
+>
+> The diff that found the first kind is worth repeating when either side changes:
+> list the settings columns the engine writes, list the ones `COLS` selects, and
+> read the difference. `touched_symbols` and `pass_open` are on it legitimately — engine
 > bookkeeping the readout is documented not to model — so the check is not "the
 > lists match" but "every difference has a reason".
 

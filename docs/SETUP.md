@@ -94,6 +94,13 @@ adds it an optional stop.
 >   affects futures books running multiple windows — but the *Add window* button
 >   creates adjacent windows by default, so that is most of them. Its `do` block
 >   proves both rules by calling the function, not by reading its source.
+> - [`0067`](../supabase/migrations/0067_the_expiry_day_is_the_ist_day.sql) makes
+>   the delta engine resolve `today` / `tomorrow` / `friday` against the **IST**
+>   date instead of the UTC one, matching its own session clock and what the auto
+>   engine has always done. Only matters between 00:00 and 05:30 IST, where
+>   `tomorrow` was selling zero days to expiry instead of one — so it matters to
+>   any futures book with a window opening in that band, which the default
+>   01:30 start falls inside.
 
 > `0021` adds `delta_strategy_settings.qty`, defaulting to one lot so nothing
 > changes on its own. **Raising it means rescaling `band_low`/`band_high` by the

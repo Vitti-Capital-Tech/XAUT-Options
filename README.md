@@ -643,6 +643,28 @@ protects hand-written `schedule_windows`.
 Every rule also requires the expiry to be more than sixteen hours from its
 settlement, so the strategy never opens into a contract about to expire.
 
+**The day these rules mean is the IST day**
+([`0067`](supabase/migrations/0067_the_expiry_day_is_the_ist_day.sql)). Nothing
+about the labels changes — an XAUT option settles at 16:00 UTC on its label's
+date, which is 21:30 IST the same evening, so a label's date already *is* its IST
+date. What moved is the day it is compared against.
+
+Before 0067 the delta engine compared against the **UTC** date while its session,
+its trade-days filter and the auto engine all ran on IST. IST is UTC+5:30, so
+between 00:00 and 05:30 IST the three rules answered for a day the account had
+already left:
+
+| Rule | Before, at 02:00 IST | Why |
+| --- | --- | --- |
+| `Today` | Right, by luck | Yesterday's contract died at 16:00 UTC — 21:30 IST — so the liveness filter dropped it and the rule fell through to the nearest live expiry, which is the right one |
+| `Coming Friday` | Right, same way | Falls through for the same reason |
+| `Tomorrow` | **Wrong — 0 DTE instead of 1** | It asks for `>= date + 1`, and `yesterday + 1` is what IST calls today. That contract is alive, so the filter is happy and nothing falls through |
+
+Nothing surfaced it: the browser derived the same wrong answer from the same UTC
+date, so the readout agreed with the engine. It only bites a window opening
+inside that band — but `defaultScheduleWindow` starts at **01:30**, which is
+inside it.
+
 #### What 0048 broke, and what 0049 fixed
 
 0048 shipped with four faults that stopped the engine outright, so it is worth

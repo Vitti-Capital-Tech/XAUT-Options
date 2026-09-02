@@ -170,6 +170,37 @@ export function formatExpiry(label: string): string {
 export type ExpiryRule = 'today' | 'tomorrow' | 'friday' | 'fixed'
 
 /**
+ * The IST calendar date, as a UTC-midnight `Date` so it compares directly with
+ * `expiryToDate`.
+ *
+ * The rules below used to ask `now.getUTCDate()`, which is a different day from
+ * IST's between 00:00 and 05:30 IST. `today` and `friday` got away with it —
+ * yesterday's contract is already dead by then and the liveness filter drops it,
+ * so the rule fell through to the nearest live expiry, which is the right one.
+ * `tomorrow` did not: it asks for `>= date + 1`, the UTC date is still
+ * yesterday's, and `yesterday + 1` is what IST calls today. A window asking for
+ * one day to expiry got zero, and silently — the engine computed the same wrong
+ * answer from the same UTC date, so the readout agreed with it.
+ *
+ * Nothing about the labels changes. An XAUT option settles at 16:00 UTC on its
+ * label's date, which is 21:30 IST the same evening, so the label's date already
+ * is its IST date. Only the day it is compared against moves.
+ *
+ * Declared here rather than imported from `deltaStrategy`, which imports this
+ * module.
+ */
+function istToday(now: Date): Date {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now)
+  const at = (t: string) => Number(parts.find((p) => p.type === t)?.value ?? '0')
+  return new Date(Date.UTC(at('year'), at('month') - 1, at('day')))
+}
+
+/**
  * Resolves an expiry from the live chain based on an expiry rule and/or explicit label.
  */
 export function resolveTargetExpiry(
@@ -192,8 +223,9 @@ export function resolveTargetExpiry(
       ? (explicitLabel.replace('rule:', '') as ExpiryRule)
       : rule
 
-  const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
-  const todayTime = todayUtc.getTime()
+  // The IST day, on the same clock as the session, the trade-days filter and the
+  // engine — see `istToday`.
+  const todayTime = istToday(now).getTime()
   const oneDayMs = 24 * 60 * 60 * 1000
 
   if (effectiveRule === 'today') {
@@ -209,7 +241,9 @@ export function resolveTargetExpiry(
   }
 
   if (effectiveRule === 'friday') {
-    const currentDay = now.getUTCDay()
+    // Weekday of the IST date, not of the viewer's UTC instant. Built as UTC
+    // midnight of that date, so getUTCDay reads it back without a shift.
+    const currentDay = istToday(now).getUTCDay()
     const daysToFriday = (5 - currentDay + 7) % 7
     const targetFridayTime = todayTime + daysToFriday * oneDayMs
     const fridayExp = expiries.find((e) => expiryToDate(e.label).getTime() === targetFridayTime)
