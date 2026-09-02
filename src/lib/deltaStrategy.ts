@@ -412,6 +412,26 @@ export function findActiveScheduleWindow(
     return { activeWindow: null, phase: 'closed', sessionDay: todayStr }
   }
 
+  // Both ends are inclusive, so two windows that touch — 08:00-10:00 and
+  // 10:00-12:00 — are both open on the boundary minute. Whichever of them
+  // governs decides the band, the premium, the size and whether an entry is due,
+  // so the tie has to be broken deliberately rather than by array order.
+  //
+  // The one that started most recently wins. On the boundary that is the window
+  // opening, not the one expiring, which is the reading that matches what the
+  // controls say: a window's settings apply from its start time.
+  //
+  // Measured as elapsed-since-start rather than by comparing start times,
+  // because a wrapping window's start belongs to yesterday. At 01:00 a
+  // 22:00-02:00 window has been running 180 minutes and a 00:00-06:00 window 60,
+  // so the second is the newer — which comparing 1320 against 0 would get
+  // backwards.
+  let best: { win: ScheduleWindow; sessionDay: string; elapsed: number } | null = null
+  const consider = (win: ScheduleWindow, sessionDay: string, elapsed: number) => {
+    // Strictly less, so windows sharing a start time keep array order.
+    if (best === null || elapsed < best.elapsed) best = { win, sessionDay, elapsed }
+  }
+
   for (const win of windows) {
     const oMin = parseHHMM(win.startTime)
     const cMin = parseHHMM(win.endTime)
@@ -419,19 +439,23 @@ export function findActiveScheduleWindow(
 
     if (oMin <= cMin) {
       if (istMinutes >= oMin && istMinutes <= cMin) {
-        return { activeWindow: win, phase: 'open', sessionDay: todayStr }
+        consider(win, todayStr, istMinutes - oMin)
       }
     } else {
       // Wrapping window: after the open we are in today's session; before the
       // close we are still in the one that opened yesterday. `previousDay` walks
       // the date string, so it cannot pick up a timezone shift either.
       if (istMinutes >= oMin) {
-        return { activeWindow: win, phase: 'open', sessionDay: todayStr }
-      }
-      if (istMinutes <= cMin) {
-        return { activeWindow: win, phase: 'open', sessionDay: previousDay(todayStr) }
+        consider(win, todayStr, istMinutes - oMin)
+      } else if (istMinutes <= cMin) {
+        consider(win, previousDay(todayStr), istMinutes + 1440 - oMin)
       }
     }
+  }
+
+  if (best !== null) {
+    const hit = best as { win: ScheduleWindow; sessionDay: string; elapsed: number }
+    return { activeWindow: hit.win, phase: 'open', sessionDay: hit.sessionDay }
   }
 
   return { activeWindow: null, phase: 'closed', sessionDay: todayStr }
@@ -491,6 +515,19 @@ export interface SessionState {
   shiftsUsedPut: number
   enteredDay: string | null
   flattenedDay: string | null
+  /**
+   * Ids of the schedule windows that have already opened a book today, cleared
+   * with the rest of the counters when the session day rolls.
+   *
+   * The engine gates entry on this *or* on the day being new
+   * ([`0051`](../../supabase/migrations/0051_futures_schedule_windows.sql)), and
+   * for a long time this readout gated on the day alone. Between two windows the
+   * two agree, because the closed phase nulls `entered_day` and the readout sees
+   * that — but two windows that touch never produce a closed cycle, so the day
+   * stamp survives and the readout said "already entered" while the engine,
+   * correctly, opened the next window's book.
+   */
+  enteredWindowIds: string[]
 }
 
 export const EMPTY_SESSION: SessionState = {
@@ -501,6 +538,7 @@ export const EMPTY_SESSION: SessionState = {
   shiftsUsedPut: 0,
   enteredDay: null,
   flattenedDay: null,
+  enteredWindowIds: [],
 }
 
 // ---------------------------------------------------------------------------
@@ -1409,6 +1447,9 @@ export function planCycle(input: CycleInput): CyclePlan {
   let phase = rawSession.phase
   let day = rawSession.day
   let tradingDay = rawSession.tradingDay
+  // Which window governs, if any — needed below to ask whether *this* window has
+  // opened a book yet, which is the engine's own entry test.
+  let windowId: string | null = null
 
   if (mode === 'futures' && rawCfg.scheduleWindows && rawCfg.scheduleWindows.length > 0) {
     const { activeWindow, phase: winPhase, sessionDay: winDay } = findActiveScheduleWindow(
@@ -1424,6 +1465,7 @@ export function planCycle(input: CycleInput): CyclePlan {
     tradingDay = rawCfg.tradeDays.includes(isoDow(winDay))
 
     if (activeWindow) {
+      windowId = activeWindow.id
       cfg = {
         ...rawCfg,
         sessionOpen: activeWindow.startTime,
@@ -1567,8 +1609,12 @@ export function planCycle(input: CycleInput): CyclePlan {
 
   if (!expiry) return { ...base, action: null, reason: 'No expiry listed to trade' }
 
-  // ---- Daily entry ---------------------------------------------------------
-  if (session.enteredDay !== day) {
+  // ---- Daily / per-window entry --------------------------------------------
+  // The engine's test, verbatim: a window that has not opened a book yet, or a
+  // day that has not. Gating on the day alone made this readout disagree with
+  // the engine on back-to-back windows — see `SessionState.enteredWindowIds`.
+  const windowNotEntered = windowId !== null && !session.enteredWindowIds.includes(windowId)
+  if (windowNotEntered || session.enteredDay !== day) {
     // No margin gate here. The entry only runs on a book that has just been
     // flattened at the previous close, so blocked margin is at or near zero when
     // it fires; a gate on it was guarding a state the session clock already makes

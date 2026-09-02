@@ -576,16 +576,56 @@ overrides for `entryPremium`, `entryPremiumMin`/`Max`, `pairsCount`, `qty`,
 leaves out falls back to the column of the same name on the settings row, so a
 window is a diff against the account's defaults, not a replacement for them.
 
-`delta_session_window` walks the array in order and returns the first window the
-clock is inside; outside every window the phase is `closed`, which is the same
+`delta_session_window` walks the array and returns the window the clock is
+inside; outside every window the phase is `closed`, which is the same
 flatten-and-stand-down path a session close takes. Windows may wrap midnight
 (`startTime > endTime`), in which case the session day is the day the window
 *opened*, not the calendar day.
+
+**Adjacent windows, and which one governs.** Both ends of a window are
+inclusive, so 08:00–10:00 and 10:00–12:00 are both open on the boundary minute —
+and the *Add window* button starts a new window at the previous one's end time,
+so this is the normal shape here rather than an edge case. The window that
+started **most recently** governs
+([`0066`](supabase/migrations/0066_the_newest_window_governs.sql)): on the
+boundary that is the one opening, not the one expiring, which is what a start
+time means. Before 0066 array order decided it, so for that minute the account
+ran on the band, premium, size and shift budget of a window that was over.
+
+Ranked by elapsed-since-start rather than by start time, because a wrapping
+window's start belongs to yesterday: at 01:00 a 22:00–02:00 window has been
+running 180 minutes and a 00:00–06:00 window 60, so the second is the newer.
+Windows sharing a start time keep array order.
+
+> Two adjacent windows produce **no `closed` cycle between them**, so there is no
+> flatten at the handover: the first window's legs carry into the second, which
+> then opens its own pairs on top. Windows with a gap between them do flatten in
+> the gap. Worth deciding deliberately which you want — the gap is the only thing
+> that separates the two behaviours.
 
 Entry is gated per window, not per day: `entered_window_ids` records which
 windows have already opened a book today, and the daily `entered_day` stamp is
 kept alongside it. The empty-wing flatten deliberately clears **neither** — a
 book that was closed inside a window stays closed for the rest of it.
+
+The browser readout reads that column too. It did not until recently, and gated
+on `entered_day` alone — which agrees with the engine everywhere *except* on
+adjacent windows, because the closed phase between two spaced windows nulls
+`entered_day` and the readout sees that, while two windows that touch never
+produce a closed cycle. So the tab said "already entered" for the second window
+while the engine, correctly, opened its book. The engine was right throughout;
+only the readout was wrong.
+
+A window with no id is named by its **position** —
+[`0066`](supabase/migrations/0066_the_newest_window_governs.sql) stamps `win_<n>`
+into the window it returns, matching what the browser synthesises in
+`rowToConfig`. Before that the engine resolved the id as
+`coalesce(v_win ->> 'id', 'win_1')`, the *same* fallback for every window, so
+several id-less windows collided on one stamp: the first would trade and every
+later one would read as already entered and sit flat, with nothing on the tab to
+say so. The *Add window* button has always written a unique `win_<timestamp>`, so
+it could not arise from the UI — it is fixed as a latent fault, and it is what
+protects hand-written `schedule_windows`.
 
 #### Expiry rules
 

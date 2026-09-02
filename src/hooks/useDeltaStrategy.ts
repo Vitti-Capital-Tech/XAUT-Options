@@ -126,11 +126,14 @@ interface Row {
   shifts_used_put: number | null
   entered_day: string | null
   flattened_day: string | null
+  /** Which windows have already opened a book today. Absent on a row written
+   *  before 0051, which reads as none entered. */
+  entered_window_ids?: string[] | null
   schedule_windows?: any[] | null
 }
 
 const COLS =
-  'account_id, armed, session_open, session_close, band_low, band_high, gamma_multiplier, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, entry_premium_min, entry_premium_max, pairs_count, shift_pct, max_shifts, qty, max_notional_per_strike, tie_break, expiry_pick, expiry_rule, expiry_label, cycle_seconds, take_profit_mark, stop_loss_mark, margin_cap_pct, margin_target_pct, hedge_leverage, trade_days, session_day, rolls_used_call, rolls_used_put, shifts_used_call, shifts_used_put, entered_day, flattened_day, schedule_windows'
+  'account_id, armed, session_open, session_close, band_low, band_high, gamma_multiplier, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, entry_premium_min, entry_premium_max, pairs_count, shift_pct, max_shifts, qty, max_notional_per_strike, tie_break, expiry_pick, expiry_rule, expiry_label, cycle_seconds, take_profit_mark, stop_loss_mark, margin_cap_pct, margin_target_pct, hedge_leverage, trade_days, session_day, rolls_used_call, rolls_used_put, shifts_used_call, shifts_used_put, entered_day, flattened_day, entered_window_ids, schedule_windows'
 
 // Postgres numerics come back as strings over PostgREST.
 const n = (v: string | number) => Number(v)
@@ -277,6 +280,11 @@ function rowToSession(row: Row): SessionState {
     shiftsUsedPut: row.shifts_used_put ?? 0,
     enteredDay: row.entered_day,
     flattenedDay: row.flattened_day,
+    // The engine gates entry on this as well as on the day, so the readout has
+    // to read it or it disagrees with the engine on back-to-back windows.
+    enteredWindowIds: Array.isArray(row.entered_window_ids)
+      ? row.entered_window_ids.map(String)
+      : [],
   }
 }
 

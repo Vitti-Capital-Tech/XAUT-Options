@@ -87,6 +87,13 @@ adds it an optional stop.
 >   rather than by guessing which of the shared `net._http_response` rows is its
 >   own. `0065` ends in a `do` block that resolves every name at apply time, so
 >   a mismatch raises there rather than hours later mid-cycle.
+> - [`0066`](../supabase/migrations/0066_the_newest_window_governs.sql) does two
+>   things to `delta_session_window`: the most recently started window governs
+>   when two of them touch, and a window carrying no id is named by its position
+>   instead of the shared `win_1` every id-less window used to collide on. Only
+>   affects futures books running multiple windows — but the *Add window* button
+>   creates adjacent windows by default, so that is most of them. Its `do` block
+>   proves both rules by calling the function, not by reading its source.
 
 > `0021` adds `delta_strategy_settings.qty`, defaulting to one lot so nothing
 > changes on its own. **Raising it means rescaling `band_low`/`band_high` by the

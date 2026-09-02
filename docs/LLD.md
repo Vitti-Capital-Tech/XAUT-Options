@@ -1032,6 +1032,28 @@ specification in TypeScript and PL/pgSQL. Only the first is covered by
 assertions, and nothing checks that they agree — a divergence would surface as
 the readout predicting one thing and the engine doing another.
 
+> The most recent instance, found by diffing the columns the engine writes
+> against the columns the readout reads: the engine gates entry on
+> `entered_window_ids` **or** a new day, and `planCycle` gated on the day alone.
+> Everywhere except adjacent windows the two agree, because the closed cycle
+> between spaced windows nulls `entered_day`; two windows that touch never
+> produce one, so the readout claimed the session was entered while the engine
+> opened the next window's book. Readout-only — the engine was right — but it is
+> exactly the failure this section describes. `SessionState.enteredWindowIds`
+> closes it, and the same pass fixed a real engine bug alongside it
+> ([`0066`](../supabase/migrations/0066_the_newest_window_governs.sql)): on the
+> boundary minute both windows are open and array order was picking the one that
+> had just *expired* to govern the band, the premium and the size. The same
+> migration names an id-less window by its position, so several of them can no
+> longer collide on one entry stamp and silently leave every window but the first
+> sitting flat.
+>
+> The diff that found it is worth repeating when either side changes: list the
+> settings columns the engine writes, list the ones `COLS` selects, and read the
+> difference. `touched_symbols` and `pass_open` are on it legitimately — engine
+> bookkeeping the readout is documented not to model — so the check is not "the
+> lists match" but "every difference has a reason".
+
 > A second instance, found the day a teammate toggled a weekday off and on again:
 > the flatten stamped `flattened_day` but left `entered_day` set, so the reopened
 > session read "already entered today" and sat flat for the rest of the day
