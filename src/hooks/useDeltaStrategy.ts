@@ -9,6 +9,7 @@ import {
   EMPTY_SESSION,
   entryLots as entryLotsFor,
   pickExpiry,
+  ruleToDte,
   planCycle,
   type CyclePlan,
   type DeltaConfig,
@@ -192,6 +193,11 @@ function rowToConfig(row: Row): DeltaConfig {
           stopLossMark: n(w.stopLossMark ?? w.stop_loss_mark ?? 0),
           marginCapPct: n(w.marginCapPct ?? w.margin_cap_pct ?? 100),
           marginTargetPct: n(w.marginTargetPct ?? w.margin_target_pct ?? 90),
+          // A window written before the per-window DTE existed inherits the
+          // account's rule, so an upgrade does not silently move its expiry.
+          daysToExpiry: Number(
+            w.daysToExpiry ?? w.days_to_expiry ?? ruleToDte(row.expiry_rule ?? undefined),
+          ),
         }))
       : [],
   }

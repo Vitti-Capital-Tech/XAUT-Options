@@ -312,6 +312,39 @@ export interface ScheduleWindow {
   stopLossMark: number
   marginCapPct: number
   marginTargetPct: number
+  /**
+   * Which expiry this window sells, as days to expiry: `0` today, `1` tomorrow,
+   * `4` the coming Friday. Only those three; see DTE_CHOICES.
+   *
+   * Per window rather than per account, because a window that opens in the
+   * evening and one that opens at the open are not usually selling the same
+   * contract. The account-level `expiryRule` remains only as the fallback for a
+   * book with no windows at all.
+   */
+  daysToExpiry: number
+}
+
+/**
+ * The expiry choices a window offers, and what each one means to the engine.
+ *
+ * `4` is *the coming Friday*, not "four days out" — it resolves to the nearest
+ * Friday expiry whatever day it is today, which is why it is a label with a
+ * number rather than an arithmetic offset. The number is what gets stored.
+ */
+export const DTE_CHOICES = [
+  { dte: 0, rule: 'today' as const, label: 'Today' },
+  { dte: 1, rule: 'tomorrow' as const, label: 'Tomorrow' },
+  { dte: 4, rule: 'friday' as const, label: 'Coming Friday' },
+]
+
+/** A window's stored DTE to the rule name the engine and the picker use. */
+export function dteToRule(dte: number | null | undefined): 'today' | 'tomorrow' | 'friday' {
+  return DTE_CHOICES.find((c) => c.dte === dte)?.rule ?? 'today'
+}
+
+/** The reverse, for showing a stored account-level rule in a window's control. */
+export function ruleToDte(rule: string | null | undefined): number {
+  return DTE_CHOICES.find((c) => c.rule === rule)?.dte ?? 0
 }
 
 export function defaultScheduleWindow(id = 'win_1', cfg?: Partial<DeltaConfig>): ScheduleWindow {
@@ -338,6 +371,7 @@ export function defaultScheduleWindow(id = 'win_1', cfg?: Partial<DeltaConfig>):
     stopLossMark: cfg?.stopLossMark ?? 0,
     marginCapPct: cfg?.marginCapPct ?? 100,
     marginTargetPct: cfg?.marginTargetPct ?? 90,
+    daysToExpiry: ruleToDte(cfg?.expiryRule),
   }
 }
 
@@ -349,13 +383,28 @@ export function findActiveScheduleWindow(
   now: Date = new Date(),
   tradeDays: number[] = [1, 2, 3, 4, 5, 6, 7],
 ): { activeWindow: ScheduleWindow | null; phase: 'open' | 'closed'; sessionDay: string } {
-  const istDate = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
-  const istMinutes = istDate.getHours() * 60 + istDate.getMinutes()
-  const istDay = istDate.getDay() // 0=Sun, 1=Mon, ..., 6=Sat
-  const isoDay = istDay === 0 ? 7 : istDay
-  const todayStr = istDate.toISOString().slice(0, 10)
+  // The IST day and minute-of-day through `zoneNow`, which is what sessionPhase
+  // has always used, rather than re-deriving them here.
+  //
+  // The re-derivation this replaces was wrong, and wrong in the way that is
+  // hardest to notice:
+  //
+  //     new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
+  //
+  // builds a Date whose *local* fields hold the IST wall clock — so getHours()
+  // was right — but `.toISOString()` then converts those local fields to UTC and
+  // shifts the calendar date by the viewer's own offset. On an AEST machine
+  // (UTC+10) the session day came back one day early all day long.
+  //
+  // `day` is compared against `session.enteredDay`, which the engine writes from
+  // the correct IST date. One day out means the readout believes the session has
+  // not been entered when it has, so it prints "Selling N pairs" for ever while
+  // the engine, correctly, does nothing. Which is exactly what it did.
+  //
+  // isoDow reads the weekday off the date string, so it cannot drift from `day`.
+  const { day: todayStr, minutes: istMinutes } = zoneNow(now)
 
-  if (!tradeDays.includes(isoDay)) {
+  if (!tradeDays.includes(isoDow(todayStr))) {
     return { activeWindow: null, phase: 'closed', sessionDay: todayStr }
   }
 
@@ -364,31 +413,24 @@ export function findActiveScheduleWindow(
   }
 
   for (const win of windows) {
-    const [oH, oM] = win.startTime.split(':').map(Number)
-    const [cH, cM] = win.endTime.split(':').map(Number)
-    const oMin = (oH || 0) * 60 + (oM || 0)
-    const cMin = (cH || 0) * 60 + (cM || 0)
-
-    let isOpen = false
-    let sessionDay = todayStr
+    const oMin = parseHHMM(win.startTime)
+    const cMin = parseHHMM(win.endTime)
+    if (oMin === null || cMin === null) continue
 
     if (oMin <= cMin) {
-      isOpen = istMinutes >= oMin && istMinutes <= cMin
-      sessionDay = todayStr
-    } else {
-      // Midnight wrap
-      if (istMinutes >= oMin) {
-        isOpen = true
-        sessionDay = todayStr
-      } else if (istMinutes <= cMin) {
-        isOpen = true
-        const prevDay = new Date(istDate.getTime() - 24 * 60 * 60 * 1000)
-        sessionDay = prevDay.toISOString().slice(0, 10)
+      if (istMinutes >= oMin && istMinutes <= cMin) {
+        return { activeWindow: win, phase: 'open', sessionDay: todayStr }
       }
-    }
-
-    if (isOpen) {
-      return { activeWindow: win, phase: 'open', sessionDay }
+    } else {
+      // Wrapping window: after the open we are in today's session; before the
+      // close we are still in the one that opened yesterday. `previousDay` walks
+      // the date string, so it cannot pick up a timezone shift either.
+      if (istMinutes >= oMin) {
+        return { activeWindow: win, phase: 'open', sessionDay: todayStr }
+      }
+      if (istMinutes <= cMin) {
+        return { activeWindow: win, phase: 'open', sessionDay: previousDay(todayStr) }
+      }
     }
   }
 
@@ -1376,9 +1418,10 @@ export function planCycle(input: CycleInput): CyclePlan {
     )
     phase = winPhase
     day = winDay
-    const istDate = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
-    const istDay = istDate.getDay()
-    tradingDay = rawCfg.tradeDays.includes(istDay === 0 ? 7 : istDay)
+    // Same helpers as findActiveScheduleWindow, for the same reason: deriving the
+    // IST weekday from a Date built out of a localised string reads the viewer's
+    // offset, not IST.
+    tradingDay = rawCfg.tradeDays.includes(isoDow(winDay))
 
     if (activeWindow) {
       cfg = {
@@ -1403,6 +1446,11 @@ export function planCycle(input: CycleInput): CyclePlan {
         stopLossMark: activeWindow.stopLossMark,
         marginCapPct: activeWindow.marginCapPct,
         marginTargetPct: activeWindow.marginTargetPct,
+        // The window picks the expiry, so a fixed label set on the account must
+        // not outrank it — `expiryLabel: null` is what makes pickExpiry fall
+        // through to the rule.
+        expiryRule: dteToRule(activeWindow.daysToExpiry),
+        expiryLabel: null,
       }
     }
   }

@@ -12,7 +12,9 @@ import {
 } from '../lib/delta'
 import type { DeltaStrategyApi } from '../hooks/useDeltaStrategy'
 import {
+  DTE_CHOICES,
   defaultScheduleWindow,
+  dteToRule,
   findActiveScheduleWindow,
   type HedgeMode,
   type ScheduleWindow,
@@ -100,6 +102,12 @@ export function DeltaStrategyTab({
             stopLossMark: patch.stopLossMark ?? currentWin.stopLossMark,
             marginCapPct: patch.marginCapPct ?? currentWin.marginCapPct,
             marginTargetPct: patch.marginTargetPct ?? currentWin.marginTargetPct,
+            // Mirrored so a book whose schedule_windows is still empty — the
+            // engine's non-window path — resolves the same expiry. `expiryLabel`
+            // is cleared for the same reason it is in planCycle: a fixed date
+            // left on the account would outrank the window's rule.
+            expiryRule: dteToRule(patch.daysToExpiry ?? currentWin.daysToExpiry),
+            expiryLabel: null,
           }
         : {}),
     })
@@ -231,31 +239,10 @@ export function DeltaStrategyTab({
                 <DayPicker value={config.tradeDays} onChange={(tradeDays) => setConfig({ tradeDays })} />
               </Field>
 
-              <GroupRule />
-
-              <Field
-                label="Expiry"
-                help="Which expiry to trade. Choose Today (same-day), Tomorrow (1 DTE), Friday (weekly), or a specific date. Rule-based expiries automatically roll every day."
-              >
-                <div className="flex items-center gap-2">
-                  <Select
-                    value={expiryValue}
-                    width="w-48"
-                    onChange={(v) => {
-                      if (v.startsWith('rule:')) {
-                        const rule = v.replace('rule:', '') as any
-                        setConfig({ expiryLabel: v, expiryRule: rule })
-                      } else {
-                        setConfig({ expiryLabel: v, expiryRule: 'fixed' })
-                      }
-                    }}
-                    options={expiryChoices}
-                  />
-                  {!expiryLive && (
-                    <span className="text-[11px] whitespace-nowrap text-warn">Settled — pick a date</span>
-                  )}
-                </div>
-              </Field>
+              {/* Expiry is not here. It belongs to the window: a window that opens
+                  in the evening and one that opens at the open are not usually
+                  selling the same contract, and a single global choice cannot say
+                  that. The control lives in the window editor below as DTE. */}
 
               <GroupRule />
 
@@ -375,6 +362,25 @@ export function DeltaStrategyTab({
 
                 {/* Window Controls Grid */}
                 <div className="flex min-w-0 flex-1 flex-wrap items-start gap-x-6 gap-y-4">
+                  {/* First, because it decides which contract every other field in
+                      this window is about. */}
+                  <Field
+                    label="DTE"
+                    help="Which expiry this window sells. Today is the same-day expiry, Tomorrow the next one out, and Coming Friday the nearest Friday weekly — whatever day it is now. Each window chooses its own."
+                  >
+                    <Select
+                      value={String(currentWin.daysToExpiry ?? 0)}
+                      width="w-40"
+                      onChange={(v) => updateWindow({ daysToExpiry: Number(v) })}
+                      options={DTE_CHOICES.map((c) => ({
+                        value: String(c.dte),
+                        label: `${c.label} (${c.dte} DTE)`,
+                      }))}
+                    />
+                  </Field>
+
+                  <GroupRule />
+
                   <Field
                     label="Entry premium"
                     help="The premium to aim for inside this window."
