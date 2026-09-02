@@ -9,7 +9,7 @@ import {
   DEFAULT_DELTA_CONFIG,
   EMPTY_SESSION,
   entryLots as entryLotsFor,
-  pickExpiry,
+  pickSessionExpiry,
   ruleToDte,
   planCycle,
   type CyclePlan,
@@ -610,7 +610,10 @@ export function useDeltaStrategy(
           mode: m,
           session: sess,
           positions: d.positions,
-          expiry: pickExpiry(d.expiries, cfg),
+          // planCycle resolves the expiry itself, from the governing window's
+          // rule and the session's own day. Passing one in from here is what
+          // let the readout name a contract the engine was not trading.
+          expiries: d.expiries,
           spot: market.spot,
           tickerFor,
           // The engine's touched set lives in the database and is its business.
@@ -631,10 +634,12 @@ export function useDeltaStrategy(
   // Any listed contract of the traded expiry answers this — they share a contract
   // value — so the readout uses the venue's number rather than assuming one.
   const entryLots = useMemo(() => {
-    const expiry = pickExpiry(deps.expiries, config)
+    // The same resolver the plan uses, so the lot count is quoted off the
+    // contract this book is actually selling.
+    const expiry = pickSessionExpiry(deps.expiries, config, new Date(), mode)
     const product = expiry?.calls.values().next().value ?? expiry?.puts.values().next().value
     return product ? entryLotsFor(product, config) : null
-  }, [deps.expiries, config])
+  }, [deps.expiries, config, mode])
 
   return useMemo(
     () => ({

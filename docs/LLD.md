@@ -1058,6 +1058,22 @@ the readout predicting one thing and the engine doing another.
 > both to IST. Agreement between the two is necessary and not sufficient; the
 > clock each of them reads is its own question.
 >
+> A third, found by tracing one real window rather than by diffing: the answer to
+> "which expiry is this book trading" was being computed in **four** places —
+> `planCycle`'s caller, `entryLots`, and two spots in `App.tsx` — and every one of
+> them called `pickExpiry` with the *raw account config* and no session day. So
+> the readout used the account-level rule where the engine used the governing
+> window's `daysToExpiry`, and counted from the calendar day where the session
+> ran on its own. `pickSessionExpiry` is now the single answer, `CycleInput` no
+> longer accepts a pre-resolved `expiry`, and `resolveSessionContext` is the one
+> place a window's overrides are folded in
+> ([`0068`](../supabase/migrations/0068_the_expiry_day_is_the_session_day.sql)).
+>
+> The shape of that fault is worth naming: it was not that the two
+> implementations disagreed about a rule, but that one of them had four copies of
+> the question. A type change was what closed it — passing `expiries` instead of
+> `expiry` makes the wrong answer unrepresentable.
+>
 > The diff that found the first kind is worth repeating when either side changes:
 > list the settings columns the engine writes, list the ones `COLS` selects, and
 > read the difference. `touched_symbols` and `pass_open` are on it legitimately — engine

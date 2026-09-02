@@ -101,6 +101,11 @@ adds it an optional stop.
 >   `tomorrow` was selling zero days to expiry instead of one — so it matters to
 >   any futures book with a window opening in that band, which the default
 >   01:30 start falls inside.
+> - [`0068`](../supabase/migrations/0068_the_expiry_day_is_the_session_day.sql)
+>   counts those rules from the **session day** rather than the calendar day, so
+>   a window that wraps midnight trades one expiry from open to close instead of
+>   changing contract at 00:00. Run it with `0067`; on a book with no windows and
+>   a session that does not wrap, neither migration changes any answer.
 
 > `0021` adds `delta_strategy_settings.qty`, defaulting to one lot so nothing
 > changes on its own. **Raising it means rescaling `band_low`/`band_high` by the

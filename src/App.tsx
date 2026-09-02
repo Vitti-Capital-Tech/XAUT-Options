@@ -26,7 +26,7 @@ import {
   type Expiry,
   type Product,
 } from './lib/delta'
-import { pickExpiry } from './lib/deltaStrategy'
+import { pickSessionExpiry } from './lib/deltaStrategy'
 import { shortImRate, summarizeAccount, type Side } from './engine/paper'
 import { supabaseConfigured } from './lib/supabase'
 import { ADMIN_KEYWORD } from './lib/admin'
@@ -251,7 +251,7 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
     },
     deltaTrading.reload,
   )
-  const deltaExpiry = pickExpiry(expiries, deltaStrategy.config)
+  const deltaExpiry = pickSessionExpiry(expiries, deltaStrategy.config, new Date(), 'options')
 
   // ---- The same strategy, hedged with futures ------------------------------
   // One hook, one settings table and one server-side engine; `futures` is what
@@ -270,7 +270,7 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
     futuresTrading.reload,
     'futures',
   )
-  const futuresExpiry = pickExpiry(expiries, futuresStrategy.config)
+  const futuresExpiry = pickSessionExpiry(expiries, futuresStrategy.config, new Date(), 'futures')
 
   // ---- Live stream ---------------------------------------------------------
   const [stream] = useState(() => new MarketStream())

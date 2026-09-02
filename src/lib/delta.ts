@@ -200,6 +200,13 @@ function istToday(now: Date): Date {
   return new Date(Date.UTC(at('year'), at('month') - 1, at('day')))
 }
 
+/** `YYYY-MM-DD` as a UTC-midnight Date, comparable with `expiryToDate`. */
+function dayToDate(day: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day)
+  if (!m) return null
+  return new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])))
+}
+
 /**
  * Resolves an expiry from the live chain based on an expiry rule and/or explicit label.
  */
@@ -208,6 +215,25 @@ export function resolveTargetExpiry(
   rule: ExpiryRule = 'today',
   explicitLabel?: string | null,
   now: Date = new Date(),
+  /**
+   * The day `today` / `tomorrow` / `friday` are counted from, as `YYYY-MM-DD`.
+   *
+   * This is the **session day**, not the calendar day, and on a window that
+   * wraps midnight the two are different for half its length: the session day
+   * stays the day the window opened, deliberately, so that a 19:01 → 16:30
+   * window is one session rather than two half ones.
+   *
+   * Anchoring on the calendar day meant the rule moved under the session. A
+   * window opened Monday evening asking for `tomorrow` sold Tuesday's expiry at
+   * the open and then, from IST midnight, called Wednesday's "tomorrow" — so
+   * every strike the band correction or an ATM shift sold after midnight was on
+   * a different expiry from the book it was correcting. Anchored on the session
+   * day, a window trades one expiry from open to close.
+   *
+   * Omit it and the IST calendar day is used, which is what a book with no
+   * windows and a non-wrapping session wants — there the two are the same day.
+   */
+  anchorDay?: string | null,
 ): Expiry | null {
   if (expiries.length === 0) return null
 
@@ -223,9 +249,11 @@ export function resolveTargetExpiry(
       ? (explicitLabel.replace('rule:', '') as ExpiryRule)
       : rule
 
-  // The IST day, on the same clock as the session, the trade-days filter and the
-  // engine — see `istToday`.
-  const todayTime = istToday(now).getTime()
+  // The day the rules count from: the session's own day where one is given,
+  // else the IST calendar day. Same clock as the session and the engine either
+  // way — see `istToday` and `anchorDay`.
+  const anchor = (anchorDay ? dayToDate(anchorDay) : null) ?? istToday(now)
+  const todayTime = anchor.getTime()
   const oneDayMs = 24 * 60 * 60 * 1000
 
   if (effectiveRule === 'today') {
@@ -241,9 +269,9 @@ export function resolveTargetExpiry(
   }
 
   if (effectiveRule === 'friday') {
-    // Weekday of the IST date, not of the viewer's UTC instant. Built as UTC
+    // Weekday of the anchor day, not of the viewer's UTC instant. Built as UTC
     // midnight of that date, so getUTCDay reads it back without a shift.
-    const currentDay = istToday(now).getUTCDay()
+    const currentDay = anchor.getUTCDay()
     const daysToFriday = (5 - currentDay + 7) % 7
     const targetFridayTime = todayTime + daysToFriday * oneDayMs
     const fridayExp = expiries.find((e) => expiryToDate(e.label).getTime() === targetFridayTime)

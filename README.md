@@ -665,6 +665,31 @@ date, so the readout agreed with the engine. It only bites a window opening
 inside that band — but `defaultScheduleWindow` starts at **01:30**, which is
 inside it.
 
+**And the day is the session's day, not the calendar's**
+([`0068`](supabase/migrations/0068_the_expiry_day_is_the_session_day.sql)). A
+window that wraps midnight keeps the day it opened as its session day — that is
+what makes `19:01 → 16:30` one session rather than two halves, and `session_day`,
+`entered_day`, the roll budget and the shift budget all key off it. The expiry
+rules counted from the calendar day instead, so at IST midnight the rule moved
+out from under the session that owned it: a window opened Monday asking for
+`Tomorrow` sold Tuesday's expiry at the open, then called *Wednesday's*
+"tomorrow" from 00:00 — and every leg it sold after that (a band correction's
+fresh short, an ATM shift's replacement, a re-entry) went onto a contract the
+book was not holding.
+
+Counted from the session day, a window trades **one expiry from open to close**:
+
+| | Mon 19:01 | Tue 00:30 | Tue 16:29 |
+| --- | --- | --- | --- |
+| `Tomorrow`, before | `060126` | `070126` | `070126` |
+| `Tomorrow`, after | `060126` | `060126` | `060126` |
+
+> `Today` is the exception, and not because of the day it counts from: a 0-DTE
+> contract settles at 21:30 IST, so a window still open at 21:31 has no
+> today's-expiry left to name. The liveness filter drops it and the rule falls
+> through to the nearest live contract. **A window meant to hold a position
+> overnight wants `Tomorrow`, not `Today`.**
+
 #### What 0048 broke, and what 0049 fixed
 
 0048 shipped with four faults that stopped the engine outright, so it is worth

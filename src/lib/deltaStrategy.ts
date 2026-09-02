@@ -109,17 +109,47 @@ export function pickExpiry(
   expiries: Expiry[],
   cfg: Pick<DeltaConfig, 'expiryPick'> & { expiryLabel?: string | null; expiryRule?: ExpiryRule },
   now: Date = new Date(),
+  /** The session day the rules count from — see `resolveTargetExpiry`. */
+  anchorDay?: string | null,
 ): Expiry | null {
   if (cfg.expiryLabel && cfg.expiryLabel.startsWith('rule:')) {
     const rule = cfg.expiryLabel.replace('rule:', '') as ExpiryRule
-    return resolveTargetExpiry(expiries, rule, null, now)
+    return resolveTargetExpiry(expiries, rule, null, now, anchorDay)
   }
   if (cfg.expiryRule && cfg.expiryRule !== 'fixed') {
-    return resolveTargetExpiry(expiries, cfg.expiryRule, cfg.expiryLabel, now)
+    return resolveTargetExpiry(expiries, cfg.expiryRule, cfg.expiryLabel, now, anchorDay)
   }
   if (cfg.expiryLabel) return expiries.find((e) => e.label === cfg.expiryLabel) ?? null
   if (cfg.expiryPick === 'next') return expiries[1] ?? expiries[0] ?? null
   return expiries[0] ?? null
+}
+
+/**
+ * The expiry a book is trading right now: the active window's rule, counted
+ * from the session's own day.
+ *
+ * **Use this rather than `pickExpiry` for anything describing a live book.**
+ * The two inputs it folds in are the two that were being got wrong, each in a
+ * different caller:
+ *
+ * - *The rule.* A schedule window carries its own `daysToExpiry`, and the engine
+ *   reads it. `pickExpiry` called with the raw account config reads the
+ *   account-level rule instead, so the readout could name one expiry while the
+ *   engine traded another.
+ * - *The day.* On a window that wraps midnight the session day and the calendar
+ *   day part company — see `resolveTargetExpiry`'s `anchorDay`.
+ *
+ * `planCycle` calls this itself, which is why `CycleInput` no longer carries an
+ * `expiry`: there is one answer to this question and one place that computes it.
+ */
+export function pickSessionExpiry(
+  expiries: Expiry[],
+  cfg: DeltaConfig,
+  now: Date = new Date(),
+  mode: HedgeMode = 'options',
+): Expiry | null {
+  const ctx = resolveSessionContext(cfg, now, mode)
+  return pickExpiry(expiries, ctx.cfg, now, ctx.day)
 }
 
 export interface DeltaConfig {
@@ -1387,7 +1417,14 @@ export interface CycleInput {
   mode?: HedgeMode
   session: SessionState
   positions: PositionRow[]
-  expiry: Expiry | null
+  /**
+   * Every listed expiry. The one this book trades is resolved here, from the
+   * governing window's rule and the session's own day — see
+   * `pickSessionExpiry`. It used to be passed in already resolved, and both
+   * callers resolved it from the raw account config and the calendar day, so
+   * the readout could name a different contract from the one the engine traded.
+   */
+  expiries: Expiry[]
   spot: number
   tickerFor: (symbol: string) => Ticker | undefined
   /** Strikes already acted on in this corrective pass — touched at most once. */
@@ -1438,17 +1475,42 @@ export interface CyclePlan {
  * the perpetual instead — one order, either direction, and neither the queue nor
  * the roll budget is consulted. Every other rule above is shared verbatim.
  */
-export function planCycle(input: CycleInput): CyclePlan {
-  const { now, cfg: rawCfg, session, positions, expiry, spot, tickerFor, touched } = input
-  const mode = input.mode ?? 'options'
+/**
+ * Which settings, which phase and which day are in force for a book right now.
+ *
+ * Lifted out of `planCycle` so that the answer to "what is this book doing at
+ * this instant" has one implementation. A schedule window overrides most of the
+ * account's settings and redefines the session day, and every caller that needs
+ * to describe a live book needs all of that — not just the cycle planner.
+ * `pickSessionExpiry` is the other caller, and the reason this exists: the expiry
+ * depends on the window's rule *and* on the session day, and it was being
+ * resolved from the raw account config and the calendar day.
+ *
+ * Books with no windows — every `delta` account, and a `futures` account that
+ * has not defined any — fall straight through to the account's own session, so
+ * this costs them nothing.
+ */
+export function resolveSessionContext(
+  rawCfg: DeltaConfig,
+  now: Date = new Date(),
+  mode: HedgeMode = 'options',
+): {
+  /** The account's config with the active window's overrides folded in. */
+  cfg: DeltaConfig
+  phase: SessionPhase
+  /** The session's own day, `YYYY-MM-DD`. On a wrapping window this is the day
+   *  the window opened, which is not the calendar day after midnight. */
+  day: string
+  tradingDay: boolean
+  /** The governing window's id, or null when no window governs. */
+  windowId: string | null
+} {
   const rawSession = sessionPhase(now, rawCfg)
 
   let cfg = rawCfg
   let phase = rawSession.phase
   let day = rawSession.day
   let tradingDay = rawSession.tradingDay
-  // Which window governs, if any — needed below to ask whether *this* window has
-  // opened a book yet, which is the engine's own entry test.
   let windowId: string | null = null
 
   if (mode === 'futures' && rawCfg.scheduleWindows && rawCfg.scheduleWindows.length > 0) {
@@ -1496,6 +1558,16 @@ export function planCycle(input: CycleInput): CyclePlan {
       }
     }
   }
+
+  return { cfg, phase, day, tradingDay, windowId }
+}
+
+export function planCycle(input: CycleInput): CyclePlan {
+  const { now, cfg: rawCfg, session, positions, spot, tickerFor, touched } = input
+  const mode = input.mode ?? 'options'
+
+  const { cfg, phase, day, tradingDay, windowId } = resolveSessionContext(rawCfg, now, mode)
+  const expiry = pickExpiry(input.expiries, cfg, now, day)
 
   // Gamma is read for one purpose only — deriving the band — and a futures-hedged
   // book does not derive it. So that book neither computes Γp nor waits for one:
