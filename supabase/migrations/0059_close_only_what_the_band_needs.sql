@@ -1,116 +1,29 @@
--- 0058_read_our_own_reply.sql
+-- 0059_close_only_what_the_band_needs.sql
 --
--- Run this whole file in the Supabase SQL Editor after 0057.
+-- Run this whole file in the Supabase SQL Editor after 0058.
 --
--- The 78,741 spot that liquidated the book has a named source, and 0057's guard
--- does not stop it.
+-- Changes one thing: when the futures book cannot afford a perpetual hedge and
+-- falls back to closing the leg driving Δp, it now closes **only as many lots as
+-- the band needs**, not the whole leg.
 --
--- net._http_response is one shared table for every pg_net caller in this
--- database. The delta engine never knew which reply was its own; it described
--- one and took the newest match:
+--     v_q = ceil( (target − Δp) ÷ (delta × contract_value) ),  capped at the leg
 --
---     status 200, recent, body has "result":[, body mentions XAUT,
---     and (0049/0057) the first element has greeks
+-- That is positive for the culprit leg by construction: on a breach above the
+-- band the target sits below Δp, and the leg driving it is the short put, whose
+-- delta is negative — both sides of the division are negative. `ceil`, not
+-- `floor`, because this is closing a breach: landing a fraction short leaves the
+-- book outside the band and pays another spread next cycle to finish.
 --
--- queue_strategy_checks — the auto strategy's poller, 0008, unchanged since the
--- day it was written — fetches
+-- It is the same arithmetic the perpetual hedge and the options band correction
+-- have always used. 0055 closed the whole leg instead, which was the instruction
+-- at the time, and it has two costs worth naming: it books more loss than the
+-- breach called for, and it routinely throws Δp out the *other* side of the band
+-- — where, if it happens to empty a wing, the empty-wing rule reads it as a side
+-- gone and flattens the book.
 --
---     /v2/tickers?contract_types=call_options,put_options
---
--- with no underlying_asset_symbols filter. That is every option listed on the
--- exchange: 1043 tickers, BTC among them at a spot near 78,741, once a minute on
--- the minute. Its first element is an XAUT put, and options carry greeks, so it
--- passes all five tests. The delta poller's own reply is 107 tickers; the only
--- thing separating them is size, and nothing was looking at size.
---
--- Between :00 and the delta poller's next reply a couple of seconds later, the
--- 1043-row body is the newest match, and delta-apply runs every 2 seconds. So it
--- was only ever a matter of time.
---
--- Before 0050 this was survivable: the insert took only C-XAUT-%/P-XAUT-%, and
--- every cycle opened with `delete from delta_chain`, so a bad ingest was both
--- filtered and transient. 0050 dropped the filter and the delete together, and
--- spot was `max(spot_price)` over the whole table — so the first BTC row to land
--- became spot for every account, permanently.
---
--- 0057 restored the filter, scoped spot to XAUT and added a 20% cross-check
--- against the XAUTUSD mark. All three hold. But the greeks guard it also
--- restored is worthless against this particular reply, and no content test can
--- do better — the two bodies are the same shape and both mention XAUT.
---
--- So stop describing the reply. queue_delta_checks records the request id that
--- net.http_get returns, and the engine reads the reply to that id. A reply
--- nobody here asked for cannot be picked, whatever it contains, and whoever adds
--- the next poller.
---
--- Note, not fixed here: queue_strategy_checks still pulls the whole exchange
--- once a minute. That is the auto strategy's own poller and its engine reads
--- replies the same loose way, so it deserves the same treatment — but it is a
--- different strategy on a different account kind, and this file is already the
--- fourth in a row touching the futures engine.
+-- Nothing else in the engine changes.
 -- ============================================================================
 
--- ---------------------------------------------------------------------------
--- 1. The request log
--- ---------------------------------------------------------------------------
--- One row per ticker request the delta poller makes. Unlogged and pruned: it is
--- a correlation key with a lifetime of seconds, not a record of anything.
-create unlogged table if not exists public.delta_ticker_requests (
-  id           bigint primary key,
-  requested_at timestamptz not null default now()
-);
-
-alter table public.delta_ticker_requests enable row level security;
-revoke all on public.delta_ticker_requests from anon, authenticated;
-
-create index if not exists delta_ticker_requests_requested_at_idx
-  on public.delta_ticker_requests (requested_at desc);
-
-comment on table public.delta_ticker_requests is
-  'Request ids from queue_delta_checks, so apply_delta_strategy can read its own reply out of the shared net._http_response instead of guessing which one is his.';
-
--- ---------------------------------------------------------------------------
--- 2. queue_delta_checks: keep the id
--- ---------------------------------------------------------------------------
-create or replace function public.queue_delta_checks()
-returns integer
-language plpgsql
-security definer
-set search_path = public, net
-as $$
-declare
-  v_req bigint;
-begin
-  if not exists (select 1 from public.delta_strategy_settings where armed) then
-    return 0;
-  end if;
-
-  -- net.http_get returns the request id; _http_response.id is the same value.
-  -- 0050 discarded it with `perform`, which is what left the engine guessing.
-  select net.http_get(
-    url := 'https://api.india.delta.exchange/v2/tickers'
-           || '?contract_types=call_options,put_options,perpetual_futures'
-           || '&underlying_asset_symbols=XAUT',
-    timeout_milliseconds := 8000
-  ) into v_req;
-
-  insert into public.delta_ticker_requests (id) values (v_req)
-  on conflict (id) do nothing;
-
-  -- The engine only ever looks 60 seconds back, and the poller runs every five,
-  -- so anything older than a few minutes is dead weight.
-  delete from public.delta_ticker_requests
-  where requested_at < now() - interval '10 minutes';
-
-  return 1;
-end;
-$$;
-revoke all on function public.queue_delta_checks() from public, anon, authenticated;
-
--- ---------------------------------------------------------------------------
--- 3. The engine
--- ---------------------------------------------------------------------------
--- 0057's engine with the response picker replaced. Everything else is unchanged.
 create or replace function public.apply_delta_strategy()
 returns integer
 language plpgsql
@@ -158,6 +71,9 @@ declare
   -- pay it with. Kept apart from v_margin/v_goal, which the margin guard owns.
   v_free      numeric;
   v_hedge_im  numeric;
+  -- 0059: the close size, kept apart from v_q so the log can still name the
+  -- hedge that was refused alongside the close that replaced it.
+  v_close_q   int;
   v_perp      record;
   v_q2        int;
   -- 0056: which legs the chain could not price, for the log line.
@@ -853,7 +769,7 @@ begin
       -- short put (net_qty < 0, delta < 0, so the product is positive); below the
       -- band it is the short call. Ordering by the contribution rather than by
       -- moneyness gets that right without special-casing either side.
-      select p.symbol, p.net_qty, p.contract_type,
+      select p.symbol, p.net_qty, p.contract_type, c.delta,
              p.net_qty * c.delta as contribution
         into v_leg
       from public.positions p
@@ -862,6 +778,7 @@ begin
         and p.net_qty < 0
         and p.contract_type in ('call_options', 'put_options')
         and c.delta is not null
+        and c.delta <> 0
       order by case when v_breach = 'high' then p.net_qty * c.delta
                     else -(p.net_qty * c.delta) end desc
       limit 1;
@@ -872,14 +789,34 @@ begin
         continue;
       end if;
 
-      -- In full, as configured: the whole leg goes, not a slice of it.
-      perform public.delta_buy_back(r.account_id, r.user_id, v_leg.symbol,
-                                    abs(v_leg.net_qty), v_spot);
+      -- 0059: only as many lots as the band actually needs, not the whole leg.
+      --
+      -- Buying back v_q lots of a short leg moves Δp by v_q × delta × cv, so the
+      -- lots that land Δp on the target are
+      --
+      --     v_q = (target − Δp) ÷ (delta × cv)
+      --
+      -- and that is positive for the culprit leg by construction: on a breach
+      -- above the band the target is below Δp and the leg driving it is the short
+      -- put, whose delta is negative, so both sides of the division are negative.
+      -- `ceil` rather than `floor` because this closes a breach — landing a
+      -- fraction short of the target leaves the book still outside the band and
+      -- pays another spread next cycle to finish the job.
+      --
+      -- The same arithmetic the hedge and the options band correction already use.
+      -- Closing the whole leg was the earlier instruction; it overshot, booking
+      -- more loss than the breach called for and often throwing Δp out the other
+      -- side, which the empty-wing rule then reads as a missing side.
+      v_close_q := ceil((v_target - v_dp) / (v_leg.delta * v_cv))::int;
+      v_close_q := greatest(1, least(v_close_q, abs(v_leg.net_qty)));
+
+      perform public.delta_buy_back(r.account_id, r.user_id, v_leg.symbol, v_close_q, v_spot);
       perform public.delta_reason(r.account_id, 'delta_exit', v_spot, v_dp, v_target);
 
-      raise log 'apply_delta_strategy: account % out of margin for a % lot hedge (needs %, free %) — closed % (%) in full, contribution %',
+      raise log 'apply_delta_strategy: account % out of margin for a % lot hedge (needs %, free %) — closed % of % lots on % (%), contribution %',
         r.account_id, v_q, round(v_hedge_im, 2), round(v_free, 2),
-        v_leg.symbol, v_leg.contract_type, round(v_leg.contribution, 4);
+        v_close_q, abs(v_leg.net_qty), v_leg.symbol, v_leg.contract_type,
+        round(v_leg.contribution, 4);
       v_n := v_n + 1;
       continue;
     end if;
@@ -1001,27 +938,41 @@ $$;
 revoke all on function public.apply_delta_strategy() from public, anon, authenticated;
 
 -- ---------------------------------------------------------------------------
--- 4. Sanity check
+-- Sanity check
 -- ---------------------------------------------------------------------------
 do $$
+declare
+  v_src text;
 begin
   if to_regclass('public.delta_ticker_requests') is null then
-    raise exception 'delta_ticker_requests was not created';
+    raise exception 'delta_ticker_requests is missing — apply 0058 first';
   end if;
-
   if not exists (select 1 from information_schema.columns
                  where table_schema = 'public' and table_name = 'delta_chain'
                    and column_name = 'updated_at') then
     raise exception 'delta_chain.updated_at is missing — apply 0056 first';
   end if;
 
-  if exists (select 1 from public.delta_chain
-             where symbol not like 'C-XAUT-%'
-               and symbol not like 'P-XAUT-%'
-               and symbol <> 'XAUTUSD') then
-    raise exception 'delta_chain still holds non-XAUT rows — apply 0057 first';
+  -- plpgsql resolves a name against its own declared variables *before* the
+  -- statement's table aliases. This function declares `r` and `s` as records, so
+  -- aliasing any table `r` or `s` inside it silently rebinds every `r.col` to the
+  -- account-loop record — and if that statement runs before the loop starts, it
+  -- raises `record "r" is not assigned yet` on the engine's very first statement,
+  -- every cycle, for ever.
+  --
+  -- 0058 did exactly that (`from net._http_response r`) and the engine did not
+  -- execute for a day. Nothing catches it: it is not a catalog fact, and
+  -- check_function_bodies parses the body without resolving names. Grepping the
+  -- stored source is crude but it is the only check that sees this class at all.
+  select pr.prosrc into v_src
+  from pg_proc pr join pg_namespace ns on ns.oid = pr.pronamespace
+  where ns.nspname = 'public' and pr.proname = 'apply_delta_strategy';
+
+  if v_src ~* '(from|join)[[:space:]]+[a-z_."]+[[:space:]]+(as[[:space:]]+)?(r|s)\M' then
+    raise exception
+      'apply_delta_strategy aliases a table "r" or "s" — those shadow its own record variables';
   end if;
 
-  raise log '0058: the engine reads its own reply by request id';
+  raise log '0059: exit sized to the band; no table alias shadows a record variable';
 end;
 $$;

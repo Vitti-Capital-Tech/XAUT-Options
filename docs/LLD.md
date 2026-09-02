@@ -944,6 +944,22 @@ the readout predicting one thing and the engine doing another.
 > and from 0056 onward each migration ends with a `do` block that resolves every
 > column, function and signature the engine names, at apply time.
 
+> [`0058`](../supabase/migrations/0058_read_our_own_reply.sql) then added a fifth
+> instance of the same class, in the fix for the fourth. Its new response picker
+> aliased the shared table as `r` — and `r` is the account-loop record this
+> function declares. **plpgsql resolves a name against its own variables before a
+> statement's table aliases**, so `r.content` bound to the unassigned record and
+> the engine raised `record "r" is not assigned yet` on its *first* statement,
+> every cycle, for a full day. `apply_trail_stops` has aliased that same table
+> `resp` since 0037 for exactly this reason.
+>
+> No catalog check sees this one: it is not a missing name, it is a correctly
+> spelled name resolving to the wrong thing. The guard that does see it is a
+> regex over `pg_proc.prosrc` for a table aliased `r` or `s`, which
+> [`0059`](../supabase/migrations/0059_close_only_what_the_band_needs.sql) runs at
+> apply time. Crude, and still worth having — the failure mode is a strategy that
+> is armed and silent.
+
 <a id="bitcoin-spot-and-why-describe-the-reply-cannot-work"></a>
 
 **Bitcoin spot, and why "describe the reply" cannot work.** The most expensive

@@ -1,116 +1,230 @@
--- 0058_read_our_own_reply.sql
+-- 0060_spot_is_the_perpetuals_own_row.sql
 --
--- Run this whole file in the Supabase SQL Editor after 0057.
+-- Run this whole file in the Supabase SQL Editor after 0059.
 --
--- The 78,741 spot that liquidated the book has a named source, and 0057's guard
--- does not stop it.
+-- Stale quotes. On 02 Sep at 08:53:24 the engine opened three pairs and then
+-- closed the entire call side within eighteen seconds:
 --
--- net._http_response is one shared table for every pg_net caller in this
--- database. The delta engine never knew which reply was its own; it described
--- one and took the newest match:
+--   08:53:24  sold C-4320 @ 8.00, C-4330 @ 5.50, C-4340 @ 3.60  (+ the puts)
+--   08:53:30  ATM reached — shifted C-4320 further out
+--   08:53:36  ATM reached — closed C-4330 in full
+--   08:53:42  ATM reached — closed C-4340 in full
+--   08:53:48  sold 7.746 futures — band breach, Δp 9.05 → 1.30
 --
---     status 200, recent, body has "result":[, body mentions XAUT,
---     and (0049/0057) the first element has greeks
+-- Every one of those rows reports `spot $4423.29`. XAUTUSD's own row in the
+-- chain said **4295.55**. A 4320 call cannot be quoted at 8.00 with spot at
+-- 4423 — that is 103 of intrinsic value alone. The premiums were real and the
+-- spot was not: they came from different snapshots.
 --
--- queue_strategy_checks — the auto strategy's poller, 0008, unchanged since the
--- day it was written — fetches
+--     v_spot := max(spot_price) from delta_chain where <XAUT symbols>
 --
---     /v2/tickers?contract_types=call_options,put_options
+-- max() takes the highest value any row holds. The chain has not been pruned
+-- since 0050 swapped `delete + insert` for an upsert, so a strike the venue
+-- stops quoting keeps its last row for ever — bid, delta and spot_price frozen
+-- at that moment. Once any row had seen 4423, max() returned 4423 for ever,
+-- however current the rest of the table was.
 --
--- with no underlying_asset_symbols filter. That is every option listed on the
--- exchange: 1043 tickers, BTC among them at a spot near 78,741, once a minute on
--- the minute. Its first element is an XAUT put, and options carry greeks, so it
--- passes all five tests. The delta poller's own reply is 107 tickers; the only
--- thing separating them is size, and nothing was looking at size.
+-- Then everything downstream did its job on a wrong number:
 --
--- Between :00 and the delta poller's next reply a couple of seconds later, the
--- 1043-row body is the newest match, and delta-apply runs every 2 seconds. So it
--- was only ever a matter of time.
+--   * the entry priced strikes off live bids but judged nothing against spot,
+--     so it sold calls at 4320/4330/4340
+--   * the ATM rule measured those strikes against 4423 and found all three
+--     "at or through the money", so it closed the lot
+--   * closing three short calls removed their negative delta, Δp jumped to 9.05
+--   * the hedge sold 8.2 XAUT of futures to answer a breach that never happened
 --
--- Before 0050 this was survivable: the insert took only C-XAUT-%/P-XAUT-%, and
--- every cycle opened with `delete from delta_chain`, so a bad ingest was both
--- filtered and transient. 0050 dropped the filter and the delete together, and
--- spot was `max(spot_price)` over the whole table — so the first BTC row to land
--- became spot for every account, permanently.
+-- This is the Bitcoin incident again with the foreign symbol removed. 0057
+-- scoped spot to XAUT and cross-checked it against the XAUTUSD mark, and neither
+-- helps here: the bad row *is* XAUT, and 4423 against 4295 is 3% — well inside
+-- the 20% guard. Scoping the aggregate was treating the symptom. The aggregate
+-- was the problem.
 --
--- 0057 restored the filter, scoped spot to XAUT and added a 20% cross-check
--- against the XAUTUSD mark. All three hold. But the greeks guard it also
--- restored is worthless against this particular reply, and no content test can
--- do better — the two bodies are the same shape and both mention XAUT.
+-- Two changes:
 --
--- So stop describing the reply. queue_delta_checks records the request id that
--- net.http_get returns, and the engine reads the reply to that id. A reply
--- nobody here asked for cannot be picked, whatever it contains, and whoever adds
--- the next poller.
+--   1. Prune. Anything not refreshed within two minutes is dropped. The poller
+--      runs every five seconds and the reply carries the whole live XAUT set, so
+--      a row that goes two minutes without an update is not being quoted any
+--      more. This restores the property `delete + insert` gave for free before
+--      0050 — a stale row cannot outlive the cycle that stopped seeing it.
 --
--- Note, not fixed here: queue_strategy_checks still pulls the whole exchange
--- once a minute. That is the auto strategy's own poller and its engine reads
--- replies the same loose way, so it deserves the same treatment — but it is a
--- different strategy on a different account kind, and this file is already the
--- fourth in a row touching the futures engine.
+--   2. Stop aggregating. Spot is read from the XAUTUSD row, which is upserted
+--      from every reply and is therefore current by construction. If the reply
+--      carries no perpetual, the fallback is the single most recently refreshed
+--      option row — still one row's own reading, never a max across rows.
+--
+-- A held leg whose strike gets pruned now shows up at the missing-delta gate,
+-- by name (0056), instead of being priced off a frozen quote. That is the right
+-- trade: standing down beats trading on a number nobody is quoting.
+--
+-- Nothing else in the engine changes.
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
--- 1. The request log
+-- 1. delta_sell_entry: out of the money only
 -- ---------------------------------------------------------------------------
--- One row per ticker request the delta poller makes. Unlogged and pruned: it is
--- a correlation key with a lifetime of seconds, not a record of anything.
-create unlogged table if not exists public.delta_ticker_requests (
-  id           bigint primary key,
-  requested_at timestamptz not null default now()
-);
-
-alter table public.delta_ticker_requests enable row level security;
-revoke all on public.delta_ticker_requests from anon, authenticated;
-
-create index if not exists delta_ticker_requests_requested_at_idx
-  on public.delta_ticker_requests (requested_at desc);
-
-comment on table public.delta_ticker_requests is
-  'Request ids from queue_delta_checks, so apply_delta_strategy can read its own reply out of the shared net._http_response instead of guessing which one is his.';
-
--- ---------------------------------------------------------------------------
--- 2. queue_delta_checks: keep the id
--- ---------------------------------------------------------------------------
-create or replace function public.queue_delta_checks()
-returns integer
+create or replace function public.delta_sell_entry(
+  p_account uuid,
+  p_user    uuid,
+  p_exp     text,
+  p_entry   numeric,
+  p_floor   numeric,
+  p_tie     text,
+  p_qty     numeric,
+  p_spot    numeric,
+  p_cap     numeric default 0,
+  p_pairs   int     default 1,
+  p_ceil    numeric default 0
+)
+returns text
 language plpgsql
 security definer
-set search_path = public, net
+set search_path = public
 as $$
 declare
-  v_req bigint;
+  pair     record;
+  v_before numeric;
+  v_after  numeric;
+  v_lots_c int;
+  v_lots_p int;
+  v_room   int;
+  v_want   int := greatest(1, coalesce(p_pairs, 1));
+  v_done   int := 0;
+  v_seen   int := 0;
+  v_ok     boolean;
+  v_desc   text := '';
 begin
-  if not exists (select 1 from public.delta_strategy_settings where armed) then
-    return 0;
+  -- Both sides ranked to the requested depth and joined on rank: pair 1 is the
+  -- best call against the best put, pair 2 the second against the second, and so
+  -- on — which is the pairing the readout draws. The inner join is what keeps the
+  -- entry symmetric: a side that ranks fewer strikes than the other simply ends
+  -- the list, rather than pairing a call with a put from a different rank.
+  --
+  -- Ranked once, before the first sale. delta_pick_premium_ranked is `stable`, so
+  -- it is read against this statement's snapshot and the strikes do not shuffle
+  -- underneath the loop as earlier pairs fill and consume their own room.
+  -- 0060: out of the money only — `p_beyond` is p_spot, not null.
+  --
+  -- The picker ranks by premium and, until now, judged nothing against spot. So
+  -- it could sell a strike that was already at or through the money, and the ATM
+  -- rule would close that same leg on the very next cycle: an instant round trip
+  -- paying two spreads and two fees for nothing. On 02 Sep it opened 4320/4330/
+  -- 4340 calls and closed all three within eighteen seconds.
+  --
+  -- The stale spot that made those strikes look in the money is fixed above, but
+  -- the entry should not have depended on spot being right to avoid selling into
+  -- the money. `p_beyond` already means "strictly further out than this" — calls
+  -- above it, puts below it — so passing spot is all it takes. A short strangle
+  -- is out of the money on both sides by definition; there was never a case for
+  -- letting the entry pick otherwise.
+  for pair in
+    select ca.rank,
+           ca.symbol as c_symbol, ca.strike as c_strike,
+           ca.premium as c_premium, ca.room_lots as c_room,
+           pu.symbol as p_symbol, pu.strike as p_strike,
+           pu.premium as p_premium, pu.room_lots as p_room
+    from public.delta_pick_premium_ranked(p_exp, 'call_options', p_entry, p_floor,
+                                          p_tie, p_spot, p_account, p_cap, p_spot,
+                                          p_ceil, v_want) ca
+    join public.delta_pick_premium_ranked(p_exp, 'put_options', p_entry, p_floor,
+                                          p_tie, p_spot, p_account, p_cap, p_spot,
+                                          p_ceil, v_want) pu on pu.rank = ca.rank
+    order by ca.rank
+  loop
+    v_seen := v_seen + 1;
+
+    -- XAUT to lots, per leg, off that contract's own value. A missing or zero
+    -- contract_value falls back to one lot rather than sizing off a guess.
+    select greatest(1, coalesce(round(p_qty / nullif(contract_value, 0))::int, 1))
+      into v_lots_c from public.delta_chain where symbol = pair.c_symbol;
+    select greatest(1, coalesce(round(p_qty / nullif(contract_value, 0))::int, 1))
+      into v_lots_p from public.delta_chain where symbol = pair.p_symbol;
+
+    -- The tighter of the two rooms, applied to both. `least` ignores nulls, so
+    -- an unset cap leaves this at the sizes above.
+    v_room := least(pair.c_room, pair.p_room);
+    if v_room is not null then
+      v_lots_c := least(v_lots_c, v_room);
+      v_lots_p := least(v_lots_p, v_room);
+    end if;
+
+    if coalesce(v_lots_c, 0) <= 0 or coalesce(v_lots_p, 0) <= 0 then
+      raise log 'delta_sell_entry: pair %/% — qty % sized to no lots', pair.rank, v_want, p_qty;
+      exit;
+    end if;
+
+    -- One block, one implicit savepoint. delta_sell swallows a failed fill and
+    -- returns normally, so a leg that did not open is detected by the position
+    -- not moving and turned into an exception here — which unwinds everything
+    -- this block did, including the other leg's fill.
+    --
+    -- The outcome leaves the block in v_ok rather than exiting the loop from
+    -- inside the handler: an exception rolls back the block's database work but
+    -- leaves plpgsql variables as they stood, so a flag set on the last line is
+    -- a reliable "both legs landed" and needs no reasoning about control flow
+    -- out of a handler.
+    v_ok := false;
+    begin
+      v_before := coalesce((select net_qty from public.positions
+                            where account_id = p_account and symbol = pair.c_symbol), 0);
+      perform public.delta_sell(p_account, p_user, pair.c_symbol, v_lots_c, p_spot);
+      v_after  := coalesce((select net_qty from public.positions
+                            where account_id = p_account and symbol = pair.c_symbol), 0);
+      -- Selling makes net_qty more negative, so a fill moves this the other way.
+      if v_before - v_after <= 0 then
+        raise exception 'call leg % did not fill', pair.c_symbol;
+      end if;
+
+      v_before := coalesce((select net_qty from public.positions
+                            where account_id = p_account and symbol = pair.p_symbol), 0);
+      perform public.delta_sell(p_account, p_user, pair.p_symbol, v_lots_p, p_spot);
+      v_after  := coalesce((select net_qty from public.positions
+                            where account_id = p_account and symbol = pair.p_symbol), 0);
+      if v_before - v_after <= 0 then
+        raise exception 'put leg % did not fill', pair.p_symbol;
+      end if;
+
+      v_ok := true;
+    exception when others then
+      raise log 'delta_sell_entry: pair %/% — % — pair rolled back, nothing left open',
+        pair.rank, v_want, sqlerrm;
+    end;
+
+    if not v_ok then
+      exit;
+    end if;
+
+    v_done := v_done + 1;
+    v_desc := v_desc
+      || case when v_desc = '' then '' else ', ' end
+      || format('%s × %sC @ $%s / %s × %sP @ $%s',
+                v_lots_c, round(pair.c_strike, 0), round(pair.c_premium, 2),
+                v_lots_p, round(pair.p_strike, 0), round(pair.p_premium, 2));
+  end loop;
+
+  -- Symmetric or not at all: half a pair is a directional position the strategy
+  -- never intends to open, so an empty ranking on either side opens nothing.
+  if v_seen = 0 then
+    raise log 'delta_sell_entry: no symmetric pair in [%, %] with room under the cap',
+      p_floor, p_ceil;
   end if;
 
-  -- net.http_get returns the request id; _http_response.id is the same value.
-  -- 0050 discarded it with `perform`, which is what left the engine guessing.
-  select net.http_get(
-    url := 'https://api.india.delta.exchange/v2/tickers'
-           || '?contract_types=call_options,put_options,perpetual_futures'
-           || '&underlying_asset_symbols=XAUT',
-    timeout_milliseconds := 8000
-  ) into v_req;
+  -- No pair at all is a failed entry: the caller must not stamp the day, so the
+  -- next refresh tries again rather than writing the session off.
+  if v_done = 0 then
+    return null;
+  end if;
 
-  insert into public.delta_ticker_requests (id) values (v_req)
-  on conflict (id) do nothing;
-
-  -- The engine only ever looks 60 seconds back, and the poller runs every five,
-  -- so anything older than a few minutes is dead weight.
-  delete from public.delta_ticker_requests
-  where requested_at < now() - interval '10 minutes';
-
-  return 1;
+  return case when v_done = v_want then v_desc
+              else format('%s of %s pairs — %s', v_done, v_want, v_desc) end;
 end;
 $$;
-revoke all on function public.queue_delta_checks() from public, anon, authenticated;
+revoke all on function public.delta_sell_entry(uuid, uuid, text, numeric, numeric, text,
+                                               numeric, numeric, numeric, int, numeric)
+  from public, anon, authenticated;
 
 -- ---------------------------------------------------------------------------
--- 3. The engine
+-- 2. The engine
 -- ---------------------------------------------------------------------------
--- 0057's engine with the response picker replaced. Everything else is unchanged.
 create or replace function public.apply_delta_strategy()
 returns integer
 language plpgsql
@@ -158,12 +272,16 @@ declare
   -- pay it with. Kept apart from v_margin/v_goal, which the margin guard owns.
   v_free      numeric;
   v_hedge_im  numeric;
+  -- 0059: the close size, kept apart from v_q so the log can still name the
+  -- hedge that was refused alongside the close that replaced it.
+  v_close_q   int;
   v_perp      record;
   v_q2        int;
   -- 0056: which legs the chain could not price, for the log line.
   v_unpriced  text;
-  -- 0057: the perpetual's own mark, to sanity-check spot against.
-  v_perp_mark numeric;
+  -- 0060: how old the row spot came from is. A correct-looking price that
+  -- nobody has refreshed is the failure this whole migration is about.
+  v_spot_age  interval;
   v_perlot    numeric;
   v_im_rate   numeric;
   v_adopted   boolean;
@@ -284,33 +402,71 @@ begin
     gamma          = 0,
     updated_at     = now();
 
-  -- 0057: scoped to XAUT. This was max(spot_price) over the whole table, so any
+  -- 0057: scoped to XAUT. This aggregated spot over the whole table, so any
   -- non-XAUT row that ever reached the chain won the max and became "spot" for
   -- every account. A BTC row here puts spot near 78,000 against strikes near
   -- 4,400, which makes every call read as deep ITM: the ATM rule then closes the
   -- entire call side, the empty-wing rule sees one side gone and flattens the
   -- book. That is not a hedge going wrong, it is the book being liquidated by a
   -- bad number, so this is now derived narrowly and then checked.
-  select max(spot_price) into v_spot
+  -- 0060: drop anything this reply did not refresh.
+  --
+  -- The chain has not been pruned since 0050 swapped `delete + insert` for an
+  -- upsert, so a strike the venue stops quoting keeps its last row for ever —
+  -- with the bid, the delta and the spot_price it carried at that moment. Those
+  -- rows then compete on equal terms with live ones.
+  delete from public.delta_chain
+  where updated_at < now() - interval '2 minutes';
+
+  -- 0060: spot from the perpetual's own row, not max() over the table.
+  --
+  -- Taking the highest spot_price any row happens to hold means that, with no
+  -- pruning that is the highest spot the chain has *ever* seen, not the current
+  -- one. On 02 Sep it returned 4423.29 while XAUTUSD itself said 4295.55, and
+  -- every rule downstream believed 4423: the entry sold 4320/4330/4340 calls at
+  -- premiums quoted when they were out of the money, the ATM rule then measured
+  -- them against 4423, found all three "in the money", and closed the whole call
+  -- side within eighteen seconds of opening it.
+  --
+  -- The 20% guard added in 0057 does not see this — 4423 against 4295 is 3%.
+  -- Scoping to XAUT was not enough either; a stale *XAUT* row is just as wrong as
+  -- a foreign one. The fix is to stop aggregating: XAUTUSD is upserted from every
+  -- reply, so its row is current by construction.
+  select spot_price, now() - updated_at into v_spot, v_spot_age
   from public.delta_chain
-  where spot_price is not null
-    and (symbol like 'C-XAUT-%' or symbol like 'P-XAUT-%' or symbol = 'XAUTUSD');
+  where symbol = 'XAUTUSD' and spot_price > 0;
+
+  -- Only if the perpetual is missing from the reply: the most recently refreshed
+  -- option row. Still a single row's own reading, never a max across rows.
+  if v_spot is null or v_spot <= 0 then
+    select spot_price, now() - updated_at into v_spot, v_spot_age
+    from public.delta_chain
+    where spot_price > 0
+      and (symbol like 'C-XAUT-%' or symbol like 'P-XAUT-%')
+    order by updated_at desc
+    limit 1;
+  end if;
 
   if v_spot is null or v_spot <= 0 then
     raise log 'apply_delta_strategy: no XAUT spot in the chain';
     return 0;
   end if;
 
-  -- The perpetual tracks the same underlying, so the two cannot disagree by much.
-  -- Anything wider means the chain is carrying something that is not gold, and
-  -- standing down beats trading on it — the whole book is priced off this number.
-  select coalesce(mark_price, best_ask, best_bid) into v_perp_mark
-  from public.delta_chain where symbol = 'XAUTUSD';
-
-  if v_perp_mark is not null and v_perp_mark > 0
-     and abs(v_spot - v_perp_mark) / v_perp_mark > 0.20 then
-    raise log 'apply_delta_strategy: spot % disagrees with the XAUTUSD mark % by more than 20%% — standing down',
-      round(v_spot, 2), round(v_perp_mark, 2);
+  -- 0060: spot has to be *fresh*, not merely plausible.
+  --
+  -- 0057 guarded this by comparing spot against the XAUTUSD mark and standing
+  -- down past 20%. That test is meaningless now: spot is read from the XAUTUSD
+  -- row, so it compared a row against itself — same instrument, same reply, they
+  -- cannot disagree. It read like a guard while checking nothing, which is worse
+  -- than no guard at all.
+  --
+  -- Staleness was the actual failure both times. The number was never implausible
+  -- — 4423 is a perfectly good gold price, it was just twenty minutes old. So the
+  -- test is now age. The poller runs every five seconds; a spot older than a
+  -- minute means the feed has stopped and there is nothing to trade on.
+  if v_spot_age is null or v_spot_age > interval '60 seconds' then
+    raise log 'apply_delta_strategy: spot % is % old — standing down',
+      round(v_spot, 2), coalesce(v_spot_age::text, 'unknown');
     return 0;
   end if;
 
@@ -804,8 +960,7 @@ begin
              coalesce(c.contract_value, 0.001) as cv
         into v_perp
       from public.delta_chain c
-      where c.contract_type = 'perpetual_futures'
-      limit 1;
+      where c.symbol = 'XAUTUSD';
 
       v_hedge_im := v_q * coalesce(v_perp.mark, v_spot) * coalesce(v_perp.cv, 0.001)
                     / greatest(coalesce(v_leverage, 100), 1);
@@ -853,7 +1008,7 @@ begin
       -- short put (net_qty < 0, delta < 0, so the product is positive); below the
       -- band it is the short call. Ordering by the contribution rather than by
       -- moneyness gets that right without special-casing either side.
-      select p.symbol, p.net_qty, p.contract_type,
+      select p.symbol, p.net_qty, p.contract_type, c.delta,
              p.net_qty * c.delta as contribution
         into v_leg
       from public.positions p
@@ -862,6 +1017,7 @@ begin
         and p.net_qty < 0
         and p.contract_type in ('call_options', 'put_options')
         and c.delta is not null
+        and c.delta <> 0
       order by case when v_breach = 'high' then p.net_qty * c.delta
                     else -(p.net_qty * c.delta) end desc
       limit 1;
@@ -872,14 +1028,34 @@ begin
         continue;
       end if;
 
-      -- In full, as configured: the whole leg goes, not a slice of it.
-      perform public.delta_buy_back(r.account_id, r.user_id, v_leg.symbol,
-                                    abs(v_leg.net_qty), v_spot);
+      -- 0059: only as many lots as the band actually needs, not the whole leg.
+      --
+      -- Buying back v_q lots of a short leg moves Δp by v_q × delta × cv, so the
+      -- lots that land Δp on the target are
+      --
+      --     v_q = (target − Δp) ÷ (delta × cv)
+      --
+      -- and that is positive for the culprit leg by construction: on a breach
+      -- above the band the target is below Δp and the leg driving it is the short
+      -- put, whose delta is negative, so both sides of the division are negative.
+      -- `ceil` rather than `floor` because this closes a breach — landing a
+      -- fraction short of the target leaves the book still outside the band and
+      -- pays another spread next cycle to finish the job.
+      --
+      -- The same arithmetic the hedge and the options band correction already use.
+      -- Closing the whole leg was the earlier instruction; it overshot, booking
+      -- more loss than the breach called for and often throwing Δp out the other
+      -- side, which the empty-wing rule then reads as a missing side.
+      v_close_q := ceil((v_target - v_dp) / (v_leg.delta * v_cv))::int;
+      v_close_q := greatest(1, least(v_close_q, abs(v_leg.net_qty)));
+
+      perform public.delta_buy_back(r.account_id, r.user_id, v_leg.symbol, v_close_q, v_spot);
       perform public.delta_reason(r.account_id, 'delta_exit', v_spot, v_dp, v_target);
 
-      raise log 'apply_delta_strategy: account % out of margin for a % lot hedge (needs %, free %) — closed % (%) in full, contribution %',
+      raise log 'apply_delta_strategy: account % out of margin for a % lot hedge (needs %, free %) — closed % of % lots on % (%), contribution %',
         r.account_id, v_q, round(v_hedge_im, 2), round(v_free, 2),
-        v_leg.symbol, v_leg.contract_type, round(v_leg.contribution, 4);
+        v_close_q, abs(v_leg.net_qty), v_leg.symbol, v_leg.contract_type,
+        round(v_leg.contribution, 4);
       v_n := v_n + 1;
       continue;
     end if;
@@ -1001,12 +1177,25 @@ $$;
 revoke all on function public.apply_delta_strategy() from public, anon, authenticated;
 
 -- ---------------------------------------------------------------------------
--- 4. Sanity check
+-- Sanity check
 -- ---------------------------------------------------------------------------
 do $$
+declare
+  v_src text;
 begin
-  if to_regclass('public.delta_ticker_requests') is null then
-    raise exception 'delta_ticker_requests was not created';
+  select pr.prosrc into v_src
+  from pg_proc pr join pg_namespace ns on ns.oid = pr.pronamespace
+  where ns.nspname = 'public' and pr.proname = 'apply_delta_strategy';
+
+  -- The aggregate this migration exists to remove.
+  if v_src ~* 'max\s*\(\s*spot_price\s*\)' then
+    raise exception 'apply_delta_strategy still derives spot from max(spot_price)';
+  end if;
+
+  -- 0059's guard, kept: a table aliased r or s shadows the record variables.
+  if v_src ~* '(from|join)[[:space:]]+[a-z_."]+[[:space:]]+(as[[:space:]]+)?(r|s)\M' then
+    raise exception
+      'apply_delta_strategy aliases a table "r" or "s" — those shadow its own record variables';
   end if;
 
   if not exists (select 1 from information_schema.columns
@@ -1015,13 +1204,6 @@ begin
     raise exception 'delta_chain.updated_at is missing — apply 0056 first';
   end if;
 
-  if exists (select 1 from public.delta_chain
-             where symbol not like 'C-XAUT-%'
-               and symbol not like 'P-XAUT-%'
-               and symbol <> 'XAUTUSD') then
-    raise exception 'delta_chain still holds non-XAUT rows — apply 0057 first';
-  end if;
-
-  raise log '0058: the engine reads its own reply by request id';
+  raise log '0060: chain is pruned each cycle; spot is the perpetual''s own row';
 end;
 $$;
