@@ -1217,11 +1217,18 @@ export function pickMultipleByPremium(
 
   if (allCandidates.length === 0) return []
 
-  // The bounds are a filter, not a preference. This used to fall back to the
-  // unfiltered list when nothing was in range, which made the readout promise an
-  // entry the engine will not open: delta_pick_premium_ranked drops an
-  // out-of-bounds strike in SQL with no fallback, so a range nothing satisfies
-  // means no entry. Saying so is the readout's job.
+  // The two bounds are not symmetric, and the asymmetry is deliberate.
+  //
+  //   min  a hard floor. A strike quoted below it is dropped, and if that empties
+  //        the side there is no entry — no fallback to the unfiltered list, which
+  //        would have the readout promise an entry the engine declines.
+  //   max  approximate. It does not exclude a richer strike; it only supplies the
+  //        target to rank against when entryPremium is unset. So a range of 3–5
+  //        can and will open a leg at 7.30 if that is the nearest to the target.
+  //
+  // `delta_pick_premium_ranked` reads them exactly this way — floor_val and
+  // target_val, no ceiling test — so the two stay in step. Change one and the
+  // readout starts describing an entry the engine does not make.
   const rawMin = cfg.entryPremiumMin ?? 0
   const rawMax = cfg.entryPremiumMax ?? 0
   const hasMin = rawMin > 0
@@ -1522,30 +1529,28 @@ export function planCycle(input: CycleInput): CyclePlan {
     const calls = pickMultipleByPremium(expiry, 'call', cfg, tickerFor, pairsCount, roomFor)
     const puts = pickMultipleByPremium(expiry, 'put', cfg, tickerFor, pairsCount, roomFor)
     if (calls.length === 0 || puts.length === 0) {
-      // Which side came back empty, and whether the premium range is what emptied
-      // it. "No call strike quoted yet" reads as a venue problem and sends you
-      // looking at the chain; a range nothing satisfies is a setting on this very
-      // panel, and the engine will keep declining the entry until it moves.
+      // Which side came back empty, and whether a setting on this panel is what
+      // emptied it. "No call strike quoted yet" reads as a venue problem and
+      // sends you looking at the chain; a floor nothing clears is a number on
+      // this very panel, and the engine will decline the entry until it moves.
+      //
+      // Only the floor is named, because only the floor can empty the list. The
+      // upper bound is approximate — it steers the target, it does not exclude a
+      // richer strike — so printing it here would blame a control that did not
+      // do this. Both bounds set means the lower of the two is the floor.
       const side = calls.length === 0 ? 'call' : 'put'
       const rawMin = cfg.entryPremiumMin ?? 0
       const rawMax = cfg.entryPremiumMax ?? 0
       const hasMin = rawMin > 0
       const hasMax = rawMax > 0
-      const minVal = hasMin && hasMax ? Math.min(rawMin, rawMax) : rawMin
-      const maxVal = hasMin && hasMax ? Math.max(rawMin, rawMax) : rawMax
-      const bounded = hasMin || hasMax
-      const range =
-        hasMin && hasMax
-          ? `${usd2(minVal)}–${usd2(maxVal)}`
-          : hasMin
-            ? `at or above ${usd2(minVal)}`
-            : `at or below ${usd2(maxVal)}`
+      const floorVal = hasMin && hasMax ? Math.min(rawMin, rawMax) : hasMin ? rawMin : 0
       return {
         ...base,
         action: null,
-        reason: bounded
-          ? `No ${side} strike quoted ${range}`
-          : `No ${side} strike quoted yet`,
+        reason:
+          floorVal > 0
+            ? `No ${side} strike quoted at or above ${usd2(floorVal)}`
+            : `No ${side} strike quoted yet`,
       }
     }
     const count = Math.min(calls.length, puts.length)
