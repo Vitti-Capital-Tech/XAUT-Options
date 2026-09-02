@@ -167,6 +167,25 @@ Three mechanisms, in the order they matter:
 3. **The market WebSocket** — quotes only, at 4 repaints a second. It never
    reads the database.
 
+The chain's own bootstrap (`/v2/products` and `/v2/tickers`, refreshed every 60
+seconds so newly listed strikes appear) asks the venue for one underlying rather
+than filtering the whole exchange in the browser:
+
+| Call | Unfiltered | `underlying_asset_symbols=XAUT` |
+| --- | --- | --- |
+| `/v2/tickers` | 219 KB, 1079 symbols | 32 KB, 159 symbols |
+| `/v2/products` | 58 KB, 1000 of 1079 | 8.3 KB, 159 of 159 |
+
+Read the products row twice. `page_size=1000` against a live option list of 1079
+returned a **prefix**, with the rest reachable only through a `meta.after` cursor
+the app never followed — so 79 products were dropped, and being the most recently
+listed, they were exactly the newly opened strikes a chain most needs to show. A
+chain missing a strike looks identical to a chain whose venue has not listed one,
+which is why nobody would have caught it. Scoping to the underlying puts the
+total inside the page and ends the truncation; `getList` now also warns when a
+page comes back short of `meta.total_count`, since that is the failure mode with
+no visible symptom.
+
 The two database mechanisms are deliberately narrow, because a terminal left open
 all day is the normal way to use this app and every one of those reads is billed
 Supabase egress:
@@ -686,9 +705,20 @@ The fix is layered, because any one layer failing should not be enough:
   nobody here asked for cannot be picked, whatever it contains and whoever adds
   the next poller.
 
-> Still outstanding: `queue_strategy_checks` pulls the whole exchange once a
-> minute and the auto strategy's engine reads replies the same loose way. It
-> deserves the same request-id treatment.
+- **0064** narrows `queue_strategy_checks` to `underlying_asset_symbols=XAUT`.
+  The auto poller had been the one caller still pulling the whole exchange, and
+  it is what the delta engine mistook for its own reply.
+- **0065** gives the auto engine the same request-id treatment: `strategy_requests`
+  records both ids it fires, tagged `candle` or `tickers`, and the engine reads
+  the replies to those. It was the last caller describing rather than
+  correlating — and its test, `(result -> 0) ? 'symbol'`, matched *every* ticker
+  reply in the database, so with a delta account armed it had been reading the
+  delta poller's reply more often than its own.
+
+> That last one never became an incident, but only because 0064 had by then made
+> both pollers ask the same question — the wrong body held the right data. Luck
+> about content, not correctness, which is why it was worth closing rather than
+> leaving.
 
 **The habit worth naming.** Every one of these applied cleanly and failed hours
 later, because plpgsql resolves function and column names when a statement first

@@ -550,13 +550,33 @@ ways to do it:
 | Describe the reply | Filter on status, age and body shape | No |
 | Correlate the request | Keep the id `net.http_get` returns, join on `_http_response.id` | Yes |
 
-`apply_trail_stops` has correlated since
-[`0037`](../supabase/migrations/0037_auto_trailing_stop.sql) — `trail_candle_requests`
-maps request id to symbol and the reply is fetched by `join ... on resp.id =
-q.request_id`. The delta engine described instead, and it cost a book: see
+All three engines correlate now:
+
+| Engine | Correlation table | Since |
+| --- | --- | --- |
+| Trailing stops | `trail_candle_requests` (request id → symbol) | [`0037`](../supabase/migrations/0037_auto_trailing_stop.sql) |
+| Delta / futures | `delta_ticker_requests` | [`0058`](../supabase/migrations/0058_read_our_own_reply.sql) |
+| Auto strategy | `strategy_requests` (request id → `candle` \| `tickers`) | [`0065`](../supabase/migrations/0065_the_auto_engine_reads_its_own_reply.sql) |
+
+The delta engine described instead, and it cost a book: see
 [Bitcoin spot, and why "describe the reply" cannot work](#bitcoin-spot-and-why-describe-the-reply-cannot-work).
-It now correlates too, through `delta_ticker_requests`
-([`0058`](../supabase/migrations/0058_read_our_own_reply.sql)).
+
+The auto engine was the last one describing, and its test was
+`(result -> 0) ? 'symbol'` — true of *every* ticker reply in the database. With a
+delta account armed, `queue_delta_checks` fires one every five seconds, so in any
+150-second window there were dozens of candidates and the auto engine took
+whichever landed last. It had been reading the delta poller's reply more often
+than its own. That never became an incident only because
+[`0064`](../supabase/migrations/0064_the_auto_poller_asks_for_xaut.sql) made both
+pollers ask the same question, so the wrong body happened to hold the right data
+— luck about content, not correctness.
+
+`strategy_requests` tags each id `candle` or `tickers`, so **both** of that
+poller's replies are correlated rather than only the ticker one. The candle
+picker had the same weakness in a quieter form: it excluded the trailing-stop
+candle fetches with `not exists (select 1 from trail_candle_requests …)`, an
+exclusion list somebody has to remember to extend every time a new poller fetches
+bars. An id match needs no list.
 
 **Rule for any new poller: keep the request id.** A description that is accurate
 today is only accurate until somebody adds a ninth caller.
@@ -656,6 +676,33 @@ nothing is fresh, so a quiet account does not re-render the table.
 `marketStore` ticks and both strategy engines run on `pg_cron`, so a hidden tab
 loses nothing by not polling. `useVisiblePoll` reconciles once on return before
 resuming the interval.
+
+### `lib/delta.ts` — REST bootstrap
+
+| Helper | Endpoint | Scope |
+| --- | --- | --- |
+| `fetchExpiries` | `/v2/products?contract_types=call_options,put_options&states=live&page_size=1000&underlying_asset_symbols=XAUT` | 159 products, 8.3 KB |
+| `fetchTickers` | `/v2/tickers?contract_types=call_options,put_options&underlying_asset_symbols=XAUT` | 159 tickers, 32 KB |
+| `fetchPerp` / `fetchPerpTicker` | `/v2/products/XAUTUSD`, `/v2/tickers/XAUTUSD` | One instrument each |
+| `fetchCandles` | `/v2/history/candles` | One symbol, one range |
+
+Both list calls are refreshed every 60 seconds, because Delta lists new strikes
+and rolls expiries through the day and the WebSocket only streams symbols already
+in the list. Unfiltered they were 1079 rows and 277 KB per refresh, of which 159
+rows were XAUT — the venue-side filter is a 7× cut on both.
+
+`getList` also compares the returned array against `meta.total_count` and warns
+when the page is short. That is not defensive habit; it is a bug this code had.
+`page_size=1000` against 1079 live options returned a silent prefix, and the 79
+dropped were the most recently listed — the newly opened strikes a chain most
+needs to show. Nothing surfaced it because a chain missing a strike is
+indistinguishable from a chain whose venue has not listed one. With the
+underlying filter the total is 159 and the warning should never fire; it is there
+because the failure has no other symptom.
+
+The client-side `parseSymbol(...).underlying` filter is kept behind the venue's,
+where it now doubles as the symbol-shape check that turns a surprising row into a
+skipped row rather than a crash on the non-null assertion below it.
 
 ### `hooks/useAccounts.ts`
 

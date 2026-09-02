@@ -79,6 +79,14 @@ adds it an optional stop.
 >   adds `account_counts()`. **The admin panel's position, trade and order counts
 >   read zero without it** (and log to the console); nothing else in the app
 >   depends on it.
+> - [`0064`](../supabase/migrations/0064_the_auto_poller_asks_for_xaut.sql) and
+>   [`0065`](../supabase/migrations/0065_the_auto_engine_reads_its_own_reply.sql)
+>   are a pair, and `0065` supersedes `0064`'s version of
+>   `queue_strategy_checks` — run both, in order. Together they scope the auto
+>   strategy's poller to XAUT and make its engine read replies by request id
+>   rather than by guessing which of the shared `net._http_response` rows is its
+>   own. `0065` ends in a `do` block that resolves every name at apply time, so
+>   a mismatch raises there rather than hours later mid-cycle.
 
 > `0021` adds `delta_strategy_settings.qty`, defaulting to one lot so nothing
 > changes on its own. **Raising it means rescaling `band_low`/`band_high` by the

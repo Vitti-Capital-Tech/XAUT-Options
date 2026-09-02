@@ -309,13 +309,57 @@ async function getJson<T>(path: string): Promise<T> {
 }
 
 /**
+ * A list endpoint, with the page checked against the total the venue reports.
+ *
+ * Delta paginates `/v2/products` and hands back `meta.total_count` alongside an
+ * `after` cursor. Asking for a page smaller than the total silently returns a
+ * prefix — no error, no flag on the array. This app asked for `page_size=1000`
+ * against a live option list of 1079 and lost the last 79, which are the most
+ * recently listed contracts: exactly the newly opened strikes a chain most needs
+ * to show. Nobody would have seen it, because a chain missing a strike looks
+ * exactly like a chain whose venue has not listed one.
+ *
+ * Now that every call is scoped to one underlying the totals are far inside the
+ * page — 159 against 1000 — so this should never fire. It is here because the
+ * shape of the failure is invisible, not because it is expected: a venue listing
+ * more contracts is a normal thing to happen, and it should say so rather than
+ * quietly draw a short chain.
+ */
+async function getList<T>(path: string): Promise<T[]> {
+  const res = await fetch(`${REST_BASE}${path}`)
+  if (!res.ok) throw new Error(`Delta ${path} responded ${res.status}`)
+  const body = await res.json()
+  if (!body?.success) throw new Error(`Delta ${path} returned an unsuccessful payload`)
+
+  const rows = (body.result ?? []) as T[]
+  const total = Number(body?.meta?.total_count)
+  if (Number.isFinite(total) && total > rows.length) {
+    console.warn(
+      `Delta ${path} returned ${rows.length} of ${total} rows — the page is short and the ` +
+        `rest were dropped. Raise page_size or follow meta.after.`,
+    )
+  }
+  return rows
+}
+
+/**
  * Fetch every live option product for the underlying and group it by expiry.
  * Expiries come back sorted nearest-first.
  */
 export async function fetchExpiries(underlying = UNDERLYING): Promise<Expiry[]> {
-  const all = await getJson<Product[]>(
-    '/v2/products?contract_types=call_options,put_options&states=live&page_size=1000',
+  // Scoped to the underlying at the venue, not here. Unfiltered this is every
+  // option listed on the exchange — 1079 products, 58 KB gzipped, once a minute
+  // — of which 159 are ours. It also overflowed the page: see `getList`.
+  //
+  // The server-side engines have asked this way since 0050; only the browser was
+  // still pulling the whole exchange to throw nine tenths of it away.
+  const all = await getList<Product>(
+    `/v2/products?contract_types=call_options,put_options&states=live&page_size=1000` +
+      `&underlying_asset_symbols=${encodeURIComponent(underlying)}`,
   )
+  // Kept even though the venue now filters: it is also the symbol-shape check,
+  // and it is what makes a surprising row from the API a skipped row rather than
+  // a crash in `parseSymbol(...)!` below.
   const mine = all.filter((p) => {
     const parsed = parseSymbol(p.symbol)
     return parsed?.underlying === underlying
@@ -351,7 +395,11 @@ export async function fetchExpiries(underlying = UNDERLYING): Promise<Expiry[]> 
 
 /** Snapshot of all option tickers for the underlying, to paint the chain immediately. */
 export async function fetchTickers(underlying = UNDERLYING): Promise<Ticker[]> {
-  const all = await getJson<Ticker[]>('/v2/tickers?contract_types=call_options,put_options')
+  // Same filter, same reason: 1079 tickers at 219 KB gzipped against 159 at 32 KB.
+  const all = await getList<Ticker>(
+    `/v2/tickers?contract_types=call_options,put_options` +
+      `&underlying_asset_symbols=${encodeURIComponent(underlying)}`,
+  )
   return all.filter((t) => parseSymbol(t.symbol)?.underlying === underlying)
 }
 
