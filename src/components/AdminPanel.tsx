@@ -23,6 +23,15 @@ interface Counts {
   openOrders: number
 }
 
+/** One row of `account_counts` (0063). Counts arrive as bigint, so as strings
+ *  over PostgREST on a large enough number — read through `Number`. */
+interface AccountCountRow {
+  acct_id: string
+  position_count: number | string
+  fill_count: number | string
+  open_order_count: number | string
+}
+
 /**
  * Admin surface for managing paper accounts, opened by typing the admin keyword.
  *
@@ -57,22 +66,31 @@ export function AdminPanel({
   const [newBalance, setNewBalance] = useState('10000')
   const [showArchived, setShowArchived] = useState(false)
 
-  // Positions, fills and open orders for every account in two queries, grouped
-  // here rather than one count query per account.
+  /**
+   * Positions, trades and resting orders per account, counted in the database.
+   *
+   * This used to fetch every row of all three tables and count them here, which
+   * meant shipping the entire ledger — a table that only grows — to render three
+   * two-digit numbers. `account_counts` (0063) does the counting off the
+   * account_id indexes and returns one row per account. It runs as the caller,
+   * so RLS scopes it to this user's own books exactly as the old queries were.
+   */
   const loadCounts = useCallback(async () => {
-    const [pos, fills, orders] = await Promise.all([
-      supabase.from('positions').select('account_id'),
-      supabase.from('fills').select('account_id'),
-      supabase.from('orders').select('account_id').eq('status', 'open'),
-    ])
-    const next: Record<string, Counts> = {}
-    const bump = (id: string, key: keyof Counts) => {
-      next[id] = next[id] ?? { positions: 0, trades: 0, openOrders: 0 }
-      next[id][key] += 1
+    const { data, error: err } = await supabase.rpc('account_counts')
+    if (err) {
+      // Not worth blocking the panel over: the accounts themselves are already
+      // on screen and every action here works without a count beside it.
+      console.error('account_counts failed:', err.message)
+      return
     }
-    for (const r of pos.data ?? []) bump(r.account_id, 'positions')
-    for (const r of fills.data ?? []) bump(r.account_id, 'trades')
-    for (const r of orders.data ?? []) bump(r.account_id, 'openOrders')
+    const next: Record<string, Counts> = {}
+    for (const r of (data ?? []) as AccountCountRow[]) {
+      next[r.acct_id] = {
+        positions: Number(r.position_count),
+        trades: Number(r.fill_count),
+        openOrders: Number(r.open_order_count),
+      }
+    }
     setCounts(next)
   }, [])
 

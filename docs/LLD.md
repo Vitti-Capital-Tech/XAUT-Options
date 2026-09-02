@@ -216,8 +216,8 @@ erDiagram
 | `accounts_user_idx` | `(user_id, created_at)` | Account switcher listing |
 | `orders_account_status_idx` | `(account_id, status, created_at desc)` | Order history |
 | `orders_open_idx` | `(account_id) where status = 'open'` | Partial — the fill engine only scans open orders |
-| `fills_account_idx` | `(account_id, created_at desc)` | Trade history |
-| `positions_account_idx` | `(account_id)` | Positions table and P&L totals |
+| `fills_account_idx` | `(account_id, created_at desc)` | Trade history, and the fill count in `account_counts` |
+| `positions_account_idx` | `(account_id)` | Positions table, P&L totals, and the position count in `account_counts` |
 | `funding_account_idx` | `(account_id, funding_time desc)` | The perpetual's funding ledger |
 | `trail_candle_requests_created_idx` | `(created_at)` | Trimming the pg_net request-id → symbol map the trailing stop matches its candle replies by |
 | `delta_ticker_requests_requested_at_idx` | `(requested_at desc)` | Trimming the same map for the delta engine's ticker replies ([`0058`](../supabase/migrations/0058_read_our_own_reply.sql)) |
@@ -610,15 +610,120 @@ render `—` rather than a plausible-looking wrong number.
 
 | Export | Purpose |
 | --- | --- |
-| `positions`, `openOrders`, `fills` | Current account state |
+| `positions`, `openOrders` | Current account state; always kept live |
+| `fills` | The loaded history window. Empty until `setHistoryVisible(true)` |
+| `fillCount` | The account's total fills, from a `HEAD` count — no rows on the wire |
+| `fillsTruncated` | The window hit `FILL_LIMIT`, so its oldest day group may be short |
+| `setHistoryVisible` | Told by `BottomPanel` which tab is showing; gates every fill read |
 | `placeOrder` | Validate → insert → fill if crossing → refetch |
 | `cancelOrder` | Guarded by `.eq('status','open')` |
 | `closePosition` | Opposing market order, `reduce_only` |
 | `registerProducts` | Supplies product metadata to the fill engine |
-| `reload` | Refetch all three tables |
+| `reload` | Positions, orders and the fill count. History only if its tab is open |
 
 Concurrency guard: an `inFlight` ref of order ids stops a tick burst from
 double-submitting. The DB row lock and status check are the real defence.
+
+#### Refresh model
+
+Four instances of this hook are mounted at once — one per account kind — and
+only one page is on screen, so what each instance fetches is load-bearing for
+egress rather than for correctness.
+
+| Source | Cadence | Reads |
+| --- | --- | --- |
+| Realtime `positions` | On change, debounced 150 ms | Positions; notifies the account summary |
+| Realtime `orders` | On change, debounced 150 ms | Orders |
+| Realtime `fills` | On change, debounced 150 ms | Fill count; rows only if the history tab is open |
+| `useVisiblePoll` | 15 s, visible tabs only | Positions, orders, fill count |
+| `setHistoryVisible(true)` | Tab opened | The newest `FILL_LIMIT` rows, once |
+
+Three properties hold this together:
+
+**Fills are display-only.** Nothing in `engine/paper.ts`, either strategy, or the
+account summary reads a fill row — balances come off `accounts.cash_balance`,
+which `execute_fill` maintains. So deferring the 1000-row window until its tab is
+opened cannot make any other number wrong.
+
+**Incremental catch-up uses `gte`, not `gt`.** A strategy cycle writes its legs
+in one transaction, so sibling fills share `now()` to the microsecond; a strict
+comparison against the newest held row would drop every sibling but the first.
+The boundary rows are re-read and dropped by id, which is the check that actually
+keeps the list unique. `setFills` returns the previous array unchanged when
+nothing is fresh, so a quiet account does not re-render the table.
+
+**The poll is a fallback, never a driver.** The browser fill engine is driven by
+`marketStore` ticks and both strategy engines run on `pg_cron`, so a hidden tab
+loses nothing by not polling. `useVisiblePoll` reconciles once on return before
+resuming the interval.
+
+### `hooks/useAccounts.ts`
+
+Four instances are mounted at once, one per account `kind`, and all four
+subscribe to the same `accounts` change stream — `user_id` is the only filter
+Postgres can express there, and it is the same for all of them. So every
+instance is told about every account the user owns.
+
+Each handler now reads `kind` off the payload and returns early when the row
+belongs to a book it does not manage, so a balance change costs one refetch
+rather than four. A delete carries only the primary key under the default
+replica identity, so `kind` is absent and the refetch goes ahead — the safe way
+round, and rare enough not to matter. The handler is debounced 150 ms, because a
+single cycle's fill, position and order writes can all land within a few
+milliseconds of the balance update they accompany.
+
+### `hooks/usePolling.ts`
+
+| Export | Purpose |
+| --- | --- |
+| `useVisiblePoll(fn, ms, enabled)` | Interval that runs only while `document.visibilityState === 'visible'`, and fires once immediately on becoming visible |
+| `useDebouncedCallback(fn, ms)` | Stable callback that runs `fn` once, `ms` after the last call |
+
+Both hold `fn` in a ref, so a fresh closure each render neither restarts the
+timer nor changes the callback's identity — which is what lets the realtime
+subscription list them as effect dependencies without being torn down and
+rebuilt on every render.
+
+### Strategy settings sync
+
+`useAutoStrategy` and `useDeltaStrategy` both **apply the realtime payload
+directly** instead of using it as a signal to re-read the row they were just
+handed. Two guards make that safe:
+
+- A write of our own within the last 3 seconds suppresses the incoming row, so
+  an in-flight upsert is not clobbered by the pre-write state. `useAutoStrategy`
+  additionally suppresses while the draft is dirty.
+- `applyRow` compares a signature built from the **converted** values — config,
+  `armed`, session counters — and returns early when nothing it displays has
+  moved. The conversion matters: the same row arrives as strings over PostgREST
+  and as numbers over realtime, so comparing raw columns would call every push a
+  change.
+
+The signature guard is what makes an armed strategy quiet. `apply_delta_strategy`
+stamps `last_cycle = now()` on the settings row every cycle
+([`0062`](../supabase/migrations/0062_windows_own_all_their_filters.sql)), and
+that write is published like any other; the column is not one this hook reads.
+
+### `account_counts()` — [`0063`](../supabase/migrations/0063_counts_are_counted_not_fetched.sql)
+
+```
+acct_id uuid, position_count bigint, fill_count bigint, open_order_count bigint
+```
+
+One row per account of the calling user, for the admin panel's three counts.
+`language sql`, `stable`, `security invoker` — it runs as the caller, so the same
+RLS policies that gate a direct select gate this, and it needs no privileged
+role.
+
+It replaces three unfiltered, unlimited selects that pulled every row of
+`positions`, `fills` and `orders` into the browser to be counted there. Besides
+the egress, that was silently fragile: where `db-max-rows` is configured,
+PostgREST caps the response and a capped page would have been counted as though
+it were the whole table.
+
+The output columns are prefixed rather than named `positions` / `fills` /
+`orders` because in a `language sql` body a `RETURNS TABLE` column shadows a
+relation of the same name, and the correlated counts would fail to resolve.
 
 ### `lib/deltaStrategy.ts` — pure, no I/O
 

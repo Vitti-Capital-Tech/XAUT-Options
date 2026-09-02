@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { useVisiblePoll } from './usePolling'
 import {
   DEFAULT_CONFIG,
   stopMultiple,
@@ -87,6 +88,11 @@ export function useAutoStrategy(
   const dirtyRef = useRef(dirty)
   dirtyRef.current = dirty
 
+  // The last row that actually changed anything, as converted values: the same
+  // row arrives as strings over PostgREST and as numbers over realtime, so a
+  // raw comparison would call every one of them a change.
+  const appliedRef = useRef<string | null>(null)
+
   const applyRow = useCallback((row: Row) => {
     const cfg: StrategyConfig = {
       moneyness: row.moneyness as Moneyness,
@@ -106,6 +112,13 @@ export function useAutoStrategy(
       trailStopPct: Number(row.trail_stop_pct ?? 0),
       takeProfitPct: Number(row.take_profit_pct),
     }
+    // The engine stamps this row when it acts, and that write is pushed here
+    // like any other. Compare the converted values so a row carrying nothing
+    // this hook reads does not reset the panel.
+    const signature = JSON.stringify([cfg, row.armed])
+    if (appliedRef.current === signature) return
+    appliedRef.current = signature
+
     // Reset the draft to what the database holds — the two are equal right after a
     // load, so the Apply button stays dark until the trader changes something.
     setConfigState(cfg)
@@ -162,41 +175,54 @@ export function useAutoStrategy(
   }, [accountId, applyRow])
 
   // Keep every open tab in sync. Realtime pushes a change the moment it lands;
-  // the interval is the fallback. Both skip a beat right after a local edit so
-  // an in-flight write is not clobbered by a stale read.
+  // the interval is the fallback. Both skip a beat while there are unsaved edits
+  // or a just-applied write may still be in flight, so neither clobbers the
+  // draft the trader is looking at. Reads only refs, so it never goes stale.
+  const safeToApply = useCallback(
+    () => !dirtyRef.current && Date.now() - lastEditRef.current >= 3000,
+    [],
+  )
+
   useEffect(() => {
     if (!accountId) return
-    const refetch = async () => {
-      // Hold off while there are unsaved edits or a just-applied write may still be
-      // in flight, so neither clobbers the draft the trader is looking at.
-      if (dirtyRef.current || Date.now() - lastEditRef.current < 3000) return
-      const { data } = await supabase
-        .from('strategy_settings')
-        .select(COLS)
-        .eq('account_id', accountId)
-        .maybeSingle()
-      if (data) applyRow(data as Row)
-    }
-    const id = setInterval(refetch, SYNC_MS)
     // Best-effort realtime over the interval fallback — never let it blank the app.
+    // The payload carries the row, so it is applied directly rather than used as
+    // a signal to go and read the same row back over HTTP.
     try {
       const channel = supabase
         .channel(`strategy-${accountId}`)
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'strategy_settings', filter: `account_id=eq.${accountId}` },
-          () => void refetch(),
+          (payload) => {
+            if (!safeToApply()) return
+            const row = payload.new as Row | undefined
+            if (row?.account_id) applyRow(row)
+          },
         )
         .subscribe()
       return () => {
-        clearInterval(id)
         void supabase.removeChannel(channel)
       }
     } catch (err) {
       console.error('strategy realtime failed; falling back to poll:', err)
-      return () => clearInterval(id)
     }
-  }, [accountId, applyRow])
+  }, [accountId, applyRow, safeToApply])
+
+  // The fallback for a dropped or refused subscription. Visible-only: a
+  // backgrounded tab has no panel to keep current, and the engine runs
+  // server-side whether or not this tab is watching.
+  const syncSettings = useCallback(async () => {
+    if (!accountId || !safeToApply()) return
+    const { data } = await supabase
+      .from('strategy_settings')
+      .select(COLS)
+      .eq('account_id', accountId)
+      .maybeSingle()
+    if (data) applyRow(data as Row)
+  }, [accountId, applyRow, safeToApply])
+
+  useVisiblePoll(() => void syncSettings(), SYNC_MS, Boolean(accountId))
 
   // Upsert, not update: a plain update silently no-ops if the row is somehow
   // missing, which would lose an arm. Upsert always lands the write.

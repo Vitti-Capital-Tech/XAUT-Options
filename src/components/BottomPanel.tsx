@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import type { Product, Ticker } from '../lib/delta'
 import { UNDERLYING, isPerp } from '../lib/delta'
 import { market, useMarketTick } from '../lib/marketStore'
@@ -22,10 +22,24 @@ type Tab = 'positions' | 'history'
 
 interface Props {
   positions: PositionRow[]
+  /**
+   * The loaded window of trade history. Empty until the History tab is opened —
+   * `onHistoryVisible` below is what asks for it, so a panel sitting on
+   * Positions never fetches a ledger nobody is reading.
+   */
   fills: FillRow[]
+  /**
+   * How many fills the account holds in total, for the tab's badge. Given
+   * separately because `fills` is empty while the tab is closed, and a badge
+   * that read zero until you clicked it would be worse than no badge.
+   */
+  fillCount?: number
   productsBySymbol: Map<string, Product>
   /** The fills fetch hit its cap, so the oldest day group may be incomplete. */
   fillsTruncated?: boolean
+  /** Told which tab is showing, so history is fetched and kept current only
+   *  while it is on screen. */
+  onHistoryVisible?: (visible: boolean) => void
   /**
    * Download one IST day of this account's fills. Queried fresh from the
    * database rather than taken from `fills`, so the file is the whole day even
@@ -52,9 +66,11 @@ interface Props {
 export function BottomPanel({
   positions,
   fills,
+  fillCount,
   productsBySymbol,
   fillsTruncated = false,
   onExportDay,
+  onHistoryVisible,
   emptyPositions,
   onClosePosition,
   onSetTpSl,
@@ -62,9 +78,16 @@ export function BottomPanel({
 }: Props) {
   const [tab, setTab] = useState<Tab>('positions')
 
+  // Ask for history when it comes on screen and release it when it leaves, so
+  // the fetch follows what is actually being looked at.
+  useEffect(() => {
+    onHistoryVisible?.(tab === 'history')
+    return () => onHistoryVisible?.(false)
+  }, [tab, onHistoryVisible])
+
   const tabs: { key: Tab; label: string; count: number }[] = [
     { key: 'positions', label: 'Positions', count: positions.length },
-    { key: 'history', label: 'Trade History', count: fills.length },
+    { key: 'history', label: 'Trade History', count: fillCount ?? fills.length },
   ]
 
   return (
@@ -105,7 +128,14 @@ export function BottomPanel({
             onPickSymbol={onPickSymbol}
           />
         )}
-        {tab === 'history' && <HistoryTable fills={fills} truncated={fillsTruncated} onExportDay={onExportDay} />}
+        {tab === 'history' && (
+          <HistoryTable
+            fills={fills}
+            fillCount={fillCount ?? fills.length}
+            truncated={fillsTruncated}
+            onExportDay={onExportDay}
+          />
+        )}
       </div>
     </div>
   )
@@ -1196,10 +1226,13 @@ function DayHeader({
 
 function HistoryTable({
   fills,
+  fillCount,
   truncated,
   onExportDay,
 }: {
   fills: FillRow[]
+  /** The account's total, known before the rows land. */
+  fillCount: number
   truncated: boolean
   onExportDay?: (day: string) => Promise<number>
 }) {
@@ -1216,7 +1249,12 @@ function HistoryTable({
     return m
   }, [fills])
 
-  if (fills.length === 0) return <Empty>No trades yet.</Empty>
+  // The rows are fetched when this tab opens, so there is a beat where the
+  // account is known to have fills but none have arrived. Saying "no trades" for
+  // that beat would be a lie about the book rather than a slow render.
+  if (fills.length === 0) {
+    return <Empty>{fillCount > 0 ? 'Loading trade history…' : 'No trades yet.'}</Empty>
+  }
 
   const oldestDay = truncated ? dayKey(fills[fills.length - 1].created_at) : null
 

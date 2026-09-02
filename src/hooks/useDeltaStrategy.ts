@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { useVisiblePoll } from './usePolling'
 import { market } from '../lib/marketStore'
 import { isPerp, type Expiry } from '../lib/delta'
 import { summarizeAccount, type PositionRow } from '../engine/paper'
@@ -335,14 +336,31 @@ export function useDeltaStrategy(
   const dirtyRef = useRef(dirty)
   dirtyRef.current = dirty
 
+  // The last row that actually changed anything, as the converted values rather
+  // than the raw columns: the same row reaches us as strings over PostgREST and
+  // as numbers over realtime, and comparing before conversion would call every
+  // one of them a change.
+  const appliedRef = useRef<string | null>(null)
+
   const applyRow = useCallback((row: Row) => {
+    const cfg = rowToConfig(row)
+    const sess = rowToSession(row)
+
+    // The engine stamps `last_cycle` on the row every cycle, and that write is
+    // pushed here like any other. It carries nothing this hook reads, so an
+    // armed strategy would otherwise re-render the whole panel every few
+    // seconds to learn a timestamp moved. Compare what we actually use.
+    const signature = JSON.stringify([cfg, row.armed, sess])
+    if (appliedRef.current === signature) return
+    appliedRef.current = signature
+
     // Armed and the session counters are the engine's to report, so they always
     // land; the config is the trader's draft, so a live row updates the saved
     // baseline but only overwrites what they see when they have no unsaved edits.
-    setSavedConfig(rowToConfig(row))
+    setSavedConfig(cfg)
     setArmedState(row.armed)
-    setSession(rowToSession(row))
-    if (!dirtyRef.current) setConfigState(rowToConfig(row))
+    setSession(sess)
+    if (!dirtyRef.current) setConfigState(cfg)
   }, [])
 
   // ---- Load, seeding a default row for a delta account that has none -------
@@ -390,17 +408,13 @@ export function useDeltaStrategy(
   // ---- Keep every open tab in sync ----------------------------------------
   useEffect(() => {
     if (!accountId) return
-    const refetch = async () => {
-      if (Date.now() - lastEditRef.current < 3000) return
-      const { data } = await supabase
-        .from('delta_strategy_settings')
-        .select(COLS)
-        .eq('account_id', accountId)
-        .maybeSingle()
-      if (data) applyRow(data as Row)
-    }
-    const id = setInterval(() => void refetch(), SYNC_MS)
     // Best-effort realtime over the interval fallback — never let it blank the app.
+    //
+    // The payload is the row, so it is applied directly rather than used as a
+    // signal to go and read the row again. That halves the traffic on its own,
+    // and on an armed strategy it removes the larger half: the engine's
+    // `last_cycle` stamp fires this every cycle, and every one of those used to
+    // cost a full round trip for a row whose meaningful columns had not moved.
     try {
       const channel = supabase
         .channel(`delta-strategy-${accountId}`)
@@ -412,18 +426,38 @@ export function useDeltaStrategy(
             table: 'delta_strategy_settings',
             filter: `account_id=eq.${accountId}`,
           },
-          () => void refetch(),
+          (payload) => {
+            // A write of ours may still be in flight; letting the pre-write row
+            // land would flicker the panel back to what it just changed.
+            if (Date.now() - lastEditRef.current < 3000) return
+            const row = payload.new as Row | undefined
+            if (row?.account_id) applyRow(row)
+          },
         )
         .subscribe()
       return () => {
-        clearInterval(id)
         void supabase.removeChannel(channel)
       }
     } catch (err) {
       console.error('delta strategy realtime failed; falling back to poll:', err)
-      return () => clearInterval(id)
     }
   }, [accountId, applyRow])
+
+  // The fallback for a dropped or refused subscription, and the only path that
+  // re-reads over HTTP. Visible-only: a backgrounded tab has no panel to keep
+  // current, and the engine does not need this tab to run.
+  const syncSettings = useCallback(async () => {
+    if (!accountId) return
+    if (Date.now() - lastEditRef.current < 3000) return
+    const { data } = await supabase
+      .from('delta_strategy_settings')
+      .select(COLS)
+      .eq('account_id', accountId)
+      .maybeSingle()
+    if (data) applyRow(data as Row)
+  }, [accountId, applyRow])
+
+  useVisiblePoll(() => void syncSettings(), SYNC_MS, Boolean(accountId))
 
   // Upsert rather than update: a plain update silently no-ops if the row is
   // missing, which is exactly how an arm gets lost.

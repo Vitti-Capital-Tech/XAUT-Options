@@ -154,6 +154,52 @@ row locked, so a fill can't half-apply and two tabs can't fill one order twice.
 > fill with the tab closed you'd need a Supabase Edge Function on a cron —
 > a deliberate deferral, not an oversight.
 
+### How the screen stays current
+
+Three mechanisms, in the order they matter:
+
+1. **Realtime** — Postgres pushes every change to `positions`, `orders`, `fills`,
+   `accounts` and both strategy settings tables. This is the primary path: a
+   change lands on screen the moment it lands in the database, whichever session,
+   cron or settlement pass made it.
+2. **A 15-second poll** — the fallback, for a dropped subscription or a change
+   realtime did not deliver.
+3. **The market WebSocket** — quotes only, at 4 repaints a second. It never
+   reads the database.
+
+The two database mechanisms are deliberately narrow, because a terminal left open
+all day is the normal way to use this app and every one of those reads is billed
+Supabase egress:
+
+- **Four books are live at once** — manual, auto, delta and futures — but only one
+  page is on screen. All four keep their positions and open orders current,
+  because the browser fill engine prices every book and the WebSocket
+  subscription is built from every book's held symbols. Nothing else is fetched
+  for the three you are not looking at.
+- **Trade history is fetched when its tab is opened**, not on the poll. The
+  window is the newest 1000 fills — by far the largest read in the app, and one
+  nothing computes from: no strategy, no fill engine and no balance reads a fill
+  row. The tab badge is a `HEAD` count, so it stays honest without moving any
+  rows. Once open, new fills arrive incrementally — only rows newer than the
+  newest one held.
+- **Realtime handlers are split per table and debounced.** One strategy cycle
+  writes an order, its fill and the position it moved within milliseconds; that
+  burst refreshes each affected table once, not each table once per event.
+- **Strategy settings apply the pushed row directly** rather than treating the
+  push as a signal to re-read the same row. This matters most while a strategy is
+  armed: the engine stamps `last_cycle` on its settings row every cycle, and
+  that write carries nothing the panel displays.
+- **Polls stop while the tab is hidden** and reconcile once on return. Nothing
+  that must keep running depends on them — the fill engine runs off the
+  WebSocket, and both strategy engines run server-side on `pg_cron`.
+- **Account changes are filtered by book.** Postgres can only filter that
+  subscription by `user_id`, so all four instances are told about every account
+  you own; each now ignores a row belonging to a kind it does not manage, rather
+  than all four refetching on every balance change.
+
+None of this changes what is on screen or how fast it reacts. Realtime still
+drives every update.
+
 ### Auto Strategy
 
 One fixed rule, no discretion: read the last **closed 1h candle** of the spot
@@ -1061,6 +1107,15 @@ shortcut, not a security boundary: the check runs in browser code, and the panel
 only ever touches your own accounts. Auth and row-level security do the
 protecting.
 
+The three counts come from `account_counts()`
+([`0063`](supabase/migrations/0063_counts_are_counted_not_fetched.sql)), which
+counts in the database off the `account_id` indexes. The panel used to fetch
+every row of `positions`, `fills` and `orders` and count them in the browser —
+the whole ledger across the wire to render three two-digit numbers, and wrong
+without warning if PostgREST ever capped one of those responses. The function
+runs as the caller, so RLS scopes it to your own books exactly as the queries it
+replaced were scoped.
+
 ---
 
 ## Known approximations
@@ -1120,6 +1175,7 @@ src/
   lib/deltaStrategy.ts     Delta strategy: Δp, band, ITM queue, hedge sizing, cycle plan
   engine/paper.ts          Fees, margin, bid/ask P&L, order validation, crossing
   hooks/useAuth.ts         Session
+  hooks/usePolling.ts      Visibility-gated intervals, debounced realtime handlers
   hooks/useAccounts.ts     Paper accounts CRUD + selection, per kind
   hooks/useTrading.ts      Positions/orders/fills, order placement, fill engine
   hooks/useAutoStrategy.ts Auto strategy settings (engine is server-side)

@@ -210,6 +210,27 @@ sequenceDiagram
 Resolving the price *before* writing anything is what prevents a stranded order
 row when the book is empty.
 
+### Database reads
+
+```mermaid
+graph TB
+    RT["Realtime push<br/>(primary)"] --> D{"Which table?"}
+    D -->|positions| P["Refetch positions<br/>+ account summary"]
+    D -->|orders| O["Refetch orders"]
+    D -->|fills| F{"History tab<br/>open?"}
+    F -->|no| C["HEAD count only"]
+    F -->|yes| I["Fetch rows newer<br/>than newest held"]
+    POLL["15s poll<br/>(fallback, visible tabs only)"] --> P
+    POLL --> O
+    POLL --> C
+    TAB["History tab opened"] --> W["Fetch newest 1000 fills, once"]
+```
+
+Each realtime handler is debounced 150 ms, so one strategy cycle — which writes
+an order, its fill and the position it moved within milliseconds — refreshes each
+affected table once rather than once per event. See
+[LLD §8](LLD.md#refresh-model) for the full cadence table.
+
 ### Resting limit orders
 
 ```mermaid
@@ -306,6 +327,10 @@ Two consequences worth stating plainly:
 | 10 | One account `kind` per page | Separate tables per strategy | Orders, fills and positions are already scoped to an account, so a `kind` column partitions the three books with no schema duplication and no change to `execute_fill`. |
 | 11 | Delta strategy acts once per cycle | Walk the whole ITM queue in one pass | Δp is re-read from fresh marks before each step, so a correction can never be sized against a book it has already changed. Slower to converge; cannot compound its own error. |
 | 12 | Chain snapshot in an unlogged table | Temp table per cycle | A `language sql` body is validated at **creation**, so helpers cannot be compiled against a temp table that only exists at run time. It also avoids PL/pgSQL caching a plan for a relation dropped and recreated every minute. |
+| 13 | Fetch scoped to what is on screen | Keep every book fully loaded | Four books are mounted at once but one page is visible. Positions and open orders stay live for all four — the fill engine and the WS subscription need them — while trade history, the largest read by an order of magnitude, is fetched when its tab opens. Fills are display-only, so nothing else can go stale. |
+| 14 | Realtime payload applied, not re-read | Treat the push as a refetch signal | The push already carries the row. Re-reading doubled the round trips, and on an armed strategy it was nearly all of them: the engine stamps `last_cycle` every cycle and that column is not one the panel displays. A signature over the converted values suppresses the no-op. |
+| 15 | Polls pause on a hidden tab | Poll unconditionally | Every interval here is a reconciliation fallback — the fill engine runs off the WebSocket and both strategy engines run on `pg_cron`. A dashboard on a second monitor was re-reading four books every 15 s for nobody. Reconciles once on return. |
+| 16 | Aggregate in the database, not the client | Fetch rows and count in JS | The admin panel's three per-account counts were pulling every row of `positions`, `fills` and `orders`. `account_counts()` counts off the indexes those tables already carry, runs `security invoker` so RLS scopes it unchanged, and is immune to a `db-max-rows` cap silently truncating the answer. |
 
 ---
 

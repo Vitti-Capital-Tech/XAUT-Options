@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { useDebouncedCallback } from './usePolling'
 
 /**
  * Manual accounts belong to the option chain, auto accounts to the auto
@@ -89,32 +90,51 @@ export function useAccounts(userId: string | undefined, kind: AccountKind = 'man
   }, [load])
 
   // Realtime: a balance moving or an account being added/edited in one session
-  // reflects in every other at once, not on the next poll. load() through a ref
-  // so the subscription survives renders.
+  // reflects in every other at once. load() through a ref so the subscription
+  // survives renders.
   const loadRef = useRef(load)
   loadRef.current = load
+
+  // Debounced because a single fill moves the balance once but can arrive
+  // alongside the position and order writes of the same cycle.
+  const bump = useDebouncedCallback(() => void loadRef.current(), 150)
+
   useEffect(() => {
     if (!userId) return
-    // Best-effort: realtime is an enhancement over the poll, so a failure to
-    // subscribe must never blank the app — swallow it and let the poll cover.
-    // Unique per kind: the chain and the strategy both call this with the same
-    // userId, so a shared channel name would be a duplicate subscription.
+    // Best-effort: realtime is an enhancement, so a failure to subscribe must
+    // never blank the app — swallow it and let an explicit reload cover.
+    // Unique per kind: all four pages call this with the same userId, so a
+    // shared channel name would be a duplicate subscription.
     try {
       const channel = supabase
         .channel(`accounts-${kind}-${userId}`)
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'accounts', filter: `user_id=eq.${userId}` },
-          () => void loadRef.current(),
+          (payload) => {
+            // Four instances of this hook are mounted at once, one per kind, and
+            // every one of them is subscribed to the same `user_id` filter —
+            // that filter is all Postgres can express. So each of them is told
+            // about every account this user owns, and a single balance change
+            // used to cost four fetches, three of them for books whose rows had
+            // not moved. The kind is on the row: ignore what is not ours.
+            //
+            // A delete carries only the primary key unless the table is set to
+            // REPLICA IDENTITY FULL, so `kind` is absent there and the reload
+            // goes ahead — the safe way round, and rare enough not to matter.
+            const row = (payload.new ?? payload.old) as { kind?: AccountKind } | undefined
+            if (row?.kind && row.kind !== kind) return
+            bump()
+          },
         )
         .subscribe()
       return () => {
         void supabase.removeChannel(channel)
       }
     } catch (err) {
-      console.error('accounts realtime failed; falling back to poll:', err)
+      console.error('accounts realtime failed:', err)
     }
-  }, [userId, kind])
+  }, [userId, kind, bump])
 
   useEffect(() => {
     if (selectedId) localStorage.setItem(selectedKey, selectedId)

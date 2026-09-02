@@ -63,7 +63,22 @@ the auto strategy a close to match its open, `0016`–`0018` add its entry filte
 configurable and give delta a size in XAUT, `0022` puts both engines on the IST
 clock, `0023` lets each pick its expiry by date, and `0024` collapses the delta
 strategy's two size controls into one, `0024`–`0025` fix its re-entry, and `0026`
-adds it an optional stop. A fresh install wants all twenty-six.
+adds it an optional stop.
+
+> **The table above stops at `0026`; the directory does not.** Everything from
+> `0027` on carries its own reasoning in a header comment at the top of the file
+> — what it changes and why — so read the file rather than looking for a row
+> here. A fresh install wants *every* migration in the directory, in numerical
+> order, not just the twenty-six listed.
+>
+> Two later ones are worth knowing by name:
+>
+> - [`0038_futures`](../supabase/migrations/0038_futures.sql) adds the `futures`
+>   account kind, the perpetual and its funding cron — the fourth book.
+> - [`0063_counts_are_counted_not_fetched`](../supabase/migrations/0063_counts_are_counted_not_fetched.sql)
+>   adds `account_counts()`. **The admin panel's position, trade and order counts
+>   read zero without it** (and log to the console); nothing else in the app
+>   depends on it.
 
 > `0021` adds `delta_strategy_settings.qty`, defaulting to one lot so nothing
 > changes on its own. **Raising it means rescaling `band_low`/`band_high` by the

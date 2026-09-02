@@ -428,6 +428,8 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
             <BottomPanel
               positions={trading.positions}
               fills={trading.fills}
+              fillCount={trading.fillCount}
+              onHistoryVisible={trading.setHistoryVisible}
               fillsTruncated={trading.fillsTruncated}
               onExportDay={(day) => trading.exportDay(day, manualAccounts.selected?.name ?? 'account')}
               productsBySymbol={productsBySymbol}
@@ -471,6 +473,8 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
             <BottomPanel
               positions={autoTrading.positions}
               fills={autoTrading.fills}
+              fillCount={autoTrading.fillCount}
+              onHistoryVisible={autoTrading.setHistoryVisible}
               fillsTruncated={autoTrading.fillsTruncated}
               onExportDay={(day) => autoTrading.exportDay(day, autoAccounts.selected?.name ?? 'account')}
               productsBySymbol={productsBySymbol}
@@ -510,6 +514,8 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
             <BottomPanel
               positions={deltaTrading.positions}
               fills={deltaTrading.fills}
+              fillCount={deltaTrading.fillCount}
+              onHistoryVisible={deltaTrading.setHistoryVisible}
               fillsTruncated={deltaTrading.fillsTruncated}
               onExportDay={(day) => deltaTrading.exportDay(day, deltaAccounts.selected?.name ?? 'account')}
               productsBySymbol={productsBySymbol}
@@ -575,6 +581,8 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
             <BottomPanel
               positions={futuresTrading.positions}
               fills={futuresTrading.fills}
+              fillCount={futuresTrading.fillCount}
+              onHistoryVisible={futuresTrading.setHistoryVisible}
               fillsTruncated={futuresTrading.fillsTruncated}
               onExportDay={(day) => futuresTrading.exportDay(day, futuresAccounts.selected?.name ?? 'account')}
               productsBySymbol={productsBySymbol}

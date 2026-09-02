@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { market, useMarketTick } from '../lib/marketStore'
+import { useDebouncedCallback, useVisiblePoll } from './usePolling'
 import type { Product } from '../lib/delta'
 import { isPerp, parseSymbol } from '../lib/delta'
 import { downloadCsv, fillsFilename, fillsToCsv, istDayRange } from '../lib/exportFills'
@@ -70,9 +71,17 @@ const FILL_COLS =
  * `fillsTruncated` below, which the panel uses to mark the one group that may be
  * short. Anything wanting a real ledger should query the database:
  * scripts/export_delta_day.sql.
+ *
+ * The window is only ever read while the Trade History tab is actually open —
+ * see `setHistoryVisible`. It is by far the largest thing this hook fetches, and
+ * four books' worth of it on a 15s poll was most of the app's Supabase egress,
+ * for a table that is pure display: nothing in the fill engine, the strategies
+ * or the account summary reads a fill.
  */
 const FILL_LIMIT = 1000
 const ORDER_LIMIT = 200
+/** Collapse one engine cycle's burst of row changes into a single re-read. */
+const REALTIME_DEBOUNCE_MS = 150
 
 export interface PlaceOrderArgs {
   product: Product
@@ -99,6 +108,10 @@ export function useTrading(accountId: string | null, onAccountChanged: () => voi
   const [positions, setPositions] = useState<PositionRow[]>([])
   const [orders, setOrders] = useState<OrderRow[]>([])
   const [fills, setFills] = useState<FillRow[]>([])
+  // How many fills the account holds, for the tab's badge. Counted rather than
+  // measured off `fills`, which is empty until the tab is opened — a `head`
+  // request returns the number in a header and no rows at all.
+  const [fillCount, setFillCount] = useState(0)
   const [loading, setLoading] = useState(true)
 
   const tick = useMarketTick()
@@ -106,76 +119,186 @@ export function useTrading(accountId: string | null, onAccountChanged: () => voi
   // Orders currently being filled, so a burst of ticks cannot double-submit one.
   const inFlight = useRef(new Set<string>())
 
+  // Whether the Trade History tab is on screen. A ref as well as state because
+  // the loaders below must read it without taking it as a dependency — a stale
+  // `reload` identity would tear down the poll and the subscription.
+  const historyVisibleRef = useRef(false)
+  const fillsRef = useRef<FillRow[]>([])
+  fillsRef.current = fills
+
+  const loadPositions = useCallback(async () => {
+    if (!accountId) return
+    const { data, error } = await supabase
+      .from('positions')
+      .select(POSITION_COLS)
+      .eq('account_id', accountId)
+    if (!error) setPositions((data ?? []) as PositionRow[])
+  }, [accountId])
+
+  const loadOrders = useCallback(async () => {
+    if (!accountId) return
+    const { data, error } = await supabase
+      .from('orders')
+      .select(ORDER_COLS)
+      .eq('account_id', accountId)
+      .order('created_at', { ascending: false })
+      .limit(ORDER_LIMIT)
+    if (!error) setOrders((data ?? []) as OrderRow[])
+  }, [accountId])
+
+  /** The badge's number, with no row bodies on the wire. */
+  const loadFillCount = useCallback(async () => {
+    if (!accountId) return
+    const { count, error } = await supabase
+      .from('fills')
+      .select('id', { count: 'exact', head: true })
+      .eq('account_id', accountId)
+    if (!error) setFillCount(count ?? 0)
+  }, [accountId])
+
+  /** The whole visible window, newest first. Only for opening the tab. */
+  const loadFills = useCallback(async () => {
+    if (!accountId) return
+    const { data, error } = await supabase
+      .from('fills')
+      .select(FILL_COLS)
+      .eq('account_id', accountId)
+      .order('created_at', { ascending: false })
+      .limit(FILL_LIMIT)
+    if (!error) setFills((data ?? []) as FillRow[])
+  }, [accountId])
+
+  /**
+   * Bring an open history tab up to date by reading only what is newer than the
+   * newest row it holds, rather than the whole window again.
+   *
+   * `gte`, not `gt`: the engine writes a cycle's legs in one transaction, so
+   * sibling fills share `now()` to the microsecond and a strict comparison would
+   * drop every one but the first. The boundary rows come back and are dropped by
+   * id below, which is the check that actually keeps the list unique.
+   */
+  const syncFills = useCallback(async () => {
+    if (!accountId) return
+    const newest = fillsRef.current[0]?.created_at
+    if (!newest) {
+      await loadFills()
+      return
+    }
+    const { data, error } = await supabase
+      .from('fills')
+      .select(FILL_COLS)
+      .eq('account_id', accountId)
+      .gte('created_at', newest)
+      .order('created_at', { ascending: false })
+      .limit(FILL_LIMIT)
+    if (error || !data?.length) return
+    setFills((prev) => {
+      const seen = new Set(prev.map((f) => f.id))
+      const fresh = (data as FillRow[]).filter((f) => !seen.has(f.id))
+      return fresh.length === 0 ? prev : [...fresh, ...prev].slice(0, FILL_LIMIT)
+    })
+  }, [accountId, loadFills])
+
+  /**
+   * Everything the book needs to be correct on screen. Trade history is not in
+   * that set: it is fetched when its tab is opened and kept current from there,
+   * so a dashboard sitting on the Positions tab never pays for it.
+   */
   const reload = useCallback(async () => {
     if (!accountId) {
       setPositions([])
       setOrders([])
       setFills([])
+      setFillCount(0)
       setLoading(false)
       return
     }
-
-    const [posRes, ordRes, fillRes] = await Promise.all([
-      supabase.from('positions').select(POSITION_COLS).eq('account_id', accountId),
-      supabase
-        .from('orders')
-        .select(ORDER_COLS)
-        .eq('account_id', accountId)
-        .order('created_at', { ascending: false })
-        .limit(ORDER_LIMIT),
-      supabase
-        .from('fills')
-        .select(FILL_COLS)
-        .eq('account_id', accountId)
-        .order('created_at', { ascending: false })
-        .limit(FILL_LIMIT),
+    await Promise.all([
+      loadPositions(),
+      loadOrders(),
+      loadFillCount(),
+      historyVisibleRef.current ? syncFills() : Promise.resolve(),
     ])
-
-    if (!posRes.error) setPositions((posRes.data ?? []) as PositionRow[])
-    if (!ordRes.error) setOrders((ordRes.data ?? []) as OrderRow[])
-    if (!fillRes.error) setFills((fillRes.data ?? []) as FillRow[])
     setLoading(false)
-  }, [accountId])
+  }, [accountId, loadPositions, loadOrders, loadFillCount, syncFills])
 
   useEffect(() => {
     setLoading(true)
     void reload()
   }, [reload])
 
+  /**
+   * Told by the panel which tab is showing. Opening history reads the window
+   * once; closing it stops the account's fills being refreshed at all, and
+   * drops what was held so reopening cannot show a stale ledger.
+   */
+  const setHistoryVisible = useCallback(
+    (visible: boolean) => {
+      if (historyVisibleRef.current === visible) return
+      historyVisibleRef.current = visible
+      if (visible) void loadFills()
+      else setFills([])
+    },
+    [loadFills],
+  )
+
+  // A switched account has a different ledger, so whatever is held belongs to
+  // the old one. Re-read if the tab is open, clear if it is not.
+  useEffect(() => {
+    setFills([])
+    if (historyVisibleRef.current) void loadFills()
+  }, [accountId, loadFills])
+
   // Poll, because a position can be created without this tab doing anything to
   // trigger a reload — the settlement cron closing an expiry, another tab or
   // device on the same paper account, an admin editing it. Without this, such a
-  // change shows only after a trade here or a full reopen. reload() just re-reads
-  // from the database, so an extra pass is cheap and self-reconciling. This is
-  // the fallback; realtime below makes the same reload happen at once.
-  useEffect(() => {
-    if (!accountId) return
-    const id = setInterval(() => void reload(), 15_000)
-    return () => clearInterval(id)
-  }, [accountId, reload])
+  // change shows only after a trade here or a full reopen. This is the fallback;
+  // realtime below makes the same reload happen at once.
+  //
+  // Only while the tab is on screen: nothing here drives the fill engine, which
+  // runs off the market websocket, so a backgrounded dashboard re-reading four
+  // books every fifteen seconds was buying nothing anybody could see. Coming
+  // back to the tab reconciles before the interval resumes.
+  useVisiblePoll(() => void reload(), 15_000, Boolean(accountId))
 
   // Realtime: the moment this account's positions, orders or fills change — from
   // any session, the strategy cron, or settlement — re-read, so a parallel
-  // dashboard updates without a refresh. reload/onAccountChanged go through refs
-  // so the subscription is not torn down and rebuilt on every render.
-  const reloadRef = useRef(reload)
-  reloadRef.current = reload
+  // dashboard updates without a refresh.
+  //
+  // Split by table, and debounced. One engine cycle lands an order, its fill and
+  // the position it moved within a few milliseconds of each other, and a single
+  // shared handler turned that into four complete re-reads of all three tables.
+  // Each table now refreshes only itself, once per burst.
   const changedRef = useRef(onAccountChanged)
   changedRef.current = onAccountChanged
+
+  const bumpPositions = useDebouncedCallback(() => {
+    void loadPositions()
+    changedRef.current()
+  }, REALTIME_DEBOUNCE_MS)
+
+  const bumpOrders = useDebouncedCallback(() => {
+    void loadOrders()
+  }, REALTIME_DEBOUNCE_MS)
+
+  // A fill moves cash, so the account summary still has to be told — but the
+  // rows themselves are only worth fetching if someone is looking at them.
+  const bumpFills = useDebouncedCallback(() => {
+    void loadFillCount()
+    if (historyVisibleRef.current) void syncFills()
+    changedRef.current()
+  }, REALTIME_DEBOUNCE_MS)
+
   useEffect(() => {
     if (!accountId) return
-    const bump = () => {
-      void reloadRef.current()
-      changedRef.current()
-    }
     // Best-effort: a subscription failure must never blank the app — the 15s
     // poll above still reconciles. Swallow any throw.
     try {
       const channel = supabase
         .channel(`trading-${accountId}`)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'positions', filter: `account_id=eq.${accountId}` }, bump)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'fills', filter: `account_id=eq.${accountId}` }, bump)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `account_id=eq.${accountId}` }, bump)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'positions', filter: `account_id=eq.${accountId}` }, bumpPositions)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'fills', filter: `account_id=eq.${accountId}` }, bumpFills)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `account_id=eq.${accountId}` }, bumpOrders)
         .subscribe()
       return () => {
         void supabase.removeChannel(channel)
@@ -183,7 +306,7 @@ export function useTrading(accountId: string | null, onAccountChanged: () => voi
     } catch (err) {
       console.error('trading realtime failed; falling back to poll:', err)
     }
-  }, [accountId])
+  }, [accountId, bumpPositions, bumpOrders, bumpFills])
 
   /** Run a fill against an existing order row. Returns the realized P&L. */
   const executeFill = useCallback(
@@ -429,7 +552,9 @@ export function useTrading(accountId: string | null, onAccountChanged: () => voi
     orders,
     openOrders,
     fills,
+    fillCount,
     fillsTruncated,
+    setHistoryVisible,
     loading,
     reload,
     placeOrder,
