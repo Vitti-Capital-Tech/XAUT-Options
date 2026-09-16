@@ -585,6 +585,10 @@ function Terminal({ userId, email }: { userId: string; email: string | undefined
               onHistoryVisible={futuresTrading.setHistoryVisible}
               fillsTruncated={futuresTrading.fillsTruncated}
               onExportDay={(day) => futuresTrading.exportDay(day, futuresAccounts.selected?.name ?? 'account')}
+              // Only this book offers the lifetime file: it is the one that runs
+              // unattended for weeks, so what gets reconciled is the whole run
+              // rather than a session.
+              onExportAll={() => futuresTrading.exportAll(futuresAccounts.selected?.name ?? 'account')}
               productsBySymbol={productsBySymbol}
               emptyPositions="No open positions. Set it Running and it sells its first pair at the session open."
               onClosePosition={(pos, product) => futuresTrading.closePosition(pos, product)}

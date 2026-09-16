@@ -4,7 +4,14 @@ import { market, useMarketTick } from '../lib/marketStore'
 import { useDebouncedCallback, useVisiblePoll } from './usePolling'
 import type { Product } from '../lib/delta'
 import { isPerp, parseSymbol } from '../lib/delta'
-import { downloadCsv, fillsFilename, fillsToCsv, istDayRange } from '../lib/exportFills'
+import {
+  downloadCsv,
+  fillsFilename,
+  fillsToCsv,
+  istDayRange,
+  lifetimeFillsFilename,
+} from '../lib/exportFills'
+import { dayKey } from '../lib/format'
 import {
   computeFee,
   crossesNow,
@@ -80,6 +87,12 @@ const FILL_COLS =
  */
 const FILL_LIMIT = 1000
 const ORDER_LIMIT = 200
+/**
+ * Rows per page of a lifetime export. 1000 is PostgREST's own default ceiling on
+ * a response; asking for more per page would not get more, and a page that comes
+ * back short is what tells the loop it has reached the end of the table.
+ */
+const EXPORT_PAGE = 1000
 /** Collapse one engine cycle's burst of row changes into a single re-read. */
 const REALTIME_DEBOUNCE_MS = 150
 
@@ -473,6 +486,48 @@ export function useTrading(accountId: string | null, onAccountChanged: () => voi
     [accountId],
   )
 
+  /**
+   * The whole book, every day of it, in one file.
+   *
+   * Paged rather than fetched flat: PostgREST caps a response at 1000 rows, so a
+   * single `select` would quietly hand back the newest thousand and call it a
+   * lifetime. The loop runs until a page comes back short, which is the only
+   * honest end-of-table signal the API gives.
+   *
+   * `id` is the tiebreak on the sort so the pages can't overlap or skip a row
+   * where two fills share a timestamp — the strategy closes legs in pairs, so
+   * they do.
+   */
+  const exportAll = useCallback(
+    async (accountName: string): Promise<number> => {
+      if (!accountId) return 0
+      const rows: FillRow[] = []
+      for (;;) {
+        const { data, error } = await supabase
+          .from('fills')
+          .select(FILL_COLS)
+          .eq('account_id', accountId)
+          .order('created_at', { ascending: true })
+          .order('id', { ascending: true })
+          .range(rows.length, rows.length + EXPORT_PAGE - 1)
+        if (error) throw new Error(error.message)
+        const page = (data ?? []) as FillRow[]
+        rows.push(...page)
+        if (page.length < EXPORT_PAGE) break
+      }
+      if (rows.length === 0) return 0
+
+      const name = lifetimeFillsFilename(
+        accountName,
+        dayKey(rows[0].created_at),
+        dayKey(rows[rows.length - 1].created_at),
+      )
+      downloadCsv(name, fillsToCsv(rows))
+      return rows.length
+    },
+    [accountId],
+  )
+
   /** Flatten a position with an opposing market order. */
   const closePosition = useCallback(
     async (pos: PositionRow, product: Product, lots?: number) => {
@@ -562,6 +617,7 @@ export function useTrading(accountId: string | null, onAccountChanged: () => voi
     closePosition,
     setTpSl,
     exportDay,
+    exportAll,
     registerProducts,
   }
 }

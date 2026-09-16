@@ -46,6 +46,12 @@ interface Props {
    * where the panel is showing a capped view of it. Omit and no button renders.
    */
   onExportDay?: (day: string) => Promise<number>
+  /**
+   * Download every fill this account has ever made, all days in one file.
+   * Same columns as the per-day export, paged out of the database rather than
+   * taken from `fills`. Omit and only the per-day buttons render.
+   */
+  onExportAll?: () => Promise<number>
   /** What the Positions tab says when empty — the chain and the strategy reach
    *  it by different routes, so each names its own. */
   emptyPositions?: string
@@ -70,6 +76,7 @@ export function BottomPanel({
   productsBySymbol,
   fillsTruncated = false,
   onExportDay,
+  onExportAll,
   onHistoryVisible,
   emptyPositions,
   onClosePosition,
@@ -115,6 +122,20 @@ export function BottomPanel({
             </button>
           )
         })}
+
+        {/* The lifetime export lives on the tab strip rather than in the table,
+            because it is not about any one day — the per-day buttons are down in
+            the day bands where the day they export is written. Only while the
+            ledger is the thing on screen. */}
+        {tab === 'history' && onExportAll && (
+          <span className="ml-auto pr-1">
+            <ExportButton
+              onExport={onExportAll}
+              label="Export All"
+              title="Download every fill on this account, across all days, as one CSV — opens in Excel. Read from the database in pages, so the file is the whole book and not the window this table has loaded."
+            />
+          </span>
+        )}
       </div>
 
       <div className="flex flex-col">
@@ -1111,6 +1132,61 @@ function fillKind(f: FillRow): { label: string; cls: string } {
 }
 
 /**
+ * The button behind both exports — a day's, and the whole book's.
+ *
+ * Three states rather than two: a spreadsheet of a busy book is a round trip to
+ * the database, and a button that looks idle while it works gets clicked again.
+ * It settles back to plain after a beat, so the next thing exported does not
+ * look already done.
+ */
+function ExportButton({
+  onExport,
+  label,
+  title,
+}: {
+  /** Resolves with how many rows were written. */
+  onExport: () => Promise<number>
+  label: string
+  title: string
+}) {
+  const [state, setState] = useState<'idle' | 'busy' | 'done' | 'empty'>('idle')
+
+  const run = async () => {
+    if (state === 'busy') return
+    setState('busy')
+    try {
+      setState((await onExport()) > 0 ? 'done' : 'empty')
+    } catch {
+      setState('idle')
+    }
+    setTimeout(() => setState('idle'), 2500)
+  }
+
+  return (
+    <button
+      onClick={run}
+      disabled={state === 'busy'}
+      title={title}
+      className={`shrink-0 rounded border px-2 py-1 text-[11px] leading-none font-medium transition-colors disabled:opacity-60 ${
+        state === 'done'
+          ? 'border-pos-on-muted bg-pos-muted text-pos'
+          : state === 'empty'
+            ? 'border-raised-3 text-ink-3'
+            : 'border-raised-3 text-brand-text hover:border-brand-text hover:bg-brand-muted/40'
+      }`}
+    >
+      {state === 'busy'
+        ? 'Exporting…'
+        : state === 'done'
+          ? 'Saved ✓'
+          : state === 'empty'
+            ? 'No rows'
+            : label}
+    </button>
+  )
+}
+
+/**
  * A day's band across the ledger — the date, how many fills it holds and what they
  * realized between them.
  *
@@ -1136,22 +1212,6 @@ function DayHeader({
   /** Resolves with how many rows were written. Omit and no button renders. */
   onExport?: () => Promise<number>
 }) {
-  // Three states rather than two: a spreadsheet of a busy day is a round trip to
-  // the database, and a button that looks idle while it works gets clicked again.
-  const [state, setState] = useState<'idle' | 'busy' | 'done' | 'empty'>('idle')
-
-  const run = async () => {
-    if (!onExport || state === 'busy') return
-    setState('busy')
-    try {
-      setState((await onExport()) > 0 ? 'done' : 'empty')
-    } catch {
-      setState('idle')
-    }
-    // Back to a plain button, so the next day exported does not look already done.
-    setTimeout(() => setState('idle'), 2500)
-  }
-
   return (
     <tr className="bg-sub">
       {/* Spans the whole history row — eleven columns since Fee joined them. */}
@@ -1196,26 +1256,11 @@ function DayHeader({
             </span>
 
             {onExport && (
-              <button
-                onClick={run}
-                disabled={state === 'busy'}
+              <ExportButton
+                onExport={onExport}
+                label="Export"
                 title={`Download every fill on ${dayKey(iso)} as a CSV — opens in Excel. Read from the database, so the file is the whole day even where this table is showing a capped view of it.`}
-                className={`shrink-0 rounded border px-2 py-1 text-[11px] leading-none font-medium transition-colors disabled:opacity-60 ${
-                  state === 'done'
-                    ? 'border-pos-on-muted bg-pos-muted text-pos'
-                    : state === 'empty'
-                      ? 'border-raised-3 text-ink-3'
-                      : 'border-raised-3 text-brand-text hover:border-brand-text hover:bg-brand-muted/40'
-                }`}
-              >
-                {state === 'busy'
-                  ? 'Exporting…'
-                  : state === 'done'
-                    ? 'Saved ✓'
-                    : state === 'empty'
-                      ? 'No rows'
-                      : 'Export'}
-              </button>
+              />
             )}
           </span>
         </div>

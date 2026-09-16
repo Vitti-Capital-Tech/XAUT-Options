@@ -156,8 +156,29 @@ export function downloadCsv(filename: string, csv: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
+/** `JD US` -> `JD-US`, safe to sit in a filename on any of the three platforms. */
+function safeName(accountName: string): string {
+  return accountName.trim().replace(/[^A-Za-z0-9._-]+/g, '-') || 'account'
+}
+
 /** `JD US` + `2026-08-19` -> `JD-US_2026-08-19_fills.csv`. */
 export function fillsFilename(accountName: string, day: string): string {
-  const safe = accountName.trim().replace(/[^A-Za-z0-9._-]+/g, '-') || 'account'
-  return `${safe}_${day}_fills.csv`
+  return `${safeName(accountName)}_${day}_fills.csv`
+}
+
+/**
+ * The same, for the whole book: `JD-US_2026-08-01_to_2026-09-16_fills.csv`.
+ *
+ * The span is in the name rather than the word `lifetime`, because two lifetime
+ * exports taken a week apart are different files and a folder holding both
+ * should say which is which. A book with a single day's trading names that day
+ * once instead of twice.
+ */
+export function lifetimeFillsFilename(
+  accountName: string,
+  firstDay: string,
+  lastDay: string,
+): string {
+  const span = firstDay === lastDay ? firstDay : `${firstDay}_to_${lastDay}`
+  return `${safeName(accountName)}_${span}_fills.csv`
 }
