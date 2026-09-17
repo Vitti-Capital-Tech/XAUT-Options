@@ -106,6 +106,8 @@ interface Row {
   pairs_count: number | null
   shift_pct: string | number | null
   max_shifts: number | null
+  /** Absent on a row written before 0069, which reads as the default of one. */
+  max_reentries?: number | null
   qty: string | number
   max_notional_per_strike: string | number
   tie_break: string
@@ -124,16 +126,20 @@ interface Row {
   rolls_used_put: number
   shifts_used_call: number | null
   shifts_used_put: number | null
+  reentries_used_call?: number | null
+  reentries_used_put?: number | null
   entered_day: string | null
   flattened_day: string | null
   /** Which windows have already opened a book today. Absent on a row written
    *  before 0051, which reads as none entered. */
   entered_window_ids?: string[] | null
+  /** The window that opened the book on the table; null when flat (0069). */
+  open_window_id?: string | null
   schedule_windows?: any[] | null
 }
 
 const COLS =
-  'account_id, armed, session_open, session_close, band_low, band_high, gamma_multiplier, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, entry_premium_min, entry_premium_max, pairs_count, shift_pct, max_shifts, qty, max_notional_per_strike, tie_break, expiry_pick, expiry_rule, expiry_label, cycle_seconds, take_profit_mark, stop_loss_mark, margin_cap_pct, margin_target_pct, hedge_leverage, trade_days, session_day, rolls_used_call, rolls_used_put, shifts_used_call, shifts_used_put, entered_day, flattened_day, entered_window_ids, schedule_windows'
+  'account_id, armed, session_open, session_close, band_low, band_high, gamma_multiplier, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, entry_premium_min, entry_premium_max, pairs_count, shift_pct, max_shifts, qty, max_notional_per_strike, tie_break, expiry_pick, expiry_rule, expiry_label, cycle_seconds, take_profit_mark, stop_loss_mark, margin_cap_pct, margin_target_pct, hedge_leverage, trade_days, session_day, rolls_used_call, rolls_used_put, shifts_used_call, shifts_used_put, reentries_used_call, reentries_used_put, max_reentries, entered_day, flattened_day, entered_window_ids, open_window_id, schedule_windows'
 
 // Postgres numerics come back as strings over PostgREST.
 const n = (v: string | number) => Number(v)
@@ -156,6 +162,7 @@ function rowToConfig(row: Row): DeltaConfig {
     pairsCount: row.pairs_count === null ? 1 : Number(row.pairs_count),
     shiftPct: row.shift_pct === null ? 50 : n(row.shift_pct),
     maxShifts: row.max_shifts === null ? 1 : Number(row.max_shifts),
+    maxReentries: row.max_reentries == null ? 1 : Number(row.max_reentries),
     qty: n(row.qty),
     maxNotionalPerStrike: n(row.max_notional_per_strike),
     tieBreak: row.tie_break as TieBreak,
@@ -193,6 +200,9 @@ function rowToConfig(row: Row): DeltaConfig {
           hedgeLeverage: n(w.hedgeLeverage ?? w.hedge_leverage ?? 100),
           shiftPct: n(w.shiftPct ?? w.shift_pct ?? 50),
           maxShifts: Number(w.maxShifts ?? w.max_shifts ?? 1),
+          // A window written before the re-entry tier existed gets the default
+          // of one, which is the behaviour the tier was added to provide.
+          maxReentries: Number(w.maxReentries ?? w.max_reentries ?? 1),
           takeProfitMark: n(w.takeProfitMark ?? w.take_profit_mark ?? 0.7),
           stopLossMark: n(w.stopLossMark ?? w.stop_loss_mark ?? 0),
           marginCapPct: n(w.marginCapPct ?? w.margin_cap_pct ?? 100),
@@ -225,6 +235,7 @@ function configToRow(cfg: DeltaConfig) {
     pairs_count: cfg.pairsCount,
     shift_pct: cfg.shiftPct,
     max_shifts: cfg.maxShifts,
+    max_reentries: cfg.maxReentries,
     qty: cfg.qty,
     max_notional_per_strike: cfg.maxNotionalPerStrike,
     tie_break: cfg.tieBreak,
@@ -255,6 +266,7 @@ function settingsError(message: string): string {
   if (message.includes('delta_pairs_count_chk')) return 'Pairs count must be at least 1.'
   if (message.includes('delta_shift_pct_chk')) return 'Shift % must be greater than zero.'
   if (message.includes('delta_max_shifts_chk')) return 'Shift limit must be at least 0.'
+  if (message.includes('delta_max_reentries_chk')) return 'Re-entry limit must be at least 0.'
   if (message.includes('delta_stop_loss_mark_chk')) return 'SL mark cannot be negative.'
   if (message.includes('delta_band_chk'))
     return 'Target delta band needs the left number below the right one.'
@@ -278,6 +290,8 @@ function rowToSession(row: Row): SessionState {
     rollsUsedPut: row.rolls_used_put,
     shiftsUsedCall: row.shifts_used_call ?? 0,
     shiftsUsedPut: row.shifts_used_put ?? 0,
+    reentriesUsedCall: row.reentries_used_call ?? 0,
+    reentriesUsedPut: row.reentries_used_put ?? 0,
     enteredDay: row.entered_day,
     flattenedDay: row.flattened_day,
     // The engine gates entry on this as well as on the day, so the readout has
@@ -285,6 +299,10 @@ function rowToSession(row: Row): SessionState {
     enteredWindowIds: Array.isArray(row.entered_window_ids)
       ? row.entered_window_ids.map(String)
       : [],
+    // Which window owns the open book. The engine flattens when this stops
+    // matching the governing window, and the readout has to say so or it
+    // describes an entry where a handover is about to happen.
+    openWindowId: row.open_window_id ?? null,
   }
 }
 

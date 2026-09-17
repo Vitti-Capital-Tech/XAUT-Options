@@ -225,6 +225,16 @@ export interface DeltaConfig {
   /** Maximum ATM shifts allowed per side per session (default 1). */
   maxShifts: number
   /**
+   * ATM re-entries allowed per side, once the shift budget is spent (default 1).
+   *
+   * A full ATM exit used to leave the wing empty, and the empty-wing rule then
+   * flattens the whole book while the entry stamps still say this window has
+   * traded — so an exit that shifted carried on and an exit that closed in full
+   * ended the window. This is the second tier that closes that gap: sell the side
+   * back on inside the entry premium range, out of the money, this many times.
+   */
+  maxReentries: number
+  /**
    * XAUT sold per leg at the open, converted to lots by the contract's own value
    * the way the auto strategy's `qty` is: `lots = round(qty / contractValue)`.
    *
@@ -338,6 +348,7 @@ export interface ScheduleWindow {
   hedgeLeverage: number
   shiftPct: number
   maxShifts: number
+  maxReentries: number
   takeProfitMark: number
   stopLossMark: number
   marginCapPct: number
@@ -397,6 +408,7 @@ export function defaultScheduleWindow(id = 'win_1', cfg?: Partial<DeltaConfig>):
     hedgeLeverage: cfg?.hedgeLeverage ?? 100,
     shiftPct: cfg?.shiftPct ?? 50,
     maxShifts: cfg?.maxShifts ?? 1,
+    maxReentries: cfg?.maxReentries ?? 1,
     takeProfitMark: cfg?.takeProfitMark ?? 0.7,
     stopLossMark: cfg?.stopLossMark ?? 0,
     marginCapPct: cfg?.marginCapPct ?? 100,
@@ -511,6 +523,7 @@ export const DEFAULT_DELTA_CONFIG: DeltaConfig = {
   pairsCount: 1,
   shiftPct: 50,
   maxShifts: 1,
+  maxReentries: 1,
   // One lot at the venue's 0.001 contract value.
   qty: 0.001,
   maxNotionalPerStrike: 95_000,
@@ -558,6 +571,19 @@ export interface SessionState {
    * correctly, opened the next window's book.
    */
   enteredWindowIds: string[]
+  /** ATM re-entries spent on each side by the window currently holding the book. */
+  reentriesUsedCall: number
+  reentriesUsedPut: number
+  /**
+   * The schedule window that opened the book on the table, or null when flat.
+   *
+   * The engine flattens when this stops matching the governing window, which is
+   * what keeps one window's book from running into the next one's
+   * ([`0069`](../../supabase/migrations/0069_one_window_one_book.sql)). Two
+   * back-to-back windows never produce a closed phase, so nothing else marks the
+   * boundary.
+   */
+  openWindowId: string | null
 }
 
 export const EMPTY_SESSION: SessionState = {
@@ -569,6 +595,9 @@ export const EMPTY_SESSION: SessionState = {
   enteredDay: null,
   flattenedDay: null,
   enteredWindowIds: [],
+  reentriesUsedCall: 0,
+  reentriesUsedPut: 0,
+  openWindowId: null,
 }
 
 // ---------------------------------------------------------------------------
@@ -1327,27 +1356,40 @@ export function pickMultipleByPremium(
 
   if (allCandidates.length === 0) return []
 
-  // The two bounds are not symmetric, and the asymmetry is deliberate.
+  // Both bounds are hard, and the entry premium is a target inside them.
   //
-  //   min  a hard floor. A strike quoted below it is dropped, and if that empties
-  //        the side there is no entry — no fallback to the unfiltered list, which
-  //        would have the readout promise an entry the engine declines.
-  //   max  approximate. It does not exclude a richer strike; it only supplies the
-  //        target to rank against when entryPremium is unset. So a range of 3–5
-  //        can and will open a leg at 7.30 if that is the nearest to the target.
+  //   min  a strike quoted below it is dropped.
+  //   max  a strike quoted above it is dropped.
   //
-  // `delta_pick_premium_ranked` reads them exactly this way — floor_val and
-  // target_val, no ceiling test — so the two stay in step. Change one and the
-  // readout starts describing an entry the engine does not make.
+  // The maximum used to be approximate — it excluded nothing and only supplied a
+  // ranking target when entryPremium was unset, so a 3–5 range would open a leg
+  // at 7.30 if that happened to be nearest the target. `delta_pick_premium_ranked`
+  // read it the same way, so the readout and the engine agreed while both were
+  // wrong. [`0069`](../../supabase/migrations/0069_one_window_one_book.sql) makes
+  // it a filter on the same terms as the floor, in both places at once.
+  //
+  // The target is clamped into the range rather than allowed to drag the ranking
+  // outside it: an entry premium of $6 against a 2–5 range now lands on the
+  // richest strike at or under $5.
+  //
+  // Emptying the side empties the entry — no fallback to the unfiltered list,
+  // which would have the readout promise an entry the engine declines.
   const rawMin = cfg.entryPremiumMin ?? 0
   const rawMax = cfg.entryPremiumMax ?? 0
   const hasMin = rawMin > 0
   const hasMax = rawMax > 0
   const minFloor = hasMin && hasMax ? Math.min(rawMin, rawMax) : hasMin ? rawMin : 0
-  const target = cfg.entryPremium > 0 ? cfg.entryPremium : (hasMin && hasMax ? Math.max(rawMin, rawMax) : 0)
+  const maxCeil = hasMin && hasMax ? Math.max(rawMin, rawMax) : hasMax ? rawMax : 0
+  const target =
+    cfg.entryPremium > 0
+      ? Math.min(Math.max(cfg.entryPremium, minFloor), maxCeil > 0 ? maxCeil : cfg.entryPremium)
+      : maxCeil > 0
+        ? maxCeil
+        : minFloor
 
-  // Hard floor: strictly at or above the min premium (e.g. >= $2)
-  const eligible = minFloor > 0 ? allCandidates.filter((c) => c.premium >= minFloor) : allCandidates
+  const eligible = allCandidates.filter(
+    (c) => (minFloor <= 0 || c.premium >= minFloor) && (maxCeil <= 0 || c.premium <= maxCeil),
+  )
   if (eligible.length === 0) return []
 
   const sorted = [...eligible].sort((a, b) => {
@@ -1546,6 +1588,7 @@ export function resolveSessionContext(
         hedgeLeverage: activeWindow.hedgeLeverage,
         shiftPct: activeWindow.shiftPct,
         maxShifts: activeWindow.maxShifts,
+        maxReentries: activeWindow.maxReentries,
         takeProfitMark: activeWindow.takeProfitMark,
         stopLossMark: activeWindow.stopLossMark,
         marginCapPct: activeWindow.marginCapPct,
@@ -1679,13 +1722,71 @@ export function planCycle(input: CycleInput): CyclePlan {
     }
   }
 
+  // ---- Window handover -----------------------------------------------------
+  // The engine flattens the moment the window that owns the open book stops
+  // being the one that governs
+  // ([`0069`](../../supabase/migrations/0069_one_window_one_book.sql)). Two
+  // back-to-back windows never produce a closed phase, so the session-close
+  // flatten above never marked that boundary, and the incoming window's entry
+  // landed on top of the outgoing window's book — on a different contract, since
+  // every window resolves its own `daysToExpiry`.
+  //
+  // A null owner is left alone here exactly as the engine leaves it: a book with
+  // no owning window was opened by hand, and is adopted rather than liquidated.
+  if (
+    mode === 'futures' &&
+    session.openWindowId !== null &&
+    session.openWindowId !== windowId &&
+    live.length > 0
+  ) {
+    return {
+      ...base,
+      action: { type: 'flatten', positions: live },
+      reason: `Window handover — flattening the book ${session.openWindowId} opened`,
+    }
+  }
+
   if (!expiry) return { ...base, action: null, reason: 'No expiry listed to trade' }
+
+  // ---- Stale expiries ------------------------------------------------------
+  // One expiry at a time. Δp sums every leg, the ATM scan ranks every short by
+  // its distance through spot, the margin cut takes the nearest to spot and the
+  // empty-wing rule counts sides — none of them filter by expiry, and none of
+  // them sensibly could: 30 points from spot buys $5 of premium at eight hours to
+  // settlement and 80 points buys it at thirty-two. So anything not on the traded
+  // contract is closed before those rules look at the book.
+  const stale = live.filter(
+    (p) => p.contract_type !== 'perpetual_futures' && p.expiry_label !== expiry.label,
+  )
+  if (mode === 'futures' && stale.length > 0) {
+    const labels = [...new Set(stale.map((p) => p.expiry_label))].join(', ')
+    return {
+      ...base,
+      action: { type: 'flatten', positions: stale },
+      reason: `Trading ${expiry.label} — closing ${stale.length} leg(s) on ${labels}`,
+    }
+  }
 
   // ---- Daily / per-window entry --------------------------------------------
   // The engine's test, verbatim: a window that has not opened a book yet, or a
   // day that has not. Gating on the day alone made this readout disagree with
   // the engine on back-to-back windows — see `SessionState.enteredWindowIds`.
   const windowNotEntered = windowId !== null && !session.enteredWindowIds.includes(windowId)
+  // 0069: and only onto an empty option book. The two stamp arms are an OR, so
+  // either one firing opens a full set of pairs whatever is already on the table
+  // — which is how an adopted book got a second strangle sold over it. The
+  // handover flatten and the stale-expiry close above should leave nothing here,
+  // but the state that matters is tested directly rather than inferred.
+  const shortOptions = live.filter(
+    (p) => p.net_qty < 0 && p.contract_type !== 'perpetual_futures',
+  )
+  if ((windowNotEntered || session.enteredDay !== day) && shortOptions.length > 0) {
+    return {
+      ...base,
+      action: null,
+      reason: `${shortOptions.length} short leg(s) still open — entry refused`,
+    }
+  }
   if (windowNotEntered || session.enteredDay !== day) {
     // No margin gate here. The entry only runs on a book that has just been
     // flattened at the previous close, so blocked margin is at or near zero when
@@ -1697,26 +1798,30 @@ export function planCycle(input: CycleInput): CyclePlan {
     if (calls.length === 0 || puts.length === 0) {
       // Which side came back empty, and whether a setting on this panel is what
       // emptied it. "No call strike quoted yet" reads as a venue problem and
-      // sends you looking at the chain; a floor nothing clears is a number on
-      // this very panel, and the engine will decline the entry until it moves.
+      // sends you looking at the chain; a range nothing clears is two numbers on
+      // this very panel, and the engine will decline the entry until they move.
       //
-      // Only the floor is named, because only the floor can empty the list. The
-      // upper bound is approximate — it steers the target, it does not exclude a
-      // richer strike — so printing it here would blame a control that did not
-      // do this. Both bounds set means the lower of the two is the floor.
+      // Both bounds are named since 0069, because either can now empty the list.
+      // Set the wrong way round they are still the range between them, which is
+      // what the picker does with them.
       const side = calls.length === 0 ? 'call' : 'put'
       const rawMin = cfg.entryPremiumMin ?? 0
       const rawMax = cfg.entryPremiumMax ?? 0
       const hasMin = rawMin > 0
       const hasMax = rawMax > 0
       const floorVal = hasMin && hasMax ? Math.min(rawMin, rawMax) : hasMin ? rawMin : 0
+      const ceilVal = hasMin && hasMax ? Math.max(rawMin, rawMax) : hasMax ? rawMax : 0
       return {
         ...base,
         action: null,
         reason:
-          floorVal > 0
-            ? `No ${side} strike quoted at or above ${usd2(floorVal)}`
-            : `No ${side} strike quoted yet`,
+          floorVal > 0 && ceilVal > 0
+            ? `No ${side} strike quoted between ${usd2(floorVal)} and ${usd2(ceilVal)}`
+            : floorVal > 0
+              ? `No ${side} strike quoted at or above ${usd2(floorVal)}`
+              : ceilVal > 0
+                ? `No ${side} strike quoted at or below ${usd2(ceilVal)}`
+                : `No ${side} strike quoted yet`,
       }
     }
     const count = Math.min(calls.length, puts.length)
@@ -1772,9 +1877,26 @@ export function planCycle(input: CycleInput): CyclePlan {
   }
 
   // ---- ATM Exit & Shift (Futures strategy) ---------------------------------
-  // Exit at ATM (spot >= strike for Call, spot <= strike for Put).
-  // At the exit price, sell another position on the same side at shiftPct (default 50%).
-  // Limit maxShifts (default 1) per side.
+  // Exit at ATM (spot >= strike for Call, spot <= strike for Put), in full.
+  //
+  // Then one of two replacements, in this order:
+  //
+  //   shift     the same side, further out, at shiftPct of the price the exit
+  //             paid. maxShifts of these per side.
+  //   re-entry  the shift budget spent, or nothing further out priced: the same
+  //             side sold back on inside the entry premium range, out of the
+  //             money. maxReentries of these per side.
+  //
+  // The exit is the whole leg either way. It used to be sized by how much room
+  // the *replacement* strike had left under the per-strike notional cap, so a
+  // replacement near its cap left part of the ATM leg in the money — the one
+  // position this rule exists to not hold. The cap sizes what is being sold and
+  // nothing else ([`0069`](../../supabase/migrations/0069_one_window_one_book.sql)).
+  //
+  // The re-entry tier is what makes the outcome consistent. Without it a full
+  // exit left the wing empty, the empty-wing rule flattened the book on the next
+  // cycle, and the entry stamps still said this window had traded — so an exit
+  // that shifted carried on and an exit that closed in full ended the window.
   if (mode === 'futures') {
     const atmLeg = legs.find(
       (leg) =>
@@ -1797,6 +1919,7 @@ export function planCycle(input: CycleInput): CyclePlan {
         atmLeg.kind === 'call' ? (session.shiftsUsedCall ?? 0) : (session.shiftsUsedPut ?? 0)
       const maxShifts = cfg.maxShifts ?? 1
       const shiftAllowed = used < maxShifts
+      const label = `${atmLeg.strike}${atmLeg.kind === 'call' ? 'C' : 'P'}`
 
       if (shiftAllowed && expiry) {
         const shiftPct = cfg.shiftPct > 0 ? cfg.shiftPct : 50
@@ -1811,6 +1934,7 @@ export function planCycle(input: CycleInput): CyclePlan {
           targetShiftPrice,
         )
         if (replacement) {
+          // The cap sizes the replacement. The exit stays the whole leg.
           const q = Math.min(open, replacement.roomLots ?? Infinity)
           if (q > 0) {
             return {
@@ -1819,10 +1943,49 @@ export function planCycle(input: CycleInput): CyclePlan {
                 type: 'roll',
                 side: atmLeg.kind as OptionKind,
                 leg: atmLeg,
-                exitQty: q,
+                exitQty: open,
                 replace: { product: replacement.product, qty: q },
               },
-              reason: `ATM reached on ${atmLeg.strike}${atmLeg.kind === 'call' ? 'C' : 'P'} (exit $${pExit.toFixed(2)}) — shifted to ${replacement.strike} at ${shiftPct}% ($${targetShiftPrice.toFixed(2)})`,
+              reason: `ATM reached on ${label} (exit $${pExit.toFixed(2)}) — closing ${open}, shifting ${q} to ${replacement.strike} at ${shiftPct}% ($${targetShiftPrice.toFixed(2)})`,
+            }
+          }
+        }
+      }
+
+      // Tier 2 — sell the side back on inside the entry premium range, strictly
+      // out of the money, so the wing is not left empty for the empty-wing rule
+      // to flatten the book over.
+      const reentriesUsed =
+        atmLeg.kind === 'call' ? (session.reentriesUsedCall ?? 0) : (session.reentriesUsedPut ?? 0)
+      const maxReentries = cfg.maxReentries ?? 1
+      if (reentriesUsed < maxReentries && expiry) {
+        // Ranked deep, then filtered — not the other way round. `beyond` is spot,
+        // not the exited strike: the entry's own test, so the replacement cannot
+        // be at the money the moment it is sold. Taking the top pick first and
+        // filtering after would answer "nothing to sell" whenever the nearest
+        // strike to the target happened to be through spot, which near an ATM
+        // exit is most of the time.
+        const reentry = pickMultipleByPremium(
+          expiry,
+          atmLeg.kind as OptionKind,
+          cfg,
+          tickerFor,
+          Number.MAX_SAFE_INTEGER,
+          roomFor,
+        ).find((c) => (atmLeg.kind === 'call' ? c.strike > spot : c.strike < spot))
+        if (reentry) {
+          const q = Math.min(open, reentry.roomLots ?? Infinity)
+          if (q > 0) {
+            return {
+              ...base,
+              action: {
+                type: 'roll',
+                side: atmLeg.kind as OptionKind,
+                leg: atmLeg,
+                exitQty: open,
+                replace: { product: reentry.product, qty: q },
+              },
+              reason: `ATM reached on ${label} — closing ${open}, re-entering ${q} at ${reentry.strike} for $${reentry.premium.toFixed(2)} (${reentriesUsed + 1} of ${maxReentries})`,
             }
           }
         }
@@ -1838,8 +2001,8 @@ export function planCycle(input: CycleInput): CyclePlan {
           replace: null,
         },
         reason: shiftAllowed
-          ? `ATM reached on ${atmLeg.strike}${atmLeg.kind === 'call' ? 'C' : 'P'} — exiting at $${pExit.toFixed(2)}`
-          : `ATM reached on ${atmLeg.strike}${atmLeg.kind === 'call' ? 'C' : 'P'} — shift limit (${maxShifts}) reached, closing in full`,
+          ? `ATM reached on ${label} — closing ${open} in full at $${pExit.toFixed(2)}, nothing to sell back`
+          : `ATM reached on ${label} — shift (${maxShifts}) and re-entry (${maxReentries}) budgets spent, closing ${open} in full`,
       }
     }
   }

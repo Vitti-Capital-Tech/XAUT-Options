@@ -98,6 +98,7 @@ export function DeltaStrategyTab({
             hedgeLeverage: patch.hedgeLeverage ?? currentWin.hedgeLeverage,
             shiftPct: patch.shiftPct ?? currentWin.shiftPct,
             maxShifts: patch.maxShifts ?? currentWin.maxShifts,
+            maxReentries: patch.maxReentries ?? currentWin.maxReentries,
             takeProfitMark: patch.takeProfitMark ?? currentWin.takeProfitMark,
             stopLossMark: patch.stopLossMark ?? currentWin.stopLossMark,
             marginCapPct: patch.marginCapPct ?? currentWin.marginCapPct,
@@ -190,6 +191,19 @@ export function DeltaStrategyTab({
   const putsLeft = Math.max(0, config.maxRolls - session.rollsUsedPut)
   const shiftsCallsLeft = Math.max(0, (config.maxShifts ?? 1) - (session.shiftsUsedCall ?? 0))
   const shiftsPutsLeft = Math.max(0, (config.maxShifts ?? 1) - (session.shiftsUsedPut ?? 0))
+  // What is left of the second tier, once the shifts above are spent. Worth its
+  // own readout rather than folding into the shift count: they are different
+  // trades — a shift sells further out at a fraction of the exit price, a
+  // re-entry sells back inside the entry premium range — and the one that is
+  // exhausted is the one that explains what the book just did.
+  const reentriesCallsLeft = Math.max(
+    0,
+    (config.maxReentries ?? 1) - (session.reentriesUsedCall ?? 0),
+  )
+  const reentriesPutsLeft = Math.max(
+    0,
+    (config.maxReentries ?? 1) - (session.reentriesUsedPut ?? 0),
+  )
   // The hedge, on the books that have one. Size is read in the underlying, the
   // same unit Δp and the positions table are read in, so the two can be compared
   // by eye: a hedge of +1.50 is what answers a Δp of −1.50.
@@ -574,6 +588,19 @@ export function DeltaStrategyTab({
                       min={0}
                       width="w-16"
                       onChange={(v) => updateWindow({ maxShifts: Math.max(0, Math.round(v)) })}
+                    />
+                  </Field>
+
+                  <Field
+                    label="Re-entry limit"
+                    help="After the shift budget is spent, an ATM exit sells the side back on inside the premium range instead of leaving the wing empty. This is how many times per side, in this window. Zero closes in full and leaves it — which then flattens the book."
+                  >
+                    <NumInput
+                      value={currentWin.maxReentries}
+                      step={1}
+                      min={0}
+                      width="w-16"
+                      onChange={(v) => updateWindow({ maxReentries: Math.max(0, Math.round(v)) })}
                     />
                   </Field>
 
@@ -1141,6 +1168,12 @@ export function DeltaStrategyTab({
             </Readout>
             <Readout label="Shifts left C / P" tone={shiftsCallsLeft === 0 || shiftsPutsLeft === 0 ? 'warn' : 'ok'}>
               {shiftsCallsLeft} / {shiftsPutsLeft}
+            </Readout>
+            <Readout
+              label="Re-entries left C / P"
+              tone={reentriesCallsLeft === 0 || reentriesPutsLeft === 0 ? 'warn' : 'ok'}
+            >
+              {reentriesCallsLeft} / {reentriesPutsLeft}
             </Readout>
           </>
         ) : (

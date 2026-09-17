@@ -117,10 +117,11 @@ erDiagram
         integer max_rolls "per side per session"
         numeric entry_premium
         numeric entry_premium_min "floor for opening pairs"
-        numeric entry_premium_max "ceiling for opening pairs"
+        numeric entry_premium_max "hard ceiling for opening pairs (0069); 0 = off"
         integer pairs_count "opening pairs count"
         numeric shift_pct "% of ATM exit price to sell replacement"
         integer max_shifts "shift limit per side"
+        integer max_reentries "re-entry limit per side, after the shifts"
         numeric qty "XAUT per leg -> lots"
         numeric max_notional_per_strike "USD ceiling per contract; 0 = off"
         numeric hedge_leverage "futures books only; margin is notional / this"
@@ -131,8 +132,11 @@ erDiagram
         integer rolls_used_put
         integer shifts_used_call "used ATM shifts today"
         integer shifts_used_put
+        integer reentries_used_call "used ATM re-entries, this window"
+        integer reentries_used_put
         text entered_day
         text flattened_day
+        text open_window_id "the window that opened the book on the table"
         text_array touched_symbols "once per pass"
         boolean pass_open
         numeric take_profit_mark "a price on the option's mark"
@@ -1073,6 +1077,39 @@ the readout predicting one thing and the engine doing another.
 > implementations disagreed about a rule, but that one of them had four copies of
 > the question. A type change was what closed it — passing `expiries` instead of
 > `expiry` makes the wrong answer unrepresentable.
+>
+> A fourth, and the one the first three were symptoms of: nothing ever asked
+> whether the book was *empty* before selling into it
+> ([`0069`](../supabase/migrations/0069_one_window_one_book.sql)). The entry
+> fires on "this window is not in `entered_window_ids` **or** the day is new" —
+> stamps describing what the engine believes it has done — and three routes get
+> past those stamps with a live book underneath. Two back-to-back windows never
+> produce a closed phase, so the session flatten never runs between them and the
+> incoming window sells its own `daysToExpiry` over the outgoing window's legs.
+> An adopted book stamps `entered_day` but not the window, so the other arm of
+> the `or` enters on top of what it has just adopted. And a flatten that could
+> not price a leg — `delta_close_leg` needs an ask, and the chain drops a symbol
+> the venue stopped quoting two minutes ago — stamped `flattened_day` anyway, and
+> was gated on that same stamp, so no later cycle came back for the remainder.
+>
+> Each was reported as a different fault. "Multiple entries in parallel",
+> "multiple expiries at once" and "the 1DTE timings are wrong" are one bug seen
+> from three angles, because every rule downstream — Δp, the ATM scan, the margin
+> cut, the empty-wing count — reads the book as one position set and none of them
+> filter by expiry. None of them sensibly could: 30 points from spot buys $5 of
+> premium at eight hours to settlement and 80 points buys it at thirty-two.
+>
+> So the fix is not six filters. It is `open_window_id`, a flatten when the
+> governing window changes, a close of anything not on the traded contract, a
+> flatten that only claims the day once the book is actually flat — and, behind
+> all of them, an entry that tests `not exists (short option leg)` rather than
+> trusting the stamps. The stamps stay, because they are what stops a *second*
+> entry after a legitimate flatten; they are simply no longer the only thing
+> standing between the engine and a strangle sold over a live one.
+>
+> The generalisation: a stamp records what you did, and the position table
+> records what is true. When a rule's precondition is about the book, read the
+> book.
 >
 > The diff that found the first kind is worth repeating when either side changes:
 > list the settings columns the engine writes, list the ones `COLS` selects, and
