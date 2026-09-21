@@ -334,6 +334,17 @@ export interface ScheduleWindow {
   name?: string
   startTime: string // "HH:MM" (IST)
   endTime: string // "HH:MM" (IST)
+  /**
+   * Ignored on a futures book since
+   * [`0072`](../../supabase/migrations/0072_the_premium_range_is_the_entry_rule.sql),
+   * and every schedule window is a futures book's.
+   *
+   * Kept on the type, and in the stored JSON, only so a window written before
+   * 0072 still parses. The premium range below is the entry rule; do not wire
+   * this back into a picker without removing the range first, because the two
+   * contradict each other — a $6 target against a $3–$5 range aims at a price no
+   * strike is allowed to be sold at, which is what 0072 removed.
+   */
   entryPremium: number
   entryPremiumMin: number
   entryPremiumMax: number
@@ -1522,6 +1533,18 @@ export interface CyclePlan {
    * counting it as a pair still owed would have the top-up quietly undo it.
    */
   pairsOpen: number
+  /**
+   * Why the window's allocation is still short, when it is — or null when it is
+   * full, or when a top-up is what happens next.
+   *
+   * The engine deliberately logs nothing when a top-up finds nothing: the branch
+   * is evaluated every cycle, and a line per cycle for a non-event would bury
+   * every line that means something. That left "Pairs 1 / 3" with no way to say
+   * whether the engine was still trying and could not, or had stopped trying.
+   * This is that sentence, and it lives on the panel where somebody looking at a
+   * half-filled book would look.
+   */
+  pairsNote: string | null
 }
 
 /**
@@ -1633,6 +1656,16 @@ export function resolveSessionContext(
     }
   }
 
+  // 0072: a futures book has no entry premium — the premium range is the whole
+  // entry rule, and `pickMultipleByPremium` reads a zero here as "aim at the top
+  // of the range", exactly as `delta_pick_premium_ranked` does.
+  //
+  // Forced after the window overrides rather than inside them, so it holds for a
+  // futures book with no schedule windows as well. The delta book keeps its own
+  // entry premium: it has no range, and the roll and the band correction have
+  // nothing else to rank against.
+  if (mode === 'futures') cfg = { ...cfg, entryPremium: 0 }
+
   return { cfg, phase, day, tradingDay, windowId }
 }
 
@@ -1705,6 +1738,7 @@ export function planCycle(input: CycleInput): CyclePlan {
 
   const base = {
     dp, gp, band, breach: null as Breach, phase, day, tradingDay, queue, margin, pairsOpen,
+    pairsNote: null as string | null,
   }
 
   // ---- Session close: flatten, whatever the band says ----------------------
@@ -1816,6 +1850,22 @@ export function planCycle(input: CycleInput): CyclePlan {
       ...base,
       action: { type: 'flatten', positions: stale },
       reason: `Trading ${expiry.label} — closing ${stale.length} leg(s) on ${labels}`,
+    }
+  }
+
+  // ---- No range, no rule ---------------------------------------------------
+  // 0072: with the entry premium gone from this book, a range is the only thing
+  // that says what may be sold. Ranking against a target of zero would take
+  // whatever is quoted cheapest on the board, so the engine declines instead.
+  // Unreachable from the panel, which requires a range — but a row written by
+  // hand or by an older client can still be in this state, and it would
+  // otherwise look like a strategy that is simply never finding a strike.
+  const premiumBounds = Math.max(cfg.entryPremiumMin ?? 0, cfg.entryPremiumMax ?? 0)
+  if (mode === 'futures' && premiumBounds <= 0) {
+    return {
+      ...base,
+      action: null,
+      reason: 'No premium range set — nothing tells this book what to sell',
     }
   }
 
@@ -1943,6 +1993,23 @@ export function planCycle(input: CycleInput): CyclePlan {
       expiry, 'put', cfg, tickerFor, Number.MAX_SAFE_INTEGER, roomFor,
     ).filter((c) => !held.has(c.product.symbol))
 
+    // Which side is short, and whether a control on this panel is what emptied
+    // it. A pair needs both, so naming the side is the whole diagnosis: the
+    // strike the other side wants may be quoted perfectly well.
+    if (calls.length === 0 || puts.length === 0) {
+      const side = calls.length === 0 ? 'call' : 'put'
+      const rawMin = cfg.entryPremiumMin ?? 0
+      const rawMax = cfg.entryPremiumMax ?? 0
+      const hasMin = rawMin > 0
+      const hasMax = rawMax > 0
+      const floorVal = hasMin && hasMax ? Math.min(rawMin, rawMax) : hasMin ? rawMin : 0
+      const ceilVal = hasMin && hasMax ? Math.max(rawMin, rawMax) : hasMax ? rawMax : 0
+      base.pairsNote =
+        floorVal > 0 && ceilVal > 0
+          ? `No unheld ${side} strike quoted between ${usd2(floorVal)} and ${usd2(ceilVal)} — widen the range to fill the other ${want}`
+          : `No unheld ${side} strike quoted — waiting on the chain for the other ${want}`
+    }
+
     const count = Math.min(calls.length, puts.length, want)
     if (count > 0) {
       const legsToEnter: { product: Product; qty: number }[] = []
@@ -1966,8 +2033,13 @@ export function planCycle(input: CycleInput): CyclePlan {
       }
     }
     // Nothing to add yet. Not a failure and not an action — the book is simply
-    // smaller than it was configured to be, so say that and carry on into the
-    // rules that manage what is there.
+    // smaller than it was configured to be, so `pairsNote` says why and the
+    // cycle carries on into the rules that manage what is there. Returning here
+    // would hijack the next-action line from the hedge and the ATM check, which
+    // both outrank a pair that cannot be sold.
+    if (base.pairsNote === null) {
+      base.pairsNote = `Nothing under the ${usd0(cfg.maxNotionalPerStrike)} per-strike cap has room for the other ${want}`
+    }
   }
 
   // ---- Empty side check (Futures strategy) ---------------------------------

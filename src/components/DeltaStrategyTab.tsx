@@ -84,7 +84,6 @@ export function DeltaStrategyTab({
         ? {
             sessionOpen: patch.startTime ?? currentWin.startTime,
             sessionClose: patch.endTime ?? currentWin.endTime,
-            entryPremium: patch.entryPremium ?? currentWin.entryPremium,
             entryPremiumMin: patch.entryPremiumMin ?? currentWin.entryPremiumMin,
             entryPremiumMax: patch.entryPremiumMax ?? currentWin.entryPremiumMax,
             pairsCount: patch.pairsCount ?? currentWin.pairsCount,
@@ -395,23 +394,15 @@ export function DeltaStrategyTab({
 
                   <GroupRule />
 
-                  <Field
-                    label="Entry premium"
-                    help="The premium to aim for inside this window."
-                  >
-                    <NumInput
-                      value={currentWin.entryPremium}
-                      step={0.5}
-                      min={0}
-                      unit="$"
-                      width="w-20"
-                      onChange={(v) => updateWindow({ entryPremium: v })}
-                    />
-                  </Field>
-
+                  {/* The window's whole price rule. There used to be a separate
+                      "Entry premium" beside this — a target to rank against,
+                      where these two are a filter — and the pair of them could
+                      disagree: a $6 target against a $3–$5 range aimed at a price
+                      no strike was allowed to be sold at. The range is the rule
+                      now, and the target falls out of it (0072). */}
                   <Field
                     label="Premium range"
-                    help="Optional price range for opening pairs in this window (Min – Max). Set 0 for no limit."
+                    help="What this window sells. A strike is only opened if its bid sits inside this range, richest first — so with Pairs above 1 you get a ladder down from the top of the band. Set one side to 0 to leave it open; both at 0 and the window has no rule and will not trade."
                   >
                     <div className="flex items-center gap-1.5">
                       <NumInput
@@ -1174,6 +1165,10 @@ export function DeltaStrategyTab({
             <Readout
               label="Pairs"
               tone={(plan ? plan.pairsOpen : session.pairsOpen) < (config.pairsCount ?? 1) ? 'warn' : 'ok'}
+              title={
+                plan?.pairsNote ??
+                'Pairs open on the traded expiry, against what this window asks for. The engine keeps topping this up while the window is open.'
+              }
             >
               {plan ? plan.pairsOpen : session.pairsOpen} / {config.pairsCount ?? 1}
             </Readout>
@@ -1265,16 +1260,20 @@ function Readout({
   label,
   children,
   tone = 'ok',
+  title,
 }: {
   label: string
   children: React.ReactNode
   /** 'warn' is the brand highlight, as the roll budget uses it; 'bad' is the loss
    *  colour, kept for a reading that means the engine is closing at a loss now. */
   tone?: 'ok' | 'warn' | 'bad'
+  /** Hover text. A figure that is short of its target should be able to say why
+   *  without spending a row of the bar on the sentence. */
+  title?: string
 }) {
   const colour = tone === 'bad' ? 'text-neg' : tone === 'warn' ? 'text-brand-text' : 'text-ink'
   return (
-    <div className="flex flex-col gap-0.5">
+    <div className="flex flex-col gap-0.5" title={title}>
       <span className="text-[9px] font-semibold tracking-[0.14em] text-ink-3 uppercase">{label}</span>
       <span className={`num text-[13px] font-semibold ${colour}`}>{children}</span>
     </div>
