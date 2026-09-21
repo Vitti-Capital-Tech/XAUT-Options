@@ -1351,6 +1351,60 @@ export function pickByPremium(
 }
 
 /**
+ * Pair each call with the put nearest it **in premium**, richest call first.
+ *
+ * `delta_sell_entry` does exactly this
+ * ([`0073`](../../supabase/migrations/0073_pair_the_legs_that_match.sql)), and it
+ * replaced pairing the two sides on rank. Rank-to-rank is right while both sides
+ * offer the same ladder, and fails when they are different lengths — which on a
+ * hard premium range is most of the time. The join then took the top of each
+ * list, so a lone call at $2.83 was sold against the richest put at $5.00 with
+ * the $3.00 put one rank below it, unused.
+ *
+ * The two legs of a pair are meant to sit the same distance out either side of
+ * spot, and premium is the unit this strategy measures that in — it is what the
+ * range is written in. $2.83 of call against $5.00 of put is not a strangle, it
+ * is short far more put than call from the moment it opens.
+ *
+ * The closest remaining pair on the board each time, not the closest partner for
+ * whichever call comes first. With calls at $4.90, $4.50, $2.83 against puts at
+ * $5.00 and $3.00, walking the calls in order has the $4.50 take the $3.00 — a
+ * gap of 1.50 — and strands the $2.83 that would have matched it to within 0.17.
+ * Smallest gap first gives $4.90/$5.00 and $2.83/$3.00, and simply does not sell
+ * the $4.50, because no put in range pairs with it: premium given up on a leg
+ * rather than a pair opened short far more of one side than the other.
+ *
+ * Call rank outer, put rank inner, strict `<`, so equal gaps leave the
+ * better-ranked — the richer — pair holding it.
+ */
+function matchByPremium(calls: StrikePick[], puts: StrikePick[], want: number): [StrikePick, StrikePick][] {
+  const callTaken = new Set<number>()
+  const putTaken = new Set<number>()
+  const out: [StrikePick, StrikePick][] = []
+  while (out.length < want) {
+    let bi = -1
+    let bj = -1
+    let gap = Infinity
+    calls.forEach((c, i) => {
+      if (callTaken.has(i)) return
+      puts.forEach((p, j) => {
+        if (putTaken.has(j)) return
+        if (Math.abs(p.premium - c.premium) < gap) {
+          gap = Math.abs(p.premium - c.premium)
+          bi = i
+          bj = j
+        }
+      })
+    })
+    if (bi < 0) break
+    callTaken.add(bi)
+    putTaken.add(bj)
+    out.push([calls[bi], puts[bj]])
+  }
+  return out
+}
+
+/**
  * Pick multiple strikes for an entry pair, respecting premium bounds [entryPremiumMin, entryPremiumMax]
  * and sorted according to the entry premium and tie-break rule.
  */
@@ -1926,12 +1980,11 @@ export function planCycle(input: CycleInput): CyclePlan {
                 : `No ${side} strike quoted yet`,
       }
     }
-    const count = Math.min(calls.length, puts.length)
+    const matched = matchByPremium(calls, puts, pairsCount)
+    const count = matched.length
     const legsToEnter: { product: Product; qty: number }[] = []
 
-    for (let i = 0; i < count; i++) {
-      const c = calls[i]
-      const p = puts[i]
+    for (const [c, p] of matched) {
       const room = Math.min(c.roomLots ?? Infinity, p.roomLots ?? Infinity)
       const callLots = Math.min(entryLots(c.product, cfg), room)
       const putLots = Math.min(entryLots(p.product, cfg), room)
@@ -1951,7 +2004,7 @@ export function planCycle(input: CycleInput): CyclePlan {
 
     const desc =
       count === 1
-        ? `Selling ${legsToEnter[0].qty} × ${calls[0].strike}C / ${legsToEnter[1].qty} × ${puts[0].strike}P`
+        ? `Selling ${legsToEnter[0].qty} × ${matched[0][0].strike}C / ${legsToEnter[1].qty} × ${matched[0][1].strike}P`
         : `Selling ${count} pairs (${legsToEnter.map((l) => `${l.qty} × ${l.product.symbol}`).join(', ')})`
 
     return {
@@ -2010,12 +2063,10 @@ export function planCycle(input: CycleInput): CyclePlan {
           : `No unheld ${side} strike quoted — waiting on the chain for the other ${want}`
     }
 
-    const count = Math.min(calls.length, puts.length, want)
-    if (count > 0) {
+    const matched = matchByPremium(calls, puts, want)
+    if (matched.length > 0) {
       const legsToEnter: { product: Product; qty: number }[] = []
-      for (let i = 0; i < count; i++) {
-        const c = calls[i]
-        const p = puts[i]
+      for (const [c, p] of matched) {
         const room = Math.min(c.roomLots ?? Infinity, p.roomLots ?? Infinity)
         const callLots = Math.min(entryLots(c.product, cfg), room)
         const putLots = Math.min(entryLots(p.product, cfg), room)
