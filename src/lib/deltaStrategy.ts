@@ -584,6 +584,15 @@ export interface SessionState {
    * boundary.
    */
   openWindowId: string | null
+  /**
+   * Pairs the window holding the book has opened so far.
+   *
+   * Counted, not derived from the book: the ATM rules never decrement it, so a
+   * leg they closed without replacing does not read as an unfilled pair and get
+   * refilled here — that is the re-entry budget's job
+   * ([`0070`](../../supabase/migrations/0070_fill_the_pairs_the_window_asked_for.sql)).
+   */
+  pairsOpen: number
 }
 
 export const EMPTY_SESSION: SessionState = {
@@ -598,6 +607,7 @@ export const EMPTY_SESSION: SessionState = {
   reentriesUsedCall: 0,
   reentriesUsedPut: 0,
   openWindowId: null,
+  pairsOpen: 0,
 }
 
 // ---------------------------------------------------------------------------
@@ -1860,6 +1870,62 @@ export function planCycle(input: CycleInput): CyclePlan {
       },
       reason: desc,
     }
+  }
+
+  // ---- Top up a partly filled entry ----------------------------------------
+  // The window asked for N pairs and holds fewer. Since the premium range became
+  // a hard range this is the ordinary case on a thin chain, not an error, and
+  // the engine keeps asking on every cycle until the allocation is met
+  // ([`0070`](../../supabase/migrations/0070_fill_the_pairs_the_window_asked_for.sql)).
+  //
+  // Off `session.pairsOpen` rather than off a count of strikes on the book, for
+  // the same reason the engine is: a leg an ATM exit closed without replacing
+  // must not read as a pair still owed.
+  if (
+    mode === 'futures' &&
+    session.openWindowId !== null &&
+    session.openWindowId === windowId &&
+    session.enteredDay === day &&
+    session.pairsOpen < (cfg.pairsCount ?? 1)
+  ) {
+    const want = (cfg.pairsCount ?? 1) - session.pairsOpen
+    // Strikes already short are skipped, so a top-up widens the strangle rather
+    // than deepening a leg — the engine drops them inside `delta_sell_entry`.
+    const held = new Set(
+      live.filter((p) => p.net_qty < 0).map((p) => p.symbol),
+    )
+    const calls = pickMultipleByPremium(
+      expiry, 'call', cfg, tickerFor, Number.MAX_SAFE_INTEGER, roomFor,
+    ).filter((c) => !held.has(c.product.symbol))
+    const puts = pickMultipleByPremium(
+      expiry, 'put', cfg, tickerFor, Number.MAX_SAFE_INTEGER, roomFor,
+    ).filter((c) => !held.has(c.product.symbol))
+
+    const count = Math.min(calls.length, puts.length, want)
+    if (count > 0) {
+      const legsToEnter: { product: Product; qty: number }[] = []
+      for (let i = 0; i < count; i++) {
+        const c = calls[i]
+        const p = puts[i]
+        const room = Math.min(c.roomLots ?? Infinity, p.roomLots ?? Infinity)
+        const callLots = Math.min(entryLots(c.product, cfg), room)
+        const putLots = Math.min(entryLots(p.product, cfg), room)
+        if (callLots > 0 && putLots > 0) {
+          legsToEnter.push({ product: c.product, qty: callLots })
+          legsToEnter.push({ product: p.product, qty: putLots })
+        }
+      }
+      if (legsToEnter.length > 0) {
+        return {
+          ...base,
+          action: { type: 'entry', legs: legsToEnter },
+          reason: `Topping up — ${session.pairsOpen} of ${cfg.pairsCount} pairs open, adding ${legsToEnter.length / 2}`,
+        }
+      }
+    }
+    // Nothing to add yet. Not a failure and not an action — the book is simply
+    // smaller than it was configured to be, so say that and carry on into the
+    // rules that manage what is there.
   }
 
   // ---- Empty side check (Futures strategy) ---------------------------------

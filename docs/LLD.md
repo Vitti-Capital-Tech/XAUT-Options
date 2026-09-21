@@ -134,6 +134,7 @@ erDiagram
         integer shifts_used_put
         integer reentries_used_call "used ATM re-entries, this window"
         integer reentries_used_put
+        integer pairs_open "pairs this window has opened; topped up to pairs_count"
         text entered_day
         text flattened_day
         text open_window_id "the window that opened the book on the table"

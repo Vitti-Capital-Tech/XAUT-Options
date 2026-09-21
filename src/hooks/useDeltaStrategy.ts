@@ -135,11 +135,13 @@ interface Row {
   entered_window_ids?: string[] | null
   /** The window that opened the book on the table; null when flat (0069). */
   open_window_id?: string | null
+  /** Pairs that window has opened so far (0070). */
+  pairs_open?: number | null
   schedule_windows?: any[] | null
 }
 
 const COLS =
-  'account_id, armed, session_open, session_close, band_low, band_high, gamma_multiplier, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, entry_premium_min, entry_premium_max, pairs_count, shift_pct, max_shifts, qty, max_notional_per_strike, tie_break, expiry_pick, expiry_rule, expiry_label, cycle_seconds, take_profit_mark, stop_loss_mark, margin_cap_pct, margin_target_pct, hedge_leverage, trade_days, session_day, rolls_used_call, rolls_used_put, shifts_used_call, shifts_used_put, reentries_used_call, reentries_used_put, max_reentries, entered_day, flattened_day, entered_window_ids, open_window_id, schedule_windows'
+  'account_id, armed, session_open, session_close, band_low, band_high, gamma_multiplier, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, entry_premium_min, entry_premium_max, pairs_count, shift_pct, max_shifts, qty, max_notional_per_strike, tie_break, expiry_pick, expiry_rule, expiry_label, cycle_seconds, take_profit_mark, stop_loss_mark, margin_cap_pct, margin_target_pct, hedge_leverage, trade_days, session_day, rolls_used_call, rolls_used_put, shifts_used_call, shifts_used_put, reentries_used_call, reentries_used_put, max_reentries, entered_day, flattened_day, entered_window_ids, open_window_id, pairs_open, schedule_windows'
 
 // Postgres numerics come back as strings over PostgREST.
 const n = (v: string | number) => Number(v)
@@ -303,6 +305,7 @@ function rowToSession(row: Row): SessionState {
     // matching the governing window, and the readout has to say so or it
     // describes an entry where a handover is about to happen.
     openWindowId: row.open_window_id ?? null,
+    pairsOpen: row.pairs_open ?? 0,
   }
 }
 

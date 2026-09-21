@@ -1166,6 +1166,17 @@ export function DeltaStrategyTab({
                 </span>
               )}
             </Readout>
+            {/* How much of the window's allocation is actually on the book.
+                Since the premium range became hard, an entry that opens fewer
+                pairs than asked is ordinary rather than exceptional, and the
+                engine tops it up on later cycles — so this is the number that
+                says whether it is still working on it. */}
+            <Readout
+              label="Pairs"
+              tone={session.pairsOpen < (config.pairsCount ?? 1) ? 'warn' : 'ok'}
+            >
+              {session.pairsOpen} / {config.pairsCount ?? 1}
+            </Readout>
             <Readout label="Shifts left C / P" tone={shiftsCallsLeft === 0 || shiftsPutsLeft === 0 ? 'warn' : 'ok'}>
               {shiftsCallsLeft} / {shiftsPutsLeft}
             </Readout>
