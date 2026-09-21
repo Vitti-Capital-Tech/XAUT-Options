@@ -106,6 +106,45 @@ adds it an optional stop.
 >   a window that wraps midnight trades one expiry from open to close instead of
 >   changing contract at 00:00. Run it with `0067`; on a book with no windows and
 >   a session that does not wrap, neither migration changes any answer.
+> - [`0069`](../supabase/migrations/0069_one_window_one_book.sql) is four rules on
+>   the futures book, from three reported faults. The premium **maximum becomes a
+>   hard filter** — it used to exclude nothing and only supplied a ranking target,
+>   so a 3–5 range would sell a leg at 7.30. An **ATM exit closes the whole leg**;
+>   it was being sized by the *replacement* strike's room under the per-strike
+>   cap, so a tight cap left half the leg in the money. A full exit that cannot
+>   shift now **re-enters inside the premium range** rather than leaving a wing
+>   empty for the empty-wing rule to flatten the book over — bounded by the new
+>   `max_reentries`. And the book is kept to **one window, one expiry**: a flatten
+>   when the governing window changes, a close of any leg not on the traded
+>   contract, a session flatten that only claims the day once the book is
+>   genuinely flat, and an entry gated on `not exists (short option leg)` rather
+>   than on the stamps. **Expect fewer entries after this**: the range is now
+>   binding, and a side with nothing quoted inside it opens nothing.
+> - [`0070`](../supabase/migrations/0070_fill_the_pairs_the_window_asked_for.sql)
+>   keeps filling the window's `pairs_count`. 0069 made "fewer pairs than asked"
+>   ordinary rather than exceptional, and the engine treated any non-null return
+>   from `delta_sell_entry` as "entered" — so one pair of three was a window's
+>   final answer. New `pairs_open` counter, a top-up branch that asks for the
+>   shortfall every cycle, and `delta_sell_entry` now skips strikes it already
+>   holds and re-ranks each side after that filter before pairing them.
+> - [`0071`](../supabase/migrations/0071_count_the_pairs_that_are_actually_open.sql)
+>   reconciles that counter against the book. **Run it with `0070`.** Any book
+>   already open when `0070` applied took the column default of 0 while holding
+>   live pairs, and nothing recounted it: the panel read `Pairs 0 / 3` beside a
+>   pair, and the top-up was either unreachable (no `open_window_id`, for a book
+>   predating `0069`) or would have asked for three more on top of one. The
+>   counter is raised to meet the book and never lowered to it — lowering it would
+>   have the top-up refill what the re-entry budget declined.
+> - [`0072`](../supabase/migrations/0072_the_premium_range_is_the_entry_rule.sql)
+>   **removes the entry premium from the futures book.** Two controls said where
+>   to sell — a target to rank against and a range to filter by — and once `0069`
+>   made the range hard they could contradict each other outright; the
+>   configuration running in production was a $6 target against a $3–$5 range. The
+>   range is the whole rule now and the target falls out of it: the richest
+>   in-range strike ranks first, so `pairs_count` above 1 gives a ladder down from
+>   the top of the band. A futures book with **neither** bound set has no rule at
+>   all and will not enter — it says so in the log every cycle. The delta book is
+>   untouched: it has no range, and `entry_premium` is the only price rule it has.
 
 > `0021` adds `delta_strategy_settings.qty`, defaulting to one lot so nothing
 > changes on its own. **Raising it means rescaling `band_low`/`band_high` by the

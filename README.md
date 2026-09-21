@@ -359,9 +359,11 @@ marked *Breach*, *ATM Exit & Shift*, and *Empty Wing*:
 | | Delta Strategy (`delta`) | Futures Strategy (`futures`) |
 | --- | --- | --- |
 | Breach | Roll an ITM short further out; fresh OTM sell when nothing is left to roll | Buy or sell the XAUTUSD perpetual |
-| ATM Exit & Shift | Rolls triggered on band breach | **Exit immediately at ATM** (`itmDistance >= 0`), sell replacement on same side at 50% (`shift_pct`), limit `max_shifts` per side |
-| Empty Wing | Retains remaining side | **Auto-flatten all remaining positions** (options & futures hedge) if either wing is empty |
-| Entry Pairs | 1 symmetric pair at `entry_premium` | Configurable `pairs_count` and `[entry_premium_min, entry_premium_max]` range |
+| ATM Exit & Shift | Rolls triggered on band breach | **Exit the whole leg at ATM** (`itmDistance >= 0`), then shift to the same side at 50% (`shift_pct`) up to `max_shifts`, then re-enter inside the premium range up to `max_reentries` |
+| Empty Wing | Retains remaining side | **Auto-flatten all remaining positions** (options & futures hedge) if either wing is empty — reached only once both the shift and re-entry budgets are spent |
+| Price rule | Rank against `entry_premium` | **The premium range is the rule.** No target of its own: the richest strike inside `[entry_premium_min, entry_premium_max]` ranks first ([`0072`](supabase/migrations/0072_the_premium_range_is_the_entry_rule.sql)) |
+| Entry Pairs | 1 symmetric pair | `pairs_count` pairs, **topped up while the window is open** until the allocation is met |
+| Expiries held | One at a time | One at a time, and **one window's**: a handover flattens, and anything not on the traded contract is closed on sight |
 | Band | Derived from Γp × `gamma_multiplier` by default | **As typed.** Gamma is not read at all |
 | Book grows? | Yes — a correction is more premium sold | No — the option book is only what the entry and shifts sell |
 | Long exposure? | Never. **No leg is ever bought as a hedge** | The hedge is bought or sold outright |
@@ -373,12 +375,16 @@ sold, or an exit — never a long option. The futures book keeps that rule for
 
 | Phase | Rule |
 | --- | --- |
-| Open (06:00 IST) | Sell `pairs_count` (1 on `delta`, configurable on `futures`) symmetric pair(s) — pair *i* is the *i*-th ranked strike on each side, so the pairs land on distinct strikes nearest `entry_premium` (optionally filtered within `[entry_premium_min, entry_premium_max]`), sized by `qty` in XAUT — the spec's `N`, in XAUT rather than lots ([`0024`](supabase/migrations/0024_drop_pairs_and_fix_reentry.sql), [`0048`](supabase/migrations/0048_futures_strategy_atm_shift_and_pairs.sql), [`0049`](supabase/migrations/0049_futures_strategy_unbreak_the_cycle.sql)). Each pair fills whole or not at all; a failed open is retried on the next refresh rather than written off for the day |
-| Book already open | A two-sided short book the engine did not itself open — one placed by hand — is **adopted**: the day is stamped and the cycle carries straight on into management, rather than retrying the entry forever and never defending the band ([`0049`](supabase/migrations/0049_futures_strategy_unbreak_the_cycle.sql)) |
+| Open (06:00 IST) | Sell `pairs_count` (1 on `delta`, configurable on `futures`) symmetric pair(s) — pair *i* is the *i*-th ranked strike on each side, so the pairs land on distinct strikes. On `delta` the ranking is nearest `entry_premium`; on `futures` it is the richest strike inside `[entry_premium_min, entry_premium_max]`, which is a **hard** range on both sides. Sized by `qty` in XAUT — the spec's `N`, in XAUT rather than lots ([`0024`](supabase/migrations/0024_drop_pairs_and_fix_reentry.sql), [`0048`](supabase/migrations/0048_futures_strategy_atm_shift_and_pairs.sql), [`0049`](supabase/migrations/0049_futures_strategy_unbreak_the_cycle.sql)). Each pair fills whole or not at all; a failed open is retried on the next refresh rather than written off for the day |
+| Book already open | A two-sided short book the engine did not itself open — one placed by hand — is **adopted**: the day is stamped and the cycle carries straight on into management, rather than retrying the entry forever and never defending the band ([`0049`](supabase/migrations/0049_futures_strategy_unbreak_the_cycle.sql)). Scoped to the traded expiry, and the adopting window takes ownership and counts the pairs it found, so the top-up fills a real shortfall rather than selling three more over the top ([`0069`](supabase/migrations/0069_one_window_one_book.sql), [`0071`](supabase/migrations/0071_count_the_pairs_that_are_actually_open.sql)) |
+| Entry, generally | An entry only ever opens onto an **empty** option book. The two stamp tests are an `or`, so either firing opens a full set of pairs whatever is already on the table; the state that matters is therefore tested directly, `not exists (short option leg)`, rather than inferred ([`0069`](supabase/migrations/0069_one_window_one_book.sql)) |
+| Top up · `futures` | An entry that opened fewer than `pairs_count` keeps being topped up every cycle while the window is open, at strikes it does not already hold ([`0070`](supabase/migrations/0070_fill_the_pairs_the_window_asked_for.sql)). `pairs_open` counts what the window opened and is never decremented by the ATM rules — a leg closed and not replaced is the re-entry budget's decision, not a pair still owed |
+| Window handover · `futures` | Back-to-back windows never produce a closed phase, so the session flatten never ran between them and the incoming window sold its own expiry over the outgoing one's book. The window that opened the book owns it, and a change of governing window **flattens** first ([`0069`](supabase/migrations/0069_one_window_one_book.sql)) |
+| Wrong expiry · `futures` | Any leg not on the contract this window trades is closed before the entry, the band or the ATM scan looks at the book. Nothing downstream filters by expiry, and none of it sensibly could — 30 points from spot buys $5 of premium at eight hours to settlement and 80 points buys it at thirty-two |
 | Intraday · `delta` | Rebuild the ITM queue each cycle, most-ITM first; resolve breaches by partial exit-and-replace |
 | Roll budget · `delta` | Each side gets `max_rolls`; once spent that side is **exit-only** — further triggers close in full, loss booked |
 | No ITM legs left · `delta` | Band-correct with fresh OTM sells at the entry premium |
-| ATM Exit & Shift · `futures` | When spot touches/crosses strike (`itmDistance >= 0`), close leg immediately and sell replacement on same side at 50% of exit price (up to `max_shifts` times per side, then exit-only) |
+| ATM Exit & Shift · `futures` | When spot touches/crosses strike (`itmDistance >= 0`), close the leg **in full** — always the whole leg; the per-strike cap sizes the replacement and nothing else — then sell a replacement on the same side at 50% of the exit price (up to `max_shifts` per side). Past that budget, sell the side back on inside the premium range (up to `max_reentries` per side). Only when both are spent does the leg close with nothing behind it ([`0069`](supabase/migrations/0069_one_window_one_book.sql)) |
 | Empty Wing · `futures` | If either Call or Put side has 0 open positions, auto-flatten all remaining options and the perpetual futures hedge |
 | Intraday · `futures` | One trade in the perpetual per breach, `(target − Δp) ÷ contract_value` lots, bought when Δp is short of the target and sold when it is past it |
 | Close (22:00 IST) | Flatten everything, stand flat overnight, reset counters |
@@ -550,17 +556,22 @@ Bought futures — band breach (target -0.60) · spot $4622.13 · Δp -1.35 → 
 
 #### Futures Strategy mechanics
 
-The **Futures Strategy** (`accounts.kind = 'futures'`) introduces specific position lifecycle rules tailored for hybrid option-writing + futures hedging ([`0048`](supabase/migrations/0048_futures_strategy_atm_shift_and_pairs.sql)):
+The **Futures Strategy** (`accounts.kind = 'futures'`) introduces specific position lifecycle rules tailored for hybrid option-writing + futures hedging ([`0048`](supabase/migrations/0048_futures_strategy_atm_shift_and_pairs.sql)), with the entry and exit rules rebuilt in [`0069`](supabase/migrations/0069_one_window_one_book.sql)–[`0072`](supabase/migrations/0072_the_premium_range_is_the_entry_rule.sql):
 
-1. **Exit at the ATM**: When gold price reaches or breaches an open short option's strike (`spot >= strike` for Calls, `spot <= strike` for Puts, i.e., `itmDistance >= 0`), that leg is exited immediately at market price ($P_{\text{exit}}$).
-2. **ATM Shift at 50%**: At the ATM exit price, the strategy sells a replacement position on the same side at a configurable percentage (`shift_pct`, default **50%**) of $P_{\text{exit}}$.
-   - **Shift limit**: Configured via `max_shifts` (default **1** per side per session). Counters `shifts_used_call` and `shifts_used_put` track shift executions. Once the shift budget is exhausted on a side, subsequent ATM triggers on that side close the position in full with no replacement (*exit-only*).
-3. **Empty Wing Auto-Flatten**: If there are no open short positions remaining on either side (e.g. all Calls were exited or all Puts were exited), the strategy automatically flattens all remaining positions (remaining options and any open perpetual futures hedge).
-4. **Number of Pairs & Premium Range Filters**:
-   - **`pairs_count`** (default **1**): The number of symmetric Call/Put pairs shorted at the session open. Both sides are ranked by the usual premium rule and joined on rank, so pair *i* is the *i*-th best call against the *i*-th best put — distinct strikes, in the same order the tab's readout lists them.
-   - **`entry_premium_min`** & **`entry_premium_max`** (default **0**, unconstrained): The two bounds are **not** symmetric, deliberately ([`79f0f07`](supabase/migrations/0049_futures_strategy_unbreak_the_cycle.sql)).
-     - **`entry_premium_min` is a hard floor.** A strike quoted below it is dropped, and if that empties a side the entry does not open — there is no fallback to the unfiltered list. The readout names the floor when this is what stopped it.
-     - **`entry_premium_max` is approximate.** It does not exclude a richer strike. It only supplies the target to rank against when `entry_premium` is unset, so a range of 3–5 can and will sell a leg at 7.30 if that is the strike nearest the target. Set `entry_premium` if you want the target somewhere specific.
+1. **Exit at the ATM, in full**: When gold price reaches or breaches an open short option's strike (`spot >= strike` for Calls, `spot <= strike` for Puts, i.e., `itmDistance >= 0`), that leg is exited immediately at market price ($P_{\text{exit}}$) — **the whole leg, always**. It used to be sized by how much room the *replacement* strike had left under the per-strike notional cap, so a strike near its cap left part of the ATM leg sitting in the money and a strike with room closed the lot: the same trigger with two outcomes, decided by a cap that has nothing to do with the leg being exited ([`0069`](supabase/migrations/0069_one_window_one_book.sql)). The cap sizes what is being **sold** and nothing else. The buy-back is also checked against the position rather than assumed — `delta_close_leg` returns normally on a leg the chain cannot price, and a replacement sold on the assumption the exit landed doubles the side instead of moving it.
+2. **Then one of two replacements, in this order**:
+   - **ATM Shift at 50%** (`shift_pct`, default **50%** of $P_{\text{exit}}$, up to `max_shifts` per side — counters `shifts_used_call` / `shifts_used_put`). The same side, further out, at a fraction of what the exit paid. No premium range on this one: the shift's target is *derived from the exit*, which is what `shift_pct` means.
+   - **Re-entry inside the premium range** (up to `max_reentries`, default **1** per side — counters `reentries_used_call` / `reentries_used_put`). Reached when the shift budget is spent or nothing further out could be priced. Strictly out of the money, so the replacement cannot be at the money the moment it is sold.
+
+   Without that second tier a full exit left the wing empty, the empty-wing rule flattened the book on the next cycle, and the entry stamps still said the window had traded — so **an exit that shifted carried on and an exit that closed in full ended the window**. Same rule, two outcomes.
+3. **Empty Wing Auto-Flatten**: If there are no open short positions remaining on either side (e.g. all Calls were exited or all Puts were exited), the strategy automatically flattens all remaining positions (remaining options and any open perpetual futures hedge). With the re-entry tier in place this is now the last resort rather than the routine consequence of an ATM exit — it means a side could not be sold on the terms it was set, which is the right moment to be flat.
+4. **Number of Pairs & the Premium Range**:
+   - **`pairs_count`** (default **1**): The number of symmetric Call/Put pairs shorted at the session open. Both sides are ranked by the premium rule and joined on rank, so pair *i* is the *i*-th best call against the *i*-th best put — distinct strikes, in the same order the tab's readout lists them. An entry that opens fewer than this is **topped up** on later cycles rather than written off ([`0070`](supabase/migrations/0070_fill_the_pairs_the_window_asked_for.sql)); see [Filling the window's pairs](#filling-the-windows-pairs).
+   - **`entry_premium_min`** & **`entry_premium_max`**: on a futures book these are the *whole* price rule. There is no `entry_premium` on this book any more ([`0072`](supabase/migrations/0072_the_premium_range_is_the_entry_rule.sql)) — the panel carried both, a target to rank against and a range to filter by, and once the range became hard the two could contradict each other outright. The configuration that was running was a **$6 target against a $3–$5 range**: aiming at a price no strike was allowed to be sold at.
+     - **Both bounds are hard.** A strike quoted outside `[min, max]` is dropped, and if that empties a side the entry opens nothing — there is no fallback to the unfiltered list, and no half pair, because half a pair is a directional position this strategy never intends to hold. The panel's `PAIRS` readout says which side came back empty when this is what stopped it.
+     - **The target falls out of the range**: the richest in-range strike ranks first, the rest below it in order. So `pairs_count` above 1 gives a **ladder down from the top of the band** rather than pairs clustered around a separate number.
+     - **A half-set range still works.** Max only means "nothing richer than this", and aims at it. Min only means "nothing cheaper than this", and aims at it — the furthest out of the money that clears the floor. **Neither set is no rule at all**: with no target left to fall back on, the book declines to enter and says so in the log every cycle. The panel makes that state unreachable.
+     - **Expect the range to bind.** On a thin 0DTE chain a $2-wide band can hold one strike per side with a live bid, and then one pair is what opens. That is the range working, not the engine failing; widen it if you want the full `pairs_count`.
 5. **Delta management, in two tiers** ([`0055`](supabase/migrations/0055_futures_delta_management_fallback.sql)). A band breach is answered by the perpetual first and the option book only as a last resort:
    - **Margin available → hedge.** Buy or sell XAUTUSD to bring Δp back to the target. This is the cheap correction: it moves Δp without touching the option legs and books no loss. Affordability is `equity − blocked margin` from `delta_account_margin`, capped by `margin_cap_pct` when one is set, against the hedge's own initial margin (`lots × mark × cv ÷ hedge_leverage`). A hedge that *reduces* an existing perpetual is always affordable — it returns margin rather than taking it.
    - **No margin → close the offending leg, in full.** Which leg is *measured*, not guessed: each leg's signed contribution is `net_qty × delta`, and the one closed is the largest contribution pointing the same way as the breach. Above the band that is the short put (`net_qty < 0`, `delta < 0`, so the product is positive); below it, the short call. Ordering by contribution rather than by moneyness gets both sides right with no special-casing. The fill is stamped `No margin to hedge — closed the leg driving Δp, loss booked`.
@@ -570,11 +581,17 @@ The **Futures Strategy** (`accounts.kind = 'futures'`) introduces specific posit
 A futures book can run several trading windows in a day rather than one session
 ([`0051`](supabase/migrations/0051_futures_schedule_windows.sql)). `schedule_windows`
 is a JSONB array; each entry carries its own `startTime`/`endTime` plus optional
-overrides for `entryPremium`, `entryPremiumMin`/`Max`, `pairsCount`, `qty`,
+overrides for `entryPremiumMin`/`Max`, `pairsCount`, `qty`,
 `maxNotionalPerStrike`, `tieBreak`, `bandLow`/`bandHigh`, `targetLanding`,
-`bandBuffer`, `hedgeLeverage`, `shiftPct` and `maxShifts`. Anything a window
-leaves out falls back to the column of the same name on the settings row, so a
-window is a diff against the account's defaults, not a replacement for them.
+`bandBuffer`, `hedgeLeverage`, `shiftPct`, `maxShifts`, `maxReentries`,
+`daysToExpiry`, `marginCapPct`/`marginTargetPct` and the TP/SL marks. Anything a
+window leaves out falls back to the column of the same name on the settings row,
+so a window is a diff against the account's defaults, not a replacement for them.
+
+An `entryPremium` key may still be present on a window written before
+[`0072`](supabase/migrations/0072_the_premium_range_is_the_entry_rule.sql).
+Nothing reads it — the premium range is the entry rule on this book — and it is
+left in the stored JSON only so an older window still parses.
 
 `delta_session_window` walks the array and returns the window the clock is
 inside; outside every window the phase is `closed`, which is the same
@@ -597,16 +614,29 @@ window's start belongs to yesterday: at 01:00 a 22:00–02:00 window has been
 running 180 minutes and a 00:00–06:00 window 60, so the second is the newer.
 Windows sharing a start time keep array order.
 
-> Two adjacent windows produce **no `closed` cycle between them**, so there is no
-> flatten at the handover: the first window's legs carry into the second, which
-> then opens its own pairs on top. Windows with a gap between them do flatten in
-> the gap. Worth deciding deliberately which you want — the gap is the only thing
-> that separates the two behaviours.
+> Two adjacent windows produce **no `closed` cycle between them**, so the session
+> flatten does not cover the handover. It used to be the gap between two windows
+> that decided whether the first one's legs carried into the second — and since
+> every window resolves its own `daysToExpiry`, carrying over meant the second
+> window sold a *different contract* on top of a live book.
+>
+> Since [`0069`](supabase/migrations/0069_one_window_one_book.sql) the handover is
+> explicit rather than a side effect of the clock: `open_window_id` records which
+> window owns the book, and a change of governing window flattens it. Adjacent and
+> spaced windows now behave the same way, and neither carries legs into the next.
+> See [One window, one book, one expiry](#one-window-one-book-one-expiry).
 
 Entry is gated per window, not per day: `entered_window_ids` records which
 windows have already opened a book today, and the daily `entered_day` stamp is
 kept alongside it. The empty-wing flatten deliberately clears **neither** — a
 book that was closed inside a window stays closed for the rest of it.
+
+Those stamps are no longer the only gate, though. They are an `or`, so either one
+firing opens a full set of pairs whatever is already on the table, which is how an
+adopted book got a second strangle sold over it. Since
+[`0069`](supabase/migrations/0069_one_window_one_book.sql) the entry also requires
+`not exists (short option leg)` — the state that actually matters, tested
+directly rather than inferred from what the engine believes it has done.
 
 The browser readout reads that column too. It did not until recently, and gated
 on `entered_day` alone — which agrees with the engine everywhere *except* on
@@ -626,6 +656,91 @@ later one would read as already entered and sit flat, with nothing on the tab to
 say so. The *Add window* button has always written a unique `win_<timestamp>`, so
 it could not arise from the UI — it is fixed as a latent fault, and it is what
 protects hand-written `schedule_windows`.
+
+#### One window, one book, one expiry
+
+Everything downstream of the entry reads the book as a single position set. Δp
+sums every leg, the ATM scan ranks every short by its distance through spot, the
+margin cut takes the nearest to spot, the empty-wing rule counts sides — and none
+of them filter by expiry. None of them sensibly could: 30 points from spot buys
+$5 of premium at eight hours to settlement and 80 points buys it at thirty-two,
+so a band correction computed across two expiries is arithmetic on two different
+instruments.
+
+Rather than teach six rules to filter, the book is kept to one expiry, and to one
+window's ([`0069`](supabase/migrations/0069_one_window_one_book.sql)):
+
+- **`open_window_id`** records the window that opened whatever is on the table.
+  It is stamped by the entry and cleared by every flatten. When the governing
+  window changes and that id no longer matches, the book is **flattened** before
+  the incoming window opens its own. Back-to-back windows never produce a closed
+  phase — `delta_session_window` reports `open` continuously across a handover and
+  simply changes which window governs, and end minutes are inclusive, so
+  09:00–12:00 and 12:00–16:00 are *both* open at 12:00 — which is why the session
+  flatten never covered this.
+- A **null** owner is left alone deliberately. A book with no owning window was
+  opened by hand, and flattening it on sight would be the engine liquidating a
+  position it never placed. Adoption claims it instead.
+- **Any leg not on the traded contract is closed on sight**, before the entry, the
+  band or the ATM scan looks at the book. A leg that will not close — the chain
+  drops any symbol the venue stopped quoting two minutes ago — keeps its place and
+  blocks the entry, which is the conservative half of the same rule: the
+  alternative is selling a second expiry on top of the one we just failed to be
+  rid of. Settlement clears those.
+- The **session flatten claims the day only once the book is actually flat.** It
+  used to stamp `flattened_day` whether or not every leg closed, and was gated on
+  that same stamp, so a leg the venue had stopped quoting was left open with the
+  day marked done and no later cycle came back for it. That book ran into the next
+  session, was adopted there, and the new window sold its own expiry on top.
+
+The shift and re-entry budgets reset at each handover too. They are read off the
+window, and a per-window allowance drawn from a per-day counter is not an
+allowance: window B asking for two shifts would find window A had spent them.
+
+#### Filling the window's pairs
+
+`pairs_count` is what the window asks for, not what it necessarily gets. Both
+sides are ranked and joined on rank, so
+
+```
+pairs opened = min(calls in range, puts in range)
+```
+
+and since the premium range became hard, "fewer than asked" is the ordinary case
+on a thin chain rather than an error. The engine therefore **keeps asking**
+([`0070`](supabase/migrations/0070_fill_the_pairs_the_window_asked_for.sql)): a
+top-up branch runs every cycle while the window is open, requesting the shortfall,
+at strikes it does not already hold. `delta_sell_entry` drops held strikes and
+**re-ranks each side after that filter** before pairing them — filtering without
+re-ranking would pair a call against a put of a different rank, which after a
+single ATM shift is the normal state.
+
+Three things stop this becoming a second way to over-sell, and they are worth
+knowing before touching it:
+
+1. **`pairs_open` counts what the window *opened*, and no ATM rule decrements
+   it.** If it were derived from the book instead, a leg closed by an ATM exit
+   with the re-entry budget spent would read as "a pair short" and be silently
+   refilled here — which makes `max_reentries` mean nothing. Opening allocation
+   and position management stay separate.
+2. **Held strikes are skipped**, so a top-up can only widen the strangle, never
+   deepen a leg.
+3. **A margin brake.** The opening entry has no margin gate and does not need one
+   — it runs on a book that was just flattened. A top-up runs on a live book, so
+   it stands down once blocked margin reaches the cut-to line; adding pairs the
+   margin guard would cut back next cycle is a loop, not a strategy.
+
+The counter is reconciled against the book on every cycle, **raised to meet it and
+never lowered to it**
+([`0071`](supabase/migrations/0071_count_the_pairs_that_are_actually_open.sql)).
+Raised, it catches up with a book it did not see — one carried across a migration,
+one taken over by adoption. Lowered, it would erase the decision in (1).
+
+A top-up that finds nothing writes no log line: it is evaluated every five
+seconds, and a line per cycle for a non-event would bury every line that means
+something. The panel carries it instead — the **`PAIRS`** readout shows `1 / 3`,
+and hovering it says why the rest are missing (*"No unheld call strike quoted
+between $3.00 and $5.00 — widen the range to fill the other 2"*).
 
 #### Expiry rules
 
@@ -831,9 +946,15 @@ into one strike; the third goes somewhere else.
 
 Every sale goes through the same picker, so the cap applies to the daily entry,
 the roll replacement and the band correction alike. The price rule is unchanged —
-still *the strike quoted closest to `entry_premium`* — the cap only removes
-strikes that are already full, so the sale lands on the next-nearest one with
-room, on its own.
+*the strike quoted closest to `entry_premium`* on a delta book, *the richest
+strike inside the premium range* on a futures one — the cap only removes strikes
+that are already full, so the sale lands on the next-best one with room, on its
+own.
+
+One exception, and it is the whole of
+[`0069`](supabase/migrations/0069_one_window_one_book.sql)'s ATM fix: the cap
+sizes what is being **sold**, never what is being **closed**. An ATM exit closes
+the entire leg whatever room the replacement strike has left.
 
 A sale that does not fit entirely is **trimmed, not skipped**: it sells what the
 strike can still take and the next cycle carries on from the strike after it.

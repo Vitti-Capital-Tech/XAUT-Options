@@ -115,7 +115,7 @@ erDiagram
         numeric gamma_multiplier "band = +/- |Gp| x this; 0 = off; ignored on a futures book"
         numeric itm_trigger "points"
         integer max_rolls "per side per session"
-        numeric entry_premium
+        numeric entry_premium "delta book only; futures ranks off the range (0072)"
         numeric entry_premium_min "floor for opening pairs"
         numeric entry_premium_max "hard ceiling for opening pairs (0069); 0 = off"
         integer pairs_count "opening pairs count"
@@ -1111,6 +1111,58 @@ the readout predicting one thing and the engine doing another.
 > The generalisation: a stamp records what you did, and the position table
 > records what is true. When a rule's precondition is about the book, read the
 > book.
+>
+> Then the same lesson again, one migration later, with the stamp on the other
+> foot. 0069 made the premium range hard, which turned "opened fewer pairs than
+> asked" from an edge case into the ordinary state of a thin 0DTE chain — a
+> $2-wide band often holds one strike per side with a live bid. The engine read
+> any non-null return from `delta_sell_entry` as "this window is entered",
+> stamped it, and the entry branch is gated on *not* entered. One pair of three
+> was a window's final answer for the rest of its life, reported as "positions
+> hain par pair nahi aaya". `pairs_open` and a top-up branch
+> ([`0070`](../supabase/migrations/0070_fill_the_pairs_the_window_asked_for.sql))
+> keep asking for the shortfall every cycle.
+>
+> And immediately a third instance, from the fix itself
+> ([`0071`](../supabase/migrations/0071_count_the_pairs_that_are_actually_open.sql)).
+> A counter introduced mid-flight describes only the books opened after it: every
+> book already on the table took the column default of 0 while holding live
+> pairs, and nothing recounted them — the adopt branch is the only thing that
+> ever derives the counter from the book, and it is gated on a *new* session day.
+> The two halves failed in opposite directions, which is why one hid the other:
+> a null `open_window_id` (from 0069, same gap one migration earlier) made the
+> top-up unreachable, and had it been reachable a `pairs_open` of 0 would have
+> asked for three more pairs on a book already holding one.
+>
+> The rule that resolves it is an asymmetry, and it is worth stating on its own
+> because "just recompute it from the book" is the obvious wrong answer:
+>
+> ```
+> pairs_open = greatest(pairs_open, pairs on the book)     -- never least
+> ```
+>
+> Raised, the counter catches up with a book it did not see — a migration, an
+> adoption, a leg opened by hand. Lowered, it would erase a decision the book no
+> longer shows: an ATM exit that closed a leg while the re-entry budget declined
+> to replace it reads as "a pair still owed", and the top-up would quietly refill
+> it. `maxReentries` would mean nothing. **A counter that exists to remember a
+> choice cannot be derived from the state that choice produced.**
+>
+> The last of the set is not a bug at all, but the thing that made the first one
+> hard to see. The futures panel carried *two* controls saying where to sell:
+> `entryPremium`, a target to rank against, and `entryPremiumMin`/`Max`, a range
+> to filter by. Before 0069 only the target bound anything, because the ceiling
+> excluded nothing — so the two never visibly disagreed. Making the range hard
+> put them in direct contradiction, and the configuration actually running said
+> it plainly: a $6 target against a $3–$5 range, aiming at a price no strike was
+> allowed to be sold at. 0069 clamped the target into the range, which works and
+> explains nothing.
+> [`0072`](../supabase/migrations/0072_the_premium_range_is_the_entry_rule.sql)
+> removes the target on the futures book and lets it fall out of the range —
+> `delta_pick_premium_ranked` already reads a zero entry premium as "aim at the
+> top of the range", so the richest in-range strike ranks first and `pairsCount`
+> above 1 gives a ladder down the band. **Two controls that can disagree about
+> one decision is a bug waiting for whichever of them stops being vestigial.**
 >
 > The diff that found the first kind is worth repeating when either side changes:
 > list the settings columns the engine writes, list the ones `COLS` selects, and
