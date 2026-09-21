@@ -1173,9 +1173,9 @@ export function DeltaStrategyTab({
                 says whether it is still working on it. */}
             <Readout
               label="Pairs"
-              tone={session.pairsOpen < (config.pairsCount ?? 1) ? 'warn' : 'ok'}
+              tone={(plan ? plan.pairsOpen : session.pairsOpen) < (config.pairsCount ?? 1) ? 'warn' : 'ok'}
             >
-              {session.pairsOpen} / {config.pairsCount ?? 1}
+              {plan ? plan.pairsOpen : session.pairsOpen} / {config.pairsCount ?? 1}
             </Readout>
             <Readout label="Shifts left C / P" tone={shiftsCallsLeft === 0 || shiftsPutsLeft === 0 ? 'warn' : 'ok'}>
               {shiftsCallsLeft} / {shiftsPutsLeft}

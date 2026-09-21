@@ -1511,6 +1511,17 @@ export interface CyclePlan {
   queue: LegDelta[]
   /** Where the book sits against its margin thresholds; null when not supplied. */
   margin: MarginState | null
+  /**
+   * Pairs open on the traded expiry, on the engine's own terms: the stored
+   * counter, raised to meet the book but never lowered to it
+   * ([`0071`](../../supabase/migrations/0071_count_the_pairs_that_are_actually_open.sql)).
+   *
+   * Raised, because a book that predates the counter — or one taken over by
+   * adoption — holds pairs the counter never saw. Never lowered, because a leg an
+   * ATM exit closed without replacing is the re-entry budget's decision, and
+   * counting it as a pair still owed would have the top-up quietly undo it.
+   */
+  pairsOpen: number
 }
 
 /**
@@ -1573,10 +1584,20 @@ export function resolveSessionContext(
     )
     phase = winPhase
     day = winDay
-    // Same helpers as findActiveScheduleWindow, for the same reason: deriving the
-    // IST weekday from a Date built out of a localised string reads the viewer's
-    // offset, not IST.
-    tradingDay = rawCfg.tradeDays.includes(isoDow(winDay))
+    // Today's IST weekday, not the session day's.
+    //
+    // `findActiveScheduleWindow` gates on today — the engine's own test is
+    // `v_dow = any(p_trade_days)` against the current IST weekday, before it
+    // resolves any window — and this line then re-answered the same question off
+    // `winDay`, which for a midnight-wrapping window is the day the window
+    // *opened*. A 16:31–16:30 window read at 13:00 on a Monday has a session day
+    // of Sunday, so with M–F selected the panel printed "Off day" over a book the
+    // engine was actively trading, beside a live Δp and an open phase. The two
+    // halves of one readout disagreeing about whether the strategy was running.
+    //
+    // `phase` above already carries the trading-day test; this only has to agree
+    // with it.
+    tradingDay = rawCfg.tradeDays.includes(isoDow(zoneNow(now).day))
 
     if (activeWindow) {
       windowId = activeWindow.id
@@ -1663,7 +1684,28 @@ export function planCycle(input: CycleInput): CyclePlan {
     input.marginBlocked === undefined || input.equity === undefined
       ? null
       : marginState(cfg, input.marginBlocked, input.equity)
-  const base = { dp, gp, band, breach: null as Breach, phase, day, tradingDay, queue, margin }
+  // Distinct short strikes per side on the traded expiry — the same count the
+  // engine takes, so the panel and the engine cannot disagree about how much of
+  // the window's allocation is on the table.
+  const onBook = (kind: 'call_options' | 'put_options') =>
+    new Set(
+      live
+        .filter(
+          (p) =>
+            p.net_qty < 0 &&
+            p.contract_type === kind &&
+            (expiry === null || p.expiry_label === expiry.label),
+        )
+        .map((p) => p.symbol),
+    ).size
+  const pairsOpen = Math.max(
+    session.pairsOpen ?? 0,
+    Math.min(onBook('call_options'), onBook('put_options')),
+  )
+
+  const base = {
+    dp, gp, band, breach: null as Breach, phase, day, tradingDay, queue, margin, pairsOpen,
+  }
 
   // ---- Session close: flatten, whatever the band says ----------------------
   if (phase !== 'open') {
@@ -1886,9 +1928,9 @@ export function planCycle(input: CycleInput): CyclePlan {
     session.openWindowId !== null &&
     session.openWindowId === windowId &&
     session.enteredDay === day &&
-    session.pairsOpen < (cfg.pairsCount ?? 1)
+    pairsOpen < (cfg.pairsCount ?? 1)
   ) {
-    const want = (cfg.pairsCount ?? 1) - session.pairsOpen
+    const want = (cfg.pairsCount ?? 1) - pairsOpen
     // Strikes already short are skipped, so a top-up widens the strangle rather
     // than deepening a leg — the engine drops them inside `delta_sell_entry`.
     const held = new Set(
@@ -1919,7 +1961,7 @@ export function planCycle(input: CycleInput): CyclePlan {
         return {
           ...base,
           action: { type: 'entry', legs: legsToEnter },
-          reason: `Topping up — ${session.pairsOpen} of ${cfg.pairsCount} pairs open, adding ${legsToEnter.length / 2}`,
+          reason: `Topping up — ${pairsOpen} of ${cfg.pairsCount} pairs open, adding ${legsToEnter.length / 2}`,
         }
       }
     }
