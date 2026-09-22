@@ -222,6 +222,30 @@ export interface DeltaConfig {
   pairsCount: number
   /** Shift percentage of ATM exit price to sell the replacement position at (default 50%). */
   shiftPct: number
+  /**
+   * Slack above the premium maximum, as a percentage of it (default 0).
+   *
+   * The effective ceiling is `max × (1 + pct/100)`. A hard edge on a thin chain
+   * refuses entries over a few cents — a $6 maximum with nothing quoted between
+   * $2.50 and $6.10 opens nothing all session — and this lets the ceiling give a
+   * little rather than the entry fail
+   * ([`0075`](../../supabase/migrations/0075_ladder_up_from_the_floor.sql)).
+   *
+   * Only the ceiling. The floor is the risk edge: it is what stops the book
+   * selling further and further out for nothing.
+   */
+  premiumBufferPct: number
+  /**
+   * Widest premium difference allowed between a pair's call and its put
+   * (default 1; 0 is off).
+   *
+   * Nearest-available matching fixed which put a call takes but could not refuse
+   * one — a lone $2.83 call against a lone $5.00 put is still the nearest pair on
+   * the board, and still short far more put than call. The two legs are meant to
+   * sit about the same distance out either side of spot, and premium is the unit
+   * this strategy measures that in.
+   */
+  maxPairGap: number
   /** Maximum ATM shifts allowed per side per session (default 1). */
   maxShifts: number
   /**
@@ -360,6 +384,8 @@ export interface ScheduleWindow {
   shiftPct: number
   maxShifts: number
   maxReentries: number
+  premiumBufferPct: number
+  maxPairGap: number
   takeProfitMark: number
   stopLossMark: number
   marginCapPct: number
@@ -420,6 +446,8 @@ export function defaultScheduleWindow(id = 'win_1', cfg?: Partial<DeltaConfig>):
     shiftPct: cfg?.shiftPct ?? 50,
     maxShifts: cfg?.maxShifts ?? 1,
     maxReentries: cfg?.maxReentries ?? 1,
+    premiumBufferPct: cfg?.premiumBufferPct ?? 0,
+    maxPairGap: cfg?.maxPairGap ?? 1,
     takeProfitMark: cfg?.takeProfitMark ?? 0.7,
     stopLossMark: cfg?.stopLossMark ?? 0,
     marginCapPct: cfg?.marginCapPct ?? 100,
@@ -535,6 +563,8 @@ export const DEFAULT_DELTA_CONFIG: DeltaConfig = {
   shiftPct: 50,
   maxShifts: 1,
   maxReentries: 1,
+  premiumBufferPct: 0,
+  maxPairGap: 1,
   // One lot at the venue's 0.001 contract value.
   qty: 0.001,
   maxNotionalPerStrike: 95_000,
@@ -1386,9 +1416,19 @@ export function pickByPremium(
  * rather than a pair opened short far more of one side than the other.
  *
  * Call rank outer, put rank inner, strict `<`, so equal gaps leave the
- * better-ranked — the richer — pair holding it.
+ * better-ranked pair holding it.
+ *
+ * `maxGap` (0 = off) refuses a pair whose legs are too far apart rather than
+ * opening a skew on purpose. Because each pass takes the smallest gap left, one
+ * that fails the cap means every remaining combination fails it — so this stops
+ * rather than skipping, and the top-up tries again next cycle.
  */
-function matchByPremium(calls: StrikePick[], puts: StrikePick[], want: number): [StrikePick, StrikePick][] {
+function matchByPremium(
+  calls: StrikePick[],
+  puts: StrikePick[],
+  want: number,
+  maxGap = 0,
+): [StrikePick, StrikePick][] {
   const callTaken = new Set<number>()
   const putTaken = new Set<number>()
   const out: [StrikePick, StrikePick][] = []
@@ -1408,6 +1448,7 @@ function matchByPremium(calls: StrikePick[], puts: StrikePick[], want: number): 
       })
     })
     if (bi < 0) break
+    if (maxGap > 0 && gap > maxGap) break
     callTaken.add(bi)
     putTaken.add(bj)
     out.push([calls[bi], puts[bj]])
@@ -1466,12 +1507,19 @@ export function pickMultipleByPremium(
   const hasMax = rawMax > 0
   const minFloor = hasMin && hasMax ? Math.min(rawMin, rawMax) : hasMin ? rawMin : 0
   const maxCeil = hasMin && hasMax ? Math.max(rawMin, rawMax) : hasMax ? rawMax : 0
+  // 0075: with no entry premium — every futures book since 0072 — the target is
+  // the floor, so the cheapest strike clearing the minimum ranks first and a
+  // multi-pair entry ladders *up* from the bottom of the band. Cheaper is further
+  // out of the money on a short strangle, so this starts at the safe end.
+  //
+  // It is also what makes the ceiling buffer behave like slack: ranked from the
+  // floor, a strike in the buffer zone is the last one reached.
   const target =
     cfg.entryPremium > 0
       ? Math.min(Math.max(cfg.entryPremium, minFloor), maxCeil > 0 ? maxCeil : cfg.entryPremium)
-      : maxCeil > 0
-        ? maxCeil
-        : minFloor
+      : minFloor > 0
+        ? minFloor
+        : maxCeil
 
   const eligible = allCandidates.filter(
     (c) => (minFloor <= 0 || c.premium >= minFloor) && (maxCeil <= 0 || c.premium <= maxCeil),
@@ -1722,6 +1770,8 @@ export function resolveSessionContext(
         shiftPct: activeWindow.shiftPct,
         maxShifts: activeWindow.maxShifts,
         maxReentries: activeWindow.maxReentries,
+        premiumBufferPct: activeWindow.premiumBufferPct,
+        maxPairGap: activeWindow.maxPairGap,
         takeProfitMark: activeWindow.takeProfitMark,
         stopLossMark: activeWindow.stopLossMark,
         marginCapPct: activeWindow.marginCapPct,
@@ -1743,7 +1793,19 @@ export function resolveSessionContext(
   // futures book with no schedule windows as well. The delta book keeps its own
   // entry premium: it has no range, and the roll and the band correction have
   // nothing else to rank against.
-  if (mode === 'futures') cfg = { ...cfg, entryPremium: 0 }
+  if (mode === 'futures') {
+    // 0075: and the ceiling carries its buffer. Applied here rather than inside
+    // the picker for the same reason the engine applies it to `v_prem_max`: the
+    // opening entry, the top-up and the ATM re-entry all read the same number,
+    // with no second parameter to keep in step. Only the ceiling moves.
+    const buf = cfg.premiumBufferPct ?? 0
+    const rawMax = cfg.entryPremiumMax ?? 0
+    cfg = {
+      ...cfg,
+      entryPremium: 0,
+      entryPremiumMax: buf > 0 && rawMax > 0 ? rawMax * (1 + buf / 100) : rawMax,
+    }
+  }
 
   return { cfg, phase, day, tradingDay, windowId }
 }
@@ -2010,7 +2072,7 @@ export function planCycle(input: CycleInput): CyclePlan {
                 : `No ${side} strike quoted yet`,
       }
     }
-    const matched = matchByPremium(calls, puts, pairsCount)
+    const matched = matchByPremium(calls, puts, pairsCount, cfg.maxPairGap ?? 0)
     const count = matched.length
     const legsToEnter: { product: Product; qty: number }[] = []
 
@@ -2093,7 +2155,7 @@ export function planCycle(input: CycleInput): CyclePlan {
           : `No unheld ${side} strike quoted — waiting on the chain for the other ${want}`
     }
 
-    const matched = matchByPremium(calls, puts, want)
+    const matched = matchByPremium(calls, puts, want, cfg.maxPairGap ?? 0)
     if (matched.length > 0) {
       const legsToEnter: { product: Product; qty: number }[] = []
       for (const [c, p] of matched) {

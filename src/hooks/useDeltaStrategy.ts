@@ -108,6 +108,9 @@ interface Row {
   max_shifts: number | null
   /** Absent on a row written before 0069, which reads as the default of one. */
   max_reentries?: number | null
+  /** 0075: slack above the premium ceiling, and the pair-gap cap. */
+  premium_buffer_pct?: string | number | null
+  max_pair_gap?: string | number | null
   qty: string | number
   max_notional_per_strike: string | number
   tie_break: string
@@ -143,7 +146,7 @@ interface Row {
 }
 
 const COLS =
-  'account_id, armed, session_open, session_close, band_low, band_high, gamma_multiplier, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, entry_premium_min, entry_premium_max, pairs_count, shift_pct, max_shifts, qty, max_notional_per_strike, tie_break, expiry_pick, expiry_rule, expiry_label, cycle_seconds, take_profit_mark, stop_loss_mark, margin_cap_pct, margin_target_pct, hedge_leverage, trade_days, session_day, rolls_used_call, rolls_used_put, shifts_used_call, shifts_used_put, reentries_used_call, reentries_used_put, max_reentries, entered_day, flattened_day, entered_window_ids, open_window_id, pairs_open, pairs_retired, schedule_windows'
+  'account_id, armed, session_open, session_close, band_low, band_high, gamma_multiplier, target_landing, band_buffer, itm_trigger, max_rolls, roll_counts, entry_premium, entry_premium_min, entry_premium_max, pairs_count, shift_pct, max_shifts, premium_buffer_pct, max_pair_gap, qty, max_notional_per_strike, tie_break, expiry_pick, expiry_rule, expiry_label, cycle_seconds, take_profit_mark, stop_loss_mark, margin_cap_pct, margin_target_pct, hedge_leverage, trade_days, session_day, rolls_used_call, rolls_used_put, shifts_used_call, shifts_used_put, reentries_used_call, reentries_used_put, max_reentries, entered_day, flattened_day, entered_window_ids, open_window_id, pairs_open, pairs_retired, schedule_windows'
 
 // Postgres numerics come back as strings over PostgREST.
 const n = (v: string | number) => Number(v)
@@ -167,6 +170,8 @@ function rowToConfig(row: Row): DeltaConfig {
     shiftPct: row.shift_pct === null ? 50 : n(row.shift_pct),
     maxShifts: row.max_shifts === null ? 1 : Number(row.max_shifts),
     maxReentries: row.max_reentries == null ? 1 : Number(row.max_reentries),
+    premiumBufferPct: row.premium_buffer_pct == null ? 0 : n(row.premium_buffer_pct),
+    maxPairGap: row.max_pair_gap == null ? 1 : n(row.max_pair_gap),
     qty: n(row.qty),
     maxNotionalPerStrike: n(row.max_notional_per_strike),
     tieBreak: row.tie_break as TieBreak,
@@ -207,6 +212,10 @@ function rowToConfig(row: Row): DeltaConfig {
           // A window written before the re-entry tier existed gets the default
           // of one, which is the behaviour the tier was added to provide.
           maxReentries: Number(w.maxReentries ?? w.max_reentries ?? 1),
+          // A window written before 0075 gets the defaults: a hard ceiling, and
+          // the $1 pair gap.
+          premiumBufferPct: n(w.premiumBufferPct ?? w.premium_buffer_pct ?? 0),
+          maxPairGap: n(w.maxPairGap ?? w.max_pair_gap ?? 1),
           takeProfitMark: n(w.takeProfitMark ?? w.take_profit_mark ?? 0.7),
           stopLossMark: n(w.stopLossMark ?? w.stop_loss_mark ?? 0),
           marginCapPct: n(w.marginCapPct ?? w.margin_cap_pct ?? 100),
@@ -240,6 +249,8 @@ function configToRow(cfg: DeltaConfig) {
     shift_pct: cfg.shiftPct,
     max_shifts: cfg.maxShifts,
     max_reentries: cfg.maxReentries,
+    premium_buffer_pct: cfg.premiumBufferPct,
+    max_pair_gap: cfg.maxPairGap,
     qty: cfg.qty,
     max_notional_per_strike: cfg.maxNotionalPerStrike,
     tie_break: cfg.tieBreak,
@@ -271,6 +282,8 @@ function settingsError(message: string): string {
   if (message.includes('delta_shift_pct_chk')) return 'Shift % must be greater than zero.'
   if (message.includes('delta_max_shifts_chk')) return 'Shift limit must be at least 0.'
   if (message.includes('delta_max_reentries_chk')) return 'Re-entry limit must be at least 0.'
+  if (message.includes('delta_premium_buffer_chk')) return 'Premium buffer must be between 0 and 100%.'
+  if (message.includes('delta_max_pair_gap_chk')) return 'Max pair gap cannot be negative.'
   if (message.includes('delta_stop_loss_mark_chk')) return 'SL mark cannot be negative.'
   if (message.includes('delta_band_chk'))
     return 'Target delta band needs the left number below the right one.'

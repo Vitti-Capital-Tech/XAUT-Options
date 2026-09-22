@@ -140,11 +140,36 @@ adds it an optional stop.
 >   to sell — a target to rank against and a range to filter by — and once `0069`
 >   made the range hard they could contradict each other outright; the
 >   configuration running in production was a $6 target against a $3–$5 range. The
->   range is the whole rule now and the target falls out of it: the richest
->   in-range strike ranks first, so `pairs_count` above 1 gives a ladder down from
->   the top of the band. A futures book with **neither** bound set has no rule at
->   all and will not enter — it says so in the log every cycle. The delta book is
->   untouched: it has no range, and `entry_premium` is the only price rule it has.
+>   range is the whole rule now and the target falls out of it. A futures book
+>   with **neither** bound set has no rule at all and will not enter — it says so
+>   in the log every cycle. The delta book is untouched: it has no range, and
+>   `entry_premium` is the only price rule it has. (`0072` aimed at the top of the
+>   range; `0075` turns that around — see below.)
+> - [`0073`](../supabase/migrations/0073_pair_the_legs_that_match.sql) pairs a
+>   call with the put nearest it **in premium** instead of joining the two sides
+>   on rank. Rank-to-rank is right while both sides offer the same ladder and
+>   wrong the moment they are different lengths, which on a hard range is most of
+>   the time: it took the top of each list, so a lone $2.83 call was sold against
+>   the richest $5.00 put with the $3.00 put one rank below it, unused.
+> - [`0074`](../supabase/migrations/0074_a_pair_taken_at_target_is_not_a_pair_given_up.sql)
+>   separates a pair **banked at take-profit** from one the strategy **gave up
+>   on**. `apply_tpsl_triggers` closes legs one at a time in its own engine and
+>   tells the strategy nothing, and 0071's raise-only counter read that
+>   identically to an ATM exit past its budgets — so a window that opened three
+>   pairs and banked two sat at `3 / 3` over one pair and declined to trade again.
+>   New `pairs_retired`; the top-up now aims at `pairs_count − pairs_retired`.
+>   **Expect more turnover after this**: a window holds its configured size for as
+>   long as it is open, re-selling what take-profit banks.
+> - [`0075`](../supabase/migrations/0075_ladder_up_from_the_floor.sql) turns the
+>   ladder around and adds two controls. The entry now aims at the **floor** of
+>   the premium range rather than the ceiling, so the cheapest strike clearing the
+>   minimum is pair one and a multi-pair entry builds upward — furthest out of the
+>   money first. `premium_buffer_pct` (default 0, no change) adds slack above the
+>   maximum for a thin chain; because the ladder starts at the floor, a strike
+>   inside the buffer is the last one reached rather than the first. `max_pair_gap`
+>   (default **$1**) refuses a pair whose call and put are further apart than that
+>   — **this one does change behaviour on an existing book**, so if your range is
+>   wide, set it to match how far apart you are willing to see the two legs.
 
 > `0021` adds `delta_strategy_settings.qty`, defaulting to one lot so nothing
 > changes on its own. **Raising it means rescaling `band_low`/`band_high` by the

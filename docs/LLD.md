@@ -118,6 +118,8 @@ erDiagram
         numeric entry_premium "delta book only; futures ranks off the range (0072)"
         numeric entry_premium_min "floor for opening pairs"
         numeric entry_premium_max "hard ceiling for opening pairs (0069); 0 = off"
+        numeric premium_buffer_pct "slack above the ceiling, % (0075); 0 = hard"
+        numeric max_pair_gap "widest premium gap within a pair (0075); 0 = off"
         integer pairs_count "opening pairs count"
         numeric shift_pct "% of ATM exit price to sell replacement"
         integer max_shifts "shift limit per side"

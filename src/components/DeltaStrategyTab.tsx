@@ -98,6 +98,8 @@ export function DeltaStrategyTab({
             shiftPct: patch.shiftPct ?? currentWin.shiftPct,
             maxShifts: patch.maxShifts ?? currentWin.maxShifts,
             maxReentries: patch.maxReentries ?? currentWin.maxReentries,
+            premiumBufferPct: patch.premiumBufferPct ?? currentWin.premiumBufferPct,
+            maxPairGap: patch.maxPairGap ?? currentWin.maxPairGap,
             takeProfitMark: patch.takeProfitMark ?? currentWin.takeProfitMark,
             stopLossMark: patch.stopLossMark ?? currentWin.stopLossMark,
             marginCapPct: patch.marginCapPct ?? currentWin.marginCapPct,
@@ -402,7 +404,7 @@ export function DeltaStrategyTab({
                       now, and the target falls out of it (0072). */}
                   <Field
                     label="Premium range"
-                    help="What this window sells. A strike is only opened if its bid sits inside this range, richest first — so with Pairs above 1 you get a ladder down from the top of the band. Set one side to 0 to leave it open; both at 0 and the window has no rule and will not trade."
+                    help="What this window sells. A strike is only opened if its bid sits inside this range, cheapest first — so with Pairs above 1 the ladder builds up from the bottom of the band, starting furthest out of the money. Set one side to 0 to leave it open; both at 0 and the window has no rule and will not trade."
                   >
                     <div className="flex items-center gap-1.5">
                       <NumInput
@@ -435,6 +437,35 @@ export function DeltaStrategyTab({
                       min={1}
                       width="w-16"
                       onChange={(v) => updateWindow({ pairsCount: Math.max(1, Math.round(v)) })}
+                    />
+                  </Field>
+
+                  <Field
+                    label="Premium buffer"
+                    help="Slack above the range's maximum, as a percentage of it — a 10% buffer on a $6 max will sell up to $6.60. The floor never moves. Since the ladder starts at the bottom of the band, a strike inside the buffer is the last one reached: it is used when the band proper has nothing left, rather than preferred. 0 keeps the maximum hard."
+                  >
+                    <NumInput
+                      value={currentWin.premiumBufferPct}
+                      step={5}
+                      min={0}
+                      max={100}
+                      unit="%"
+                      width="w-16"
+                      onChange={(v) => updateWindow({ premiumBufferPct: v })}
+                    />
+                  </Field>
+
+                  <Field
+                    label="Max pair gap"
+                    help="How far apart a pair's call and put may be in premium. A strangle's two legs are meant to sit about the same distance out either side of spot, and premium is how that distance is measured here — so $2.83 against $5.00 is a skew, not a pair. If nothing on the other side is within this, the pair is not opened and the engine tries again next cycle. 0 turns the check off."
+                  >
+                    <NumInput
+                      value={currentWin.maxPairGap}
+                      step={0.25}
+                      min={0}
+                      unit="$"
+                      width="w-16"
+                      onChange={(v) => updateWindow({ maxPairGap: v })}
                     />
                   </Field>
 
