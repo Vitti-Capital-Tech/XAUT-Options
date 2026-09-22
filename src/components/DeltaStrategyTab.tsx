@@ -1164,13 +1164,21 @@ export function DeltaStrategyTab({
                 says whether it is still working on it. */}
             <Readout
               label="Pairs"
-              tone={(plan ? plan.pairsOpen : session.pairsOpen) < (config.pairsCount ?? 1) ? 'warn' : 'ok'}
+              // Warn while the engine is still owed pairs, not merely because the
+              // book has wound down: once the allocation is met, a smaller book
+              // is take-profit doing its job, and an orange figure for the rest
+              // of the session would be crying wolf.
+              tone={
+                plan && plan.pairsOnBook < (config.pairsCount ?? 1) - (session.pairsRetired ?? 0)
+                  ? 'warn'
+                  : 'ok'
+              }
               title={
                 plan?.pairsNote ??
-                'Pairs open on the traded expiry, against what this window asks for. The engine keeps topping this up while the window is open.'
+                'Pairs on the book against what this window asks for. The engine keeps topping this up while the window is open.'
               }
             >
-              {plan ? plan.pairsOpen : session.pairsOpen} / {config.pairsCount ?? 1}
+              {plan ? plan.pairsOnBook : session.pairsOpen} / {config.pairsCount ?? 1}
             </Readout>
             <Readout label="Shifts left C / P" tone={shiftsCallsLeft === 0 || shiftsPutsLeft === 0 ? 'warn' : 'ok'}>
               {shiftsCallsLeft} / {shiftsPutsLeft}

@@ -718,11 +718,21 @@ single ATM shift is the normal state.
 Three things stop this becoming a second way to over-sell, and they are worth
 knowing before touching it:
 
-1. **`pairs_open` counts what the window *opened*, and no ATM rule decrements
-   it.** If it were derived from the book instead, a leg closed by an ATM exit
-   with the re-entry budget spent would read as "a pair short" and be silently
-   refilled here — which makes `max_reentries` mean nothing. Opening allocation
-   and position management stay separate.
+1. **A pair given up on is not the same as a pair banked.** `pairs_open` is the
+   book, measured every cycle in both directions; `pairs_retired` counts only
+   pairs the engine *deliberately* closed and chose not to replace — an ATM exit
+   past both its budgets, a full margin cut, an out-of-margin close. The top-up
+   aims at `pairs_count − pairs_retired` ([`0074`](supabase/migrations/0074_a_pair_taken_at_target_is_not_a_pair_given_up.sql)).
+
+   So a leg that hits its **take-profit** is refilled — take-profit runs in its
+   own engine, closes shorts one at a time as their mark decays, and is the pair
+   working rather than a decision to stop holding it. A leg the ATM rule gave up
+   on is not, or `max_reentries` would mean nothing.
+
+   [`0071`](supabase/migrations/0071_count_the_pairs_that_are_actually_open.sql)
+   instead refused to *lower* the counter at all, which is a proxy for the same
+   question and cannot tell the two apart — a window that opened three pairs and
+   banked two read `3 / 3` over a single pair and declined to trade again.
 2. **Held strikes are skipped**, so a top-up can only widen the strangle, never
    deepen a leg.
 3. **A margin brake.** The opening entry has no margin gate and does not need one

@@ -596,6 +596,16 @@ export interface SessionState {
    */
   openWindowId: string | null
   /**
+   * Pairs the engine closed and chose not to replace — an ATM exit past both its
+   * budgets, a full margin cut, an out-of-margin close
+   * ([`0074`](../../supabase/migrations/0074_a_pair_taken_at_target_is_not_a_pair_given_up.sql)).
+   *
+   * Subtracted from `pairsCount` to give the size the top-up aims at, which is
+   * what lets a take-profit be refilled while a leg the strategy gave up on is
+   * not. Take-profit runs in its own engine and never touches this.
+   */
+  pairsRetired: number
+  /**
    * Pairs the window holding the book has opened so far.
    *
    * Counted, not derived from the book: the ATM rules never decrement it, so a
@@ -619,6 +629,7 @@ export const EMPTY_SESSION: SessionState = {
   reentriesUsedPut: 0,
   openWindowId: null,
   pairsOpen: 0,
+  pairsRetired: 0,
 }
 
 // ---------------------------------------------------------------------------
@@ -1588,6 +1599,20 @@ export interface CyclePlan {
    */
   pairsOpen: number
   /**
+   * Pairs actually on the book right now — the smaller of the two sides' distinct
+   * short strikes on the traded expiry.
+   *
+   * Kept apart from `pairsOpen` because the two answer different questions and
+   * routinely disagree. `pairsOpen` is what the window has *opened*, and drives
+   * the top-up; this is what is *there*. Take-profit closes legs one at a time
+   * through its own engine, without telling the strategy, so a window that opened
+   * three pairs and has since banked two of them reads 3 and 1.
+   *
+   * This is the one to show a trader: "Pairs 3 / 3" over a book holding one pair
+   * is a readout describing its own bookkeeping rather than the position table.
+   */
+  pairsOnBook: number
+  /**
    * Why the window's allocation is still short, when it is — or null when it is
    * full, or when a top-up is what happens next.
    *
@@ -1785,13 +1810,18 @@ export function planCycle(input: CycleInput): CyclePlan {
         )
         .map((p) => p.symbol),
     ).size
-  const pairsOpen = Math.max(
-    session.pairsOpen ?? 0,
-    Math.min(onBook('call_options'), onBook('put_options')),
-  )
+  const pairsOnBook = Math.min(onBook('call_options'), onBook('put_options'))
+  // 0074: what the top-up aims at, on the engine's own terms — the window's
+  // allocation less the pairs it has given up on. `pairsOpen` is the book,
+  // measured, in both directions; the retirements are what a shrinking book is
+  // measured against.
+  const pairsRetired = session.pairsRetired ?? 0
+  const pairsTarget = Math.max(0, (cfg.pairsCount ?? 1) - pairsRetired)
+  const pairsOpen = pairsOnBook
 
   const base = {
     dp, gp, band, breach: null as Breach, phase, day, tradingDay, queue, margin, pairsOpen,
+    pairsOnBook,
     pairsNote: null as string | null,
   }
 
@@ -2031,9 +2061,9 @@ export function planCycle(input: CycleInput): CyclePlan {
     session.openWindowId !== null &&
     session.openWindowId === windowId &&
     session.enteredDay === day &&
-    pairsOpen < (cfg.pairsCount ?? 1)
+    pairsOnBook < pairsTarget
   ) {
-    const want = (cfg.pairsCount ?? 1) - pairsOpen
+    const want = pairsTarget - pairsOnBook
     // Strikes already short are skipped, so a top-up widens the strangle rather
     // than deepening a leg — the engine drops them inside `delta_sell_entry`.
     const held = new Set(
@@ -2079,7 +2109,7 @@ export function planCycle(input: CycleInput): CyclePlan {
         return {
           ...base,
           action: { type: 'entry', legs: legsToEnter },
-          reason: `Topping up — ${pairsOpen} of ${cfg.pairsCount} pairs open, adding ${legsToEnter.length / 2}`,
+          reason: `Topping up — ${pairsOnBook} of ${pairsTarget} pairs open, adding ${legsToEnter.length / 2}`,
         }
       }
     }
@@ -2091,6 +2121,19 @@ export function planCycle(input: CycleInput): CyclePlan {
     if (base.pairsNote === null) {
       base.pairsNote = `Nothing under the ${usd0(cfg.maxNotionalPerStrike)} per-strike cap has room for the other ${want}`
     }
+  }
+
+  // The window is not short of its allocation, but the book is short of the
+  // window. Worth saying plainly: nothing is wrong and nothing is coming — legs
+  // have closed at their take-profit (or at an ATM exit past its budgets) since
+  // this window opened, and those are not re-opened.
+  if (
+    mode === 'futures' &&
+    pairsOnBook >= pairsTarget &&
+    pairsRetired > 0 &&
+    base.pairsNote === null
+  ) {
+    base.pairsNote = `${pairsRetired} of ${cfg.pairsCount} ${pairsRetired === 1 ? 'pair has' : 'pairs have'} been given up on this window — an ATM exit past its budgets, or a leg closed for margin — so the top-up is aiming at ${pairsTarget}. Take-profit closes are refilled; these are not.`
   }
 
   // ---- Empty side check (Futures strategy) ---------------------------------
