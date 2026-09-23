@@ -157,9 +157,11 @@ adds it an optional stop.
 >   tells the strategy nothing, and 0071's raise-only counter read that
 >   identically to an ATM exit past its budgets — so a window that opened three
 >   pairs and banked two sat at `3 / 3` over one pair and declined to trade again.
->   New `pairs_retired`; the top-up now aims at `pairs_count − pairs_retired`.
->   **Expect more turnover after this**: a window holds its configured size for as
->   long as it is open, re-selling what take-profit banks.
+>   New `pairs_retired`; the top-up aimed at `pairs_count − pairs_retired`.
+>   **Reverted by [`0076`](../supabase/migrations/0076_take_profit_is_an_exit.sql)**
+>   — run them together if you are catching up, or skip straight to 0076. What
+>   survives from it is the panel showing pairs *on the book* rather than the
+>   counter, which was the honest half of the complaint it answered.
 > - [`0075`](../supabase/migrations/0075_ladder_up_from_the_floor.sql) turns the
 >   ladder around and adds two controls. The entry now aims at the **floor** of
 >   the premium range rather than the ceiling, so the cheapest strike clearing the
@@ -170,6 +172,15 @@ adds it an optional stop.
 >   (default **$1**) refuses a pair whose call and put are further apart than that
 >   — **this one does change behaviour on an existing book**, so if your range is
 >   wide, set it to match how far apart you are willing to see the two legs.
+> - [`0076`](../supabase/migrations/0076_take_profit_is_an_exit.sql) settles what
+>   happens after a close: **nothing is sold back on.** A take-profit is an exit —
+>   the leg did its job and the profit is banked — and so is a stop-loss, an ATM
+>   exit past its budgets, a margin cut. `pairs_open` goes back to counting what
+>   the window has *opened*, raised to meet the book and never lowered to it, so
+>   the top-up only ever completes the allocation an entry left short. `0074`'s
+>   `pairs_retired` had no distinction left to draw and is zeroed; the column is
+>   kept rather than dropped so an older browser bundle that selects it still
+>   works. **Less turnover than 0074**, and the same as everything before it.
 
 > `0021` adds `delta_strategy_settings.qty`, defaulting to one lot so nothing
 > changes on its own. **Raising it means rescaling `band_low`/`band_high` by the

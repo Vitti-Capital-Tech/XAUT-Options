@@ -722,21 +722,24 @@ single ATM shift is the normal state.
 Three things stop this becoming a second way to over-sell, and they are worth
 knowing before touching it:
 
-1. **A pair given up on is not the same as a pair banked.** `pairs_open` is the
-   book, measured every cycle in both directions; `pairs_retired` counts only
-   pairs the engine *deliberately* closed and chose not to replace — an ATM exit
-   past both its budgets, a full margin cut, an out-of-margin close. The top-up
-   aims at `pairs_count − pairs_retired` ([`0074`](supabase/migrations/0074_a_pair_taken_at_target_is_not_a_pair_given_up.sql)).
+1. **The top-up fills what an entry left behind, and nothing else.**
+   `pairs_open` counts pairs this window has *opened* — raised to meet the book,
+   never lowered to it — so the top-up only ever completes the allocation. Once
+   all `pairs_count` have been opened, that window is done buying
+   ([`0076`](supabase/migrations/0076_take_profit_is_an_exit.sql)).
 
-   So a leg that hits its **take-profit** is refilled — take-profit runs in its
-   own engine, closes shorts one at a time as their mark decays, and is the pair
-   working rather than a decision to stop holding it. A leg the ATM rule gave up
-   on is not, or `max_reentries` would mean nothing.
+   **A take-profit is an exit.** The leg did its job, the profit is banked, and
+   nothing is sold in its place — and the same goes for every other close: a
+   stop-loss, an ATM exit past its budgets, a margin cut. A closed pair is not a
+   hole in the allocation.
 
-   [`0071`](supabase/migrations/0071_count_the_pairs_that_are_actually_open.sql)
-   instead refused to *lower* the counter at all, which is a proxy for the same
-   question and cannot tell the two apart — a window that opened three pairs and
-   banked two read `3 / 3` over a single pair and declined to trade again.
+   [`0074`](supabase/migrations/0074_a_pair_taken_at_target_is_not_a_pair_given_up.sql)
+   briefly made the opposite call, refilling take-profit closes so a window ran
+   at its configured size all session. That is a different strategy — one that
+   rolls at target rather than finishing there — and it was reverted. What 0074
+   got right and 0076 keeps is the **display**: the panel shows pairs on the
+   book, not the counter, because "Pairs 3 / 3" over a single pair was a readout
+   describing its own bookkeeping.
 2. **Held strikes are skipped**, so a top-up can only widen the strangle, never
    deepen a leg.
 3. **A margin brake.** The opening entry has no margin gate and does not need one

@@ -136,7 +136,8 @@ erDiagram
         integer shifts_used_put
         integer reentries_used_call "used ATM re-entries, this window"
         integer reentries_used_put
-        integer pairs_open "pairs this window has opened; topped up to pairs_count"
+        integer pairs_open "pairs this window has opened; topped up to pairs_count, never lowered by a close"
+        integer pairs_retired "vestigial since 0076; nothing reads it"
         text entered_day
         text flattened_day
         text open_window_id "the window that opened the book on the table"

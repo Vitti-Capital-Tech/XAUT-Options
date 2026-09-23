@@ -626,13 +626,10 @@ export interface SessionState {
    */
   openWindowId: string | null
   /**
-   * Pairs the engine closed and chose not to replace — an ATM exit past both its
-   * budgets, a full margin cut, an out-of-margin close
-   * ([`0074`](../../supabase/migrations/0074_a_pair_taken_at_target_is_not_a_pair_given_up.sql)).
-   *
-   * Subtracted from `pairsCount` to give the size the top-up aims at, which is
-   * what lets a take-profit be refilled while a leg the strategy gave up on is
-   * not. Take-profit runs in its own engine and never touches this.
+   * Vestigial since
+   * [`0076`](../../supabase/migrations/0076_take_profit_is_an_exit.sql), and
+   * always 0. Nothing reads it: no close is refilled any more, so there is no
+   * kind of close left to distinguish.
    */
   pairsRetired: number
   /**
@@ -1873,13 +1870,12 @@ export function planCycle(input: CycleInput): CyclePlan {
         .map((p) => p.symbol),
     ).size
   const pairsOnBook = Math.min(onBook('call_options'), onBook('put_options'))
-  // 0074: what the top-up aims at, on the engine's own terms — the window's
-  // allocation less the pairs it has given up on. `pairsOpen` is the book,
-  // measured, in both directions; the retirements are what a shrinking book is
-  // measured against.
-  const pairsRetired = session.pairsRetired ?? 0
-  const pairsTarget = Math.max(0, (cfg.pairsCount ?? 1) - pairsRetired)
-  const pairsOpen = pairsOnBook
+  // 0076: the top-up aims at the whole allocation, and `pairsOpen` counts what
+  // has been *opened* — raised to meet the book, never lowered to it, which is
+  // the engine's own reconciliation. A take-profit is an exit: it lowers the
+  // book and not the counter, so nothing reads as owed and nothing is sold back.
+  const pairsTarget = cfg.pairsCount ?? 1
+  const pairsOpen = Math.max(session.pairsOpen ?? 0, pairsOnBook)
 
   const base = {
     dp, gp, band, breach: null as Breach, phase, day, tradingDay, queue, margin, pairsOpen,
@@ -2123,9 +2119,13 @@ export function planCycle(input: CycleInput): CyclePlan {
     session.openWindowId !== null &&
     session.openWindowId === windowId &&
     session.enteredDay === day &&
-    pairsOnBook < pairsTarget
+    // 0076: the *counter*, not the book. The engine gates on `pairs_open`, which
+    // a take-profit does not lower — gating on the book here would have the
+    // panel promise a top-up every time a leg banked, while the engine, rightly,
+    // did nothing.
+    pairsOpen < pairsTarget
   ) {
-    const want = pairsTarget - pairsOnBook
+    const want = pairsTarget - pairsOpen
     // Strikes already short are skipped, so a top-up widens the strangle rather
     // than deepening a leg — the engine drops them inside `delta_sell_entry`.
     const held = new Set(
@@ -2171,7 +2171,7 @@ export function planCycle(input: CycleInput): CyclePlan {
         return {
           ...base,
           action: { type: 'entry', legs: legsToEnter },
-          reason: `Topping up — ${pairsOnBook} of ${pairsTarget} pairs open, adding ${legsToEnter.length / 2}`,
+          reason: `Topping up — ${pairsOpen} of ${pairsTarget} opened, adding ${legsToEnter.length / 2}`,
         }
       }
     }
@@ -2191,11 +2191,12 @@ export function planCycle(input: CycleInput): CyclePlan {
   // this window opened, and those are not re-opened.
   if (
     mode === 'futures' &&
-    pairsOnBook >= pairsTarget &&
-    pairsRetired > 0 &&
+    pairsOnBook < pairsTarget &&
+    pairsOpen >= pairsTarget &&
     base.pairsNote === null
   ) {
-    base.pairsNote = `${pairsRetired} of ${cfg.pairsCount} ${pairsRetired === 1 ? 'pair has' : 'pairs have'} been given up on this window — an ATM exit past its budgets, or a leg closed for margin — so the top-up is aiming at ${pairsTarget}. Take-profit closes are refilled; these are not.`
+    const gone = pairsOpen - pairsOnBook
+    base.pairsNote = `This window has opened all ${pairsTarget} of its pairs; ${gone} ${gone === 1 ? 'has' : 'have'} since closed — at take-profit, or at an exit — and a closed pair is not sold back on. Nothing further will open until the next window.`
   }
 
   // ---- Empty side check (Futures strategy) ---------------------------------

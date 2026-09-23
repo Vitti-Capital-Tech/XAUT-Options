@@ -1199,10 +1199,12 @@ export function DeltaStrategyTab({
               // book has wound down: once the allocation is met, a smaller book
               // is take-profit doing its job, and an orange figure for the rest
               // of the session would be crying wolf.
+              // Orange only while the engine is still owed pairs it has never
+              // opened. A book that has shrunk because legs took profit is the
+              // strategy working, and colouring that for the rest of the session
+              // would be crying wolf.
               tone={
-                plan && plan.pairsOnBook < (config.pairsCount ?? 1) - (session.pairsRetired ?? 0)
-                  ? 'warn'
-                  : 'ok'
+                plan && plan.pairsOpen < (config.pairsCount ?? 1) ? 'warn' : 'ok'
               }
               title={
                 plan?.pairsNote ??
